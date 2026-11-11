@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+.venv-1/
+venv/
+env/
+
+# SQLite databases (local only — cloud uses fresh DB)
+*.db
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Streamlit local secrets (never commit real secrets)
+.streamlit/secrets.toml
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Logs
+*.log

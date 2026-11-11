@@ -1,0 +1,4 @@
+kickoff_utc,home_team,away_team,competition,country,source,external_fixture_id,home_odds,draw_odds,away_odds
+2026-11-20T15:00:00Z,Sample Athletic,Demo United,Example Premier Division,Exampleland,BetPawa,DEMO001,1.90,3.40,4.10
+2026-11-20T15:00:00Z,Sample Athletic,Demo United,Example Premier Division,Exampleland,Betika,DEMO002,1.92,3.35,4.00
+2026-11-21T17:30:00Z,North Test FC,South Test FC,Example National League,Exampleland,Fans Sport,DEMO003,2.10,3.10,3.40

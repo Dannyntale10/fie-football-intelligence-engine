@@ -59,6 +59,12 @@ from app.services.backtest import run_backtest          # noqa: E402
 from app.services.portfolio import build_daily_portfolio  # noqa: E402
 from app.services.combo import generate_high_confidence_combos  # noqa: E402
 from app.connectors.bookmakers import BOOKMAKERS       # noqa: E402
+from app.services.ai_insights import (                 # noqa: E402
+    gemini_match_preview,
+    gemini_combo_explanation,
+    gemini_agent_rating_narrative,
+    is_gemini_enabled,
+)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -163,6 +169,24 @@ with st.sidebar:
     st.caption(f"DB: `{os.environ.get('DATABASE_URL', 'sqlite')}`")
 
     st.divider()
+    st.header("🤖 AI Insights (Gemini)")
+    _sidebar_key = st.text_input(
+        "Gemini API Key",
+        type="password",
+        placeholder="AIza… (optional)",
+        help="Paste your Google Gemini API key to unlock AI match previews & combo explanations. Leave blank to use rule-based analysis.",
+        key="sidebar_gemini_key",
+    )
+    if _sidebar_key:
+        os.environ["GEMINI_API_KEY"] = _sidebar_key
+    _ai_on = is_gemini_enabled()
+    if _ai_on:
+        st.success("🟢 Gemini AI Active")
+    else:
+        st.caption("⚪ AI off — rule-based mode")
+        st.caption("Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey)")
+
+    st.divider()
     st.header("⚙️ Engine Defaults")
     st.metric("Qualification Threshold", "85%",
               help="Markets ≥ 85% probability qualify for shortlisting.")
@@ -204,7 +228,7 @@ with st.sidebar:
 # ═════════════════════════════════════════════════════════════════════════════
 (
     tab_portfolio, tab_fixtures, tab_import,
-    tab_backtest, tab_markets, tab_ratings, tab_connectors,
+    tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating,
 ) = st.tabs([
     "📋 Daily Portfolio",
     "📅 Fixtures & Odds",
@@ -213,6 +237,7 @@ with st.sidebar:
     "📊 Market Probabilities",
     "🛡️ Team Ratings",
     "🔌 Bookmaker Connectors",
+    "🏆 Agent Rating",
 ])
 
 
@@ -323,6 +348,17 @@ with tab_portfolio:
                     slip_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f} (Prob: {l['probability']*100:.1f}%) [{l['kickoff_eat']}]\n"
                 slip_text += f"Total Odds: {best['total_odds']:.2f} | Kelly Stake: ${best['kelly_stake_amount']:.2f}"
                 st.text_area("📋 Copy Booking Slip Text", slip_text, height=130, key="cloud_slip_text")
+
+                # AI Combo Explanation
+                combo_explain = gemini_combo_explanation(
+                    legs=best["legs"],
+                    total_odds=best["total_odds"],
+                    combined_prob=best["combined_probability"],
+                    avg_prob=best.get("avg_leg_probability", 0),
+                    ev_percent=best["expected_value_percent"],
+                    matchday=matchday_hdr,
+                )
+                st.info(combo_explain)
 
                 # Alternative Combos
                 alts = c_data.get("alternatives", [])
@@ -572,6 +608,23 @@ with tab_fixtures:
                     f"📌 λ source: **{src_lbl}** · "
                     f"Engine: **Dixon-Coles Bivariate Poisson (ρ = {custom_rho})**"
                 )
+
+                # 🤖 AI Match Preview
+                _all_mkts = a_data.get("all_markets", {})
+                _h_lam = a_data.get("home_lambda", custom_h)
+                _a_lam = a_data.get("away_lambda", custom_a)
+                _preview = gemini_match_preview(
+                    home_team=fx.home_team,
+                    away_team=fx.away_team,
+                    competition=fx.competition or "",
+                    home_win_prob=_all_mkts.get("home_win", 0.0),
+                    draw_prob=_all_mkts.get("draw", 0.0),
+                    away_win_prob=_all_mkts.get("away_win", 0.0),
+                    home_lambda=_h_lam,
+                    away_lambda=_a_lam,
+                    kickoff_eat=to_eat_str(fx.kickoff_utc),
+                )
+                st.markdown(_preview)
 
                 margin = a_data.get("bookmaker_margin")
                 if margin:
@@ -1106,3 +1159,227 @@ with tab_connectors:
         "(`Settings → Secrets` in the Streamlit Cloud dashboard) and implement "
         "the corresponding connector in `app/connectors/`."
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 7 — AGENT RATING & SCORECARD
+# ═════════════════════════════════════════════════════════════════════════════
+with tab_agent_rating:
+    st.subheader("🏆 FIE Agent Intelligence Rating")
+    st.caption(
+        "Live scorecard showing the prediction engine's current capabilities, "
+        "data coverage, and historical backtested performance."
+    )
+
+    # ── Gather stats ──────────────────────────────────────────────────────────
+    db_ar = _db()
+    _total_fx   = db_ar.scalar(select(func.count(Fixture.id))) or 0
+    _sched_fx   = db_ar.scalar(select(func.count(Fixture.id)).where(Fixture.status == "scheduled")) or 0
+    _hist_fx    = db_ar.scalar(
+        select(func.count(Fixture.id)).where(Fixture.home_score.isnot(None))
+    ) or 0
+    _total_tr   = db_ar.scalar(select(func.count(TeamRating.id))) or 0
+    _comps      = db_ar.scalars(select(Fixture.competition).distinct()).all()
+    db_ar.close()
+
+    _n_leagues  = len([c for c in _comps if c])
+
+    # Quick backtest for scorecard metrics (value_bet strategy on all historical data)
+    _bt_win_rate = 0.0
+    _bt_roi      = 0.0
+    _bt_bets     = 0
+    if _hist_fx >= 50:
+        try:
+            db_bt2 = _db()
+            _sim = run_backtest(db=db_bt2, strategy="value_bet", min_ev_percent=2.0,
+                                min_quality_score=0, staking="quarter_kelly",
+                                initial_bankroll=1000.0)
+            db_bt2.close()
+            _bt_win_rate = _sim.get("win_rate_percent", 0.0)
+            _bt_roi      = _sim.get("roi_percent", 0.0)
+            _bt_bets     = _sim.get("total_bets", 0)
+        except Exception:
+            pass
+
+    # ── Grade calculation ─────────────────────────────────────────────────────
+    def _compute_agent_grade(teams: int, hist: int, win_rate: float, roi: float) -> tuple:
+        score = 0
+        if teams >= 80:  score += 25
+        elif teams >= 40: score += 15
+        elif teams >= 10: score += 8
+        if hist >= 1500: score += 25
+        elif hist >= 500: score += 15
+        elif hist >= 100: score += 8
+        if win_rate >= 55: score += 25
+        elif win_rate >= 48: score += 15
+        elif win_rate >= 40: score += 8
+        if roi >= 5:    score += 25
+        elif roi >= 0:  score += 15
+        elif roi >= -5: score += 8
+        if score >= 85: return "A+", "🟢", "Elite — Production Ready"
+        if score >= 70: return "A",  "🟢", "Strong — High Confidence"
+        if score >= 55: return "B",  "🟡", "Good — Moderate Confidence"
+        if score >= 40: return "C",  "🟠", "Fair — Limited Data"
+        return "D", "🔴", "Early Stage — Needs More Data"
+
+    _grade, _grade_color, _grade_desc = _compute_agent_grade(
+        _total_tr, _hist_fx, _bt_win_rate, _bt_roi
+    )
+
+    # ── Top banner ────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #0D1117 0%, #161B22 100%);
+                border: 2px solid {'#00C851' if _grade in ('A+','A') else '#FFBB33' if _grade == 'B' else '#FF4444'};
+                border-radius: 14px; padding: 24px; margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h2 style="margin: 0; color: #FFF;">⚽ Football Intelligence Engine</h2>
+                <p style="margin: 4px 0 0 0; color: #888; font-size: 14px;">
+                    Dixon-Coles Bivariate Poisson · Gemini AI Enhanced · EAT (Uganda Time)
+                </p>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 48px; font-weight: 900; color: {'#00C851' if _grade in ('A+','A') else '#FFBB33' if _grade == 'B' else '#FF8800'};">{_grade}</div>
+                <div style="font-size: 13px; color: #AAA;">{_grade_desc}</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Metric cards row ──────────────────────────────────────────────────────
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("📊 Team Ratings", _total_tr,
+              help="Distinct teams with calibrated attack/defense ratings")
+    c2.metric("📜 Historical Matches", f"{_hist_fx:,}",
+              help="Completed matches used to calibrate the model")
+    c3.metric("📅 Upcoming Fixtures", _sched_fx,
+              help="Scheduled matches available for prediction")
+    c4.metric("🌍 Leagues Covered", _n_leagues,
+              help="Number of distinct competitions in the database")
+    c5.metric("🎯 Backtest Win Rate",
+              f"{_bt_win_rate:.1f}%" if _bt_bets > 0 else "—",
+              help="Historical accuracy on value-bet strategy")
+    c6.metric("💰 Backtest ROI",
+              f"{_bt_roi:+.1f}%" if _bt_bets > 0 else "—",
+              delta=f"{_bt_roi:+.1f}%" if _bt_bets > 0 else None,
+              help="Return on investment across all backtested bets")
+
+    st.markdown("---")
+
+    # ── Capability breakdown ──────────────────────────────────────────────────
+    st.markdown("### 🔬 Capability Breakdown")
+
+    _caps = [
+        ("Dixon-Coles Bivariate Poisson Model", True,
+         "Applies rho=-0.10 to correct for real-world low-score correlations (0-0, 1-1)."),
+        ("19+ Market Types Analysed", True,
+         "1X2, Double Chance 1X/X2/12, Over/Under 0.5-3.5, BTTS, Team Goals, Arbitrage."),
+        ("All Competitions (No League Filter)", True,
+         "Analyses ALL fixtures regardless of competition — not limited to top-5 leagues."),
+        ("Odds-Free Prediction (Team Ratings Only)", True,
+         "Can predict for any fixture using only team attack/defense ratings, no bookmaker odds needed."),
+        ("85%+ Banker Identification", True,
+         "Automatically surfaces markets with ≥85% model confidence as banker candidates."),
+        ("Daily Combo Builder (2-3 Teams, Odds ≥2.00)", True,
+         "Generates same-day accumulator slips sorted by avg team confidence and +EV."),
+        ("Quarter-Kelly Stake Sizing", True,
+         "Conservative anti-ruin fractional Kelly staking on all recommendations."),
+        (f"Ugandan Time (EAT, UTC+3) Display", True,
+         "All kickoff times shown in East Africa Time for Uganda bettors."),
+        ("Gemini AI Match Previews", is_gemini_enabled(),
+         "AI-generated 2-3 sentence match previews using Poisson outputs. Set GEMINI_API_KEY to enable."),
+        ("Gemini AI Combo Explanations", is_gemini_enabled(),
+         "Natural-language explanation of why a combo was selected. Set GEMINI_API_KEY to enable."),
+        ("Multi-League Auto Ingestion (12 Divisions)", True,
+         "One-click ingest: Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Championship, Eredivisie, Primeira Liga, Belgian Pro, Super Lig, Scottish Prem, Greek SL."),
+        ("Global Live Fixture Fetcher (35+ competitions)", True,
+         "ESPN API covers UEFA, Champions League, Europa, 5 big leagues + 15 secondary + Americas/Africa/Asia."),
+        ("Backtester with Equity Curve", True,
+         "Full historical simulation with win rate, ROI, max drawdown, and trade log."),
+        ("Arbitrage Scanner", True,
+         "Detects multi-bookmaker arbitrage opportunities across all fixture odds lines."),
+    ]
+
+    cap_col1, cap_col2 = st.columns(2)
+    for i, (cap, enabled, tip) in enumerate(_caps):
+        col = cap_col1 if i % 2 == 0 else cap_col2
+        with col:
+            icon = "✅" if enabled else "⚙️"
+            color = "#00C851" if enabled else "#888"
+            col.markdown(
+                f"<div style='padding:6px 0;'>"
+                f"<span style='color:{color};font-weight:600;'>{icon} {cap}</span><br>"
+                f"<span style='color:#666;font-size:12px;'>{tip}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+
+    # ── AI narrative summary ───────────────────────────────────────────────────
+    st.markdown("### 🤖 AI Assessment")
+    if is_gemini_enabled():
+        with st.spinner("Generating AI assessment..."):
+            _ai_summary = gemini_agent_rating_narrative(
+                total_fixtures=_total_fx,
+                total_teams=_total_tr,
+                historical_matches=_hist_fx,
+                win_rate=_bt_win_rate,
+                roi=_bt_roi,
+            )
+        if _ai_summary:
+            st.info(_ai_summary)
+        else:
+            st.caption("AI assessment unavailable — check your Gemini API key.")
+    else:
+        st.info(
+            "💡 **Enable Gemini AI** by pasting your free API key in the sidebar "
+            "to get an AI-generated assessment of the engine's strengths and gaps. "
+            "Get a key at [aistudio.google.com](https://aistudio.google.com/app/apikey)"
+        )
+
+    st.markdown("---")
+
+    # ── Model explainer ───────────────────────────────────────────────────────
+    with st.expander("📐 How the Model Works"):
+        st.markdown("""
+**Dixon-Coles Bivariate Poisson (1997)**
+
+The engine models football scores as two correlated Poisson processes:
+- **Home xG (λ_h)** = league_home_avg × attack_home × (1/defense_away)
+- **Away xG (λ_a)** = league_away_avg × attack_away × (1/defense_home)
+
+A correlation factor **ρ = -0.10** adjusts the probability of low-scoring outcomes (0-0, 1-0, 0-1, 1-1) to match the real-world tendency for draws in tight matches.
+
+**19 markets** are computed from the full score-matrix grid (up to 10×10 goals):
+
+| Category | Markets |
+|---|---|
+| Match Outcome | Home Win (1), Draw (X), Away Win (2) |
+| Double Chance | 1X, X2, 12 |
+| Totals | Over/Under 0.5, 1.5, 2.5, 3.5 |
+| BTTS | Yes, No |
+| Team Goals | Home/Away Over 0.5, Over 1.5 |
+
+**Qualification threshold:** Markets ≥ 85% probability are flagged as bankers.
+
+**Kelly staking:** f* = (b·p − q) / b, capped at ¼ Kelly to limit variance.
+        """)
+
+    with st.expander("📊 Backtest Methodology"):
+        st.markdown(f"""
+**Strategy:** Value-bet — select the highest +EV market per match.
+
+**Staking:** Quarter-Kelly (conservative anti-ruin).
+
+**Universe:** {_hist_fx:,} completed matches with known final scores.
+
+**Bets placed:** {_bt_bets} (matches where +EV opportunity was identified).
+
+**Key metrics:**
+- Win Rate: `{_bt_win_rate:.1f}%` (target: >50%)
+- ROI: `{_bt_roi:+.1f}%` (target: >+5%)
+
+> ⚠️ Backtest results are illustrative. Past performance on historical data does not guarantee future results. Always use responsible bankroll management.
+        """)
+

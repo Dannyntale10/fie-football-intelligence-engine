@@ -235,6 +235,13 @@ MAJOR_DIVISIONS = [
     ("I1", "Serie A"),
     ("D1", "Bundesliga"),
     ("F1", "Ligue 1"),
+    ("E1", "Championship"),
+    ("N1", "Eredivisie"),
+    ("P1", "Primeira Liga"),
+    ("B1", "Belgian Pro League"),
+    ("T1", "Super Lig"),
+    ("SC0", "Scottish Premiership"),
+    ("G1", "Super League Greece"),
 ]
 
 def fetch_all_major_leagues(db: Session, season: str = "2324") -> Dict[str, Any]:

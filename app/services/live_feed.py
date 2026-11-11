@@ -18,14 +18,56 @@ from app.models.fixture import Fixture
 from app.services.fixtures import make_dedupe_key
 
 
+def _next_7_days() -> list:
+    """Generate date param strings for today + next 7 days (ESPN ?dates=YYYYMMDD format)."""
+    from datetime import date, timedelta
+    today = date.today()
+    return [""] + [f"?dates={(today + timedelta(days=i)).strftime('%Y%m%d')}" for i in range(8)]
+
+
 COMPETITION_TARGETS = [
-    # (espn_code, competition_display_name, country, extra_date_params)
-    ("uefa.nations", "UEFA Nations League", "Europe", ["", "?dates=20261112", "?dates=20261113", "?dates=20261114"]),
-    ("eng.1", "Premier League", "England", ["", "?dates=20261121", "?dates=20261122"]),
-    ("esp.1", "La Liga", "Spain", ["", "?dates=20261121", "?dates=20261122"]),
-    ("ita.1", "Serie A", "Italy", ["", "?dates=20261121", "?dates=20261122"]),
-    ("ger.1", "Bundesliga", "Germany", ["", "?dates=20261121", "?dates=20261122"]),
-    ("fra.1", "Ligue 1", "France", ["", "?dates=20261121", "?dates=20261122"]),
+    # Format: (espn_code, display_name, country, date_params)
+    # ── UEFA & International ───────────────────────────────────────────────────
+    ("uefa.nations",        "UEFA Nations League",      "Europe",       _next_7_days()),
+    ("uefa.champions",      "UEFA Champions League",    "Europe",       _next_7_days()),
+    ("uefa.europa",         "UEFA Europa League",       "Europe",       _next_7_days()),
+    ("fifa.worldq.uefa",    "FIFA World Cup Qualifying","Europe",       _next_7_days()),
+    ("fifa.worldq.conmebol","CONMEBOL WC Qualifying",   "South America",_next_7_days()),
+    ("conmebol.copa",       "Copa Libertadores",        "South America",_next_7_days()),
+    # ── Top 5 European Leagues ─────────────────────────────────────────────────
+    ("eng.1",   "Premier League",   "England",     _next_7_days()),
+    ("esp.1",   "La Liga",          "Spain",       _next_7_days()),
+    ("ita.1",   "Serie A",          "Italy",       _next_7_days()),
+    ("ger.1",   "Bundesliga",       "Germany",     _next_7_days()),
+    ("fra.1",   "Ligue 1",          "France",      _next_7_days()),
+    # ── Secondary European Leagues ─────────────────────────────────────────────
+    ("eng.2",   "Championship",     "England",     _next_7_days()),
+    ("ned.1",   "Eredivisie",       "Netherlands", _next_7_days()),
+    ("por.1",   "Primeira Liga",    "Portugal",    _next_7_days()),
+    ("tur.1",   "Super Lig",        "Turkey",      _next_7_days()),
+    ("bel.1",   "Belgian Pro League","Belgium",    _next_7_days()),
+    ("sco.1",   "Scottish Premiership","Scotland", _next_7_days()),
+    ("gre.1",   "Super League Greece","Greece",    _next_7_days()),
+    ("rus.1",   "Russian Premier League","Russia", _next_7_days()),
+    ("aut.1",   "Austrian Bundesliga","Austria",   _next_7_days()),
+    ("cze.1",   "Czech First League","Czech Rep",  _next_7_days()),
+    ("den.1",   "Danish Superliga", "Denmark",     _next_7_days()),
+    ("swe.1",   "Allsvenskan",      "Sweden",      _next_7_days()),
+    ("nor.1",   "Eliteserien",      "Norway",      _next_7_days()),
+    ("swi.1",   "Super League",     "Switzerland", _next_7_days()),
+    ("cro.1",   "HNL",              "Croatia",     _next_7_days()),
+    ("srb.1",   "Super Liga",       "Serbia",      _next_7_days()),
+    # ── Americas ──────────────────────────────────────────────────────────────
+    ("usa.1",   "MLS",              "USA",         _next_7_days()),
+    ("mex.1",   "Liga MX",          "Mexico",      _next_7_days()),
+    ("bra.1",   "Serie A Brazil",   "Brazil",      _next_7_days()),
+    ("arg.1",   "Liga Profesional", "Argentina",   _next_7_days()),
+    # ── Africa & Asia ─────────────────────────────────────────────────────────
+    ("caf.champions",  "CAF Champions League","Africa",    _next_7_days()),
+    ("afc.champions",  "AFC Champions League","Asia",      _next_7_days()),
+    ("jpn.1",   "J1 League",        "Japan",       _next_7_days()),
+    ("aus.1",   "A-League",         "Australia",   _next_7_days()),
+    ("sau.1",   "Saudi Pro League", "Saudi Arabia",_next_7_days()),
 ]
 
 

@@ -59,6 +59,18 @@ with st.sidebar:
         st.info("Start FastAPI in terminal:\n```bash\nuvicorn app.main:app --reload\n```")
 
     st.divider()
+    st.header("🤖 AI Insights (Gemini)")
+    _dash_key = st.text_input(
+        "Gemini API Key",
+        type="password",
+        placeholder="AIza… (optional)",
+        help="Paste your Google Gemini API key to unlock AI match previews & combo explanations.",
+        key="dash_gemini_key",
+    )
+    if _dash_key:
+        os.environ["GEMINI_API_KEY"] = _dash_key
+
+    st.divider()
     st.header("⚙️ Thresholds")
     st.metric("Qualification Threshold", "85%", help="Markets with probability >= 85% qualify for shortlisting.")
     st.metric("Data-Quality Minimum", "70 / 100", help="Fixtures must achieve grade A or B (>= 70) for model analysis.")
@@ -84,14 +96,15 @@ with st.sidebar:
                 st.error(f"Failed to clear: {e}")
 
 # Main Tabs
-tab_portfolio, tab_fixtures, tab_import, tab_backtest, tab_markets, tab_ratings, tab_connectors = st.tabs([
+tab_portfolio, tab_fixtures, tab_import, tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating = st.tabs([
     "📋 Daily Portfolio",
     "📅 Fixtures & Odds",
     "📥 Ingestion & Import",
     "🧪 Strategy Backtester",
     "📊 Market Probabilities",
     "🛡️ Team Ratings",
-    "🔌 Bookmaker Connectors"
+    "🔌 Bookmaker Connectors",
+    "🏆 Agent Rating",
 ])
 
 # TAB 0: Daily Value Portfolio
@@ -939,3 +952,83 @@ with tab_connectors:
             st.error(f"Could not load connectors: {e}")
     else:
         st.warning("Backend offline.")
+
+
+# TAB 7: Agent Rating
+with tab_agent_rating:
+    st.subheader("🏆 FIE Agent Intelligence Rating")
+    st.caption("Live scorecard — prediction engine capabilities, data coverage, and backtest performance.")
+
+    if not backend_online:
+        st.warning("Start the FastAPI backend to view the agent rating.")
+    else:
+        try:
+            h = health_data
+            _total_fx = h.get("total_fixtures", 0)
+            # Fetch quick stats via API
+            _ratings_res = requests.get(f"{API_BASE}/ratings", timeout=4)
+            _total_tr = len(_ratings_res.json()) if _ratings_res.status_code == 200 else 0
+        except Exception:
+            _total_fx = 0
+            _total_tr = 0
+
+        _bt_win_rate, _bt_roi, _bt_bets = 0.0, 0.0, 0
+        try:
+            _bt_res = requests.post(f"{API_BASE}/backtest",
+                json={"strategy": "value_bet", "min_ev_percent": 2.0, "staking": "quarter_kelly", "initial_bankroll": 1000.0},
+                timeout=20)
+            if _bt_res.status_code == 200:
+                _bd = _bt_res.json()
+                _bt_win_rate = _bd.get("win_rate_percent", 0.0)
+                _bt_roi = _bd.get("roi_percent", 0.0)
+                _bt_bets = _bd.get("total_bets", 0)
+        except Exception:
+            pass
+
+        def _grade(teams, hist, wr, roi):
+            s = 0
+            if teams >= 80: s += 25
+            elif teams >= 40: s += 15
+            elif teams >= 10: s += 8
+            if hist >= 1500: s += 25
+            elif hist >= 500: s += 15
+            elif hist >= 100: s += 8
+            if wr >= 55: s += 25
+            elif wr >= 48: s += 15
+            elif wr >= 40: s += 8
+            if roi >= 5: s += 25
+            elif roi >= 0: s += 15
+            elif roi >= -5: s += 8
+            if s >= 85: return "A+", "Elite"
+            if s >= 70: return "A", "Strong"
+            if s >= 55: return "B", "Good"
+            if s >= 40: return "C", "Fair"
+            return "D", "Early Stage"
+
+        g, gdesc = _grade(_total_tr, _total_fx, _bt_win_rate, _bt_roi)
+        gc = "#00C851" if g in ("A+", "A") else "#FFBB33" if g == "B" else "#FF8800"
+
+        st.markdown(f"""
+        <div style="background:#161B22;border:2px solid {gc};border-radius:12px;padding:20px;margin-bottom:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <h3 style="margin:0;color:#FFF;">⚽ Football Intelligence Engine</h3>
+                    <p style="margin:4px 0 0;color:#888;font-size:13px;">Dixon-Coles Bivariate Poisson · AI Enhanced · EAT Uganda Time</p>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:48px;font-weight:900;color:{gc};">{g}</div>
+                    <div style="font-size:12px;color:#AAA;">{gdesc}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🛡️ Team Ratings", _total_tr)
+        c2.metric("📜 Fixtures in DB", _total_fx)
+        c3.metric("🎯 Backtest Win Rate", f"{_bt_win_rate:.1f}%" if _bt_bets > 0 else "—")
+        c4.metric("💰 Backtest ROI", f"{_bt_roi:+.1f}%" if _bt_bets > 0 else "—",
+                  delta=f"{_bt_roi:+.1f}%" if _bt_bets > 0 else None)
+
+        st.info("📐 **Model:** Dixon-Coles Bivariate Poisson with ρ=-0.10 · 19 markets · 85%+ banker threshold · Quarter-Kelly staking · 35+ leagues globally · AI previews via Gemini API")
+

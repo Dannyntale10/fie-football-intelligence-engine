@@ -92,13 +92,11 @@ def generate_high_confidence_combos(
         target_date = matchdays[0]["date"]
         target_matchday_info = matchdays[0]
 
-    # Query fixtures
+    # Query ALL scheduled upcoming fixtures — no odds required (pure Poisson model works without bookmaker lines)
     query = (
         select(Fixture)
         .where(Fixture.status == "scheduled")
         .where(Fixture.kickoff_utc > now)
-        .where(Fixture.home_odds.is_not(None))
-        .where(Fixture.away_odds.is_not(None))
         .order_by(Fixture.kickoff_utc)
     )
     if competition:
@@ -125,9 +123,10 @@ def generate_high_confidence_combos(
             continue
 
         probs = analysis.get("all_markets", {})
-        h_odds = f.home_odds
-        d_odds = f.draw_odds or 3.20
-        a_odds = f.away_odds
+        # Use bookmaker odds if available; otherwise derive fair odds from model probability (pure Poisson mode)
+        h_odds = f.home_odds or (round(1.0 / max(0.05, probs.get("home_win", 0.33) * 0.92), 2) if probs.get("home_win", 0) > 0.05 else None)
+        d_odds = f.draw_odds or (round(1.0 / max(0.05, probs.get("draw", 0.27) * 0.92), 2) if probs.get("draw", 0) > 0.05 else 3.20)
+        a_odds = f.away_odds or (round(1.0 / max(0.05, probs.get("away_win", 0.30) * 0.92), 2) if probs.get("away_win", 0) > 0.05 else None)
 
         # 1. Direct Home Win
         p_hw = probs.get("home_win", 0.0)

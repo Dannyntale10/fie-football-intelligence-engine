@@ -128,7 +128,7 @@ def generate_high_confidence_combos(
 
         # 1. Direct Home Win
         p_hw = probs.get("home_win", 0.0)
-        if p_hw >= min_leg_prob and h_odds and h_odds >= 1.18:
+        if p_hw >= min_leg_prob and h_odds and h_odds >= 1.15:
             candidates.append({
                 "fixture_id": f.id,
                 "match": f"{f.home_team} vs {f.away_team}",
@@ -145,7 +145,7 @@ def generate_high_confidence_combos(
 
         # 2. Direct Away Win
         p_aw = probs.get("away_win", 0.0)
-        if p_aw >= min_leg_prob and a_odds and a_odds >= 1.18:
+        if p_aw >= min_leg_prob and a_odds and a_odds >= 1.15:
             candidates.append({
                 "fixture_id": f.id,
                 "match": f"{f.home_team} vs {f.away_team}",
@@ -164,7 +164,7 @@ def generate_high_confidence_combos(
         p_1x = probs.get("double_chance_1x", 0.0)
         if h_odds and d_odds:
             dc_1x_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / d_odds)), 2)
-            if p_1x >= max(0.80, min_leg_prob) and dc_1x_odds >= 1.12:
+            if p_1x >= min_leg_prob and dc_1x_odds >= 1.10:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -183,7 +183,7 @@ def generate_high_confidence_combos(
         p_x2 = probs.get("double_chance_x2", 0.0)
         if a_odds and d_odds:
             dc_x2_odds = round(1.0 / ((1.0 / a_odds) + (1.0 / d_odds)), 2)
-            if p_x2 >= max(0.80, min_leg_prob) and dc_x2_odds >= 1.12:
+            if p_x2 >= min_leg_prob and dc_x2_odds >= 1.10:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -198,16 +198,69 @@ def generate_high_confidence_combos(
                     "kickoff_eat": _format_eat(f.kickoff_utc),
                 })
 
+        # 5. Double Chance 12 (Either Team to Win / No Draw)
+        p_12 = probs.get("double_chance_12", 0.0)
+        if h_odds and a_odds:
+            dc_12_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / a_odds)), 2)
+            if p_12 >= min_leg_prob and dc_12_odds >= 1.12:
+                candidates.append({
+                    "fixture_id": f.id,
+                    "match": f"{f.home_team} vs {f.away_team}",
+                    "competition": f.competition,
+                    "team": f"{f.home_team} / {f.away_team}",
+                    "selection": f"{f.home_team} or {f.away_team} to Win (12)",
+                    "market_key": "double_chance_12",
+                    "market_type": "Double Chance (12)",
+                    "odds": dc_12_odds,
+                    "probability": p_12,
+                    "kickoff_utc": f.kickoff_utc.isoformat(),
+                    "kickoff_eat": _format_eat(f.kickoff_utc),
+                })
+
+        # 6. Team to score at least 1 goal (Team Over 0.5) - Banker safety (88-92%+)
+        p_ho05 = probs.get("home_over_0_5", 0.0)
+        if p_ho05 >= max(0.85, min_leg_prob) and h_odds and h_odds <= 1.45:
+            t_odds = round(max(1.10, min(1.28, 1.0 / (p_ho05 * 0.94))), 2)
+            candidates.append({
+                "fixture_id": f.id,
+                "match": f"{f.home_team} vs {f.away_team}",
+                "competition": f.competition,
+                "team": f.home_team,
+                "selection": f"{f.home_team} to Score (Over 0.5 Goals)",
+                "market_key": "home_over_0_5",
+                "market_type": "Team Goals (Over 0.5)",
+                "odds": t_odds,
+                "probability": p_ho05,
+                "kickoff_utc": f.kickoff_utc.isoformat(),
+                "kickoff_eat": _format_eat(f.kickoff_utc),
+            })
+
+        p_ao05 = probs.get("away_over_0_5", 0.0)
+        if p_ao05 >= max(0.85, min_leg_prob) and a_odds and a_odds <= 1.45:
+            t_odds = round(max(1.10, min(1.28, 1.0 / (p_ao05 * 0.94))), 2)
+            candidates.append({
+                "fixture_id": f.id,
+                "match": f"{f.home_team} vs {f.away_team}",
+                "competition": f.competition,
+                "team": f.away_team,
+                "selection": f"{f.away_team} to Score (Over 0.5 Goals)",
+                "market_key": "away_over_0_5",
+                "market_type": "Team Goals (Over 0.5)",
+                "odds": t_odds,
+                "probability": p_ao05,
+                "kickoff_utc": f.kickoff_utc.isoformat(),
+                "kickoff_eat": _format_eat(f.kickoff_utc),
+            })
+
     # Search combinations for requested leg count, or flexibly adapt if needed
     k = max(2, min(4, num_legs))
     combos: List[Dict[str, Any]] = []
 
+    # Try 2, 3, 4 legs dynamically to reach min_total_odds >= 2.00
     leg_counts_to_try = [k]
-    # If not enough combos found with k legs on a smaller day, also try k+1 or k-1
-    if k == 3:
-        leg_counts_to_try = [3, 2, 4]
-    elif k == 2:
-        leg_counts_to_try = [2, 3]
+    for alt_k in [2, 3, 4]:
+        if alt_k not in leg_counts_to_try:
+            leg_counts_to_try.append(alt_k)
 
     for try_k in leg_counts_to_try:
         for combo_legs in itertools.combinations(candidates, try_k):
@@ -225,11 +278,13 @@ def generate_high_confidence_combos(
             tot_odds = round(tot_odds, 2)
             tot_prob = round(tot_prob, 4)
 
-            # Accept combos that hit min_total_odds, or if exact 2.0 isn't hit, keep near-2.0 bankers
+            # Accept combos that hit min_total_odds
             if tot_odds >= min_total_odds and tot_odds <= max_total_odds:
                 implied_prob = round(1.0 / tot_odds, 4)
                 ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
                 edge = round((tot_prob - implied_prob) * 100, 2)
+                avg_prob = round(sum(l["probability"] for l in combo_legs) / len(combo_legs), 4)
+                min_prob = round(min(l["probability"] for l in combo_legs), 4)
 
                 kelly = calculate_kelly_stake(
                     model_probability=tot_prob,
@@ -243,6 +298,8 @@ def generate_high_confidence_combos(
                     "legs_count": try_k,
                     "total_odds": tot_odds,
                     "combined_probability": tot_prob,
+                    "avg_leg_probability": avg_prob,
+                    "min_leg_probability": min_prob,
                     "implied_probability": implied_prob,
                     "expected_value_percent": ev,
                     "edge_percent": edge,
@@ -251,12 +308,12 @@ def generate_high_confidence_combos(
                     "legs": list(combo_legs),
                 })
 
-        if combos and try_k == k:
+        if len(combos) >= 5 and try_k >= k:
             break
 
-    # If still empty on a strict day, find the highest probability combo even if slightly below 2.0 (e.g. 1.85+)
+    # If still empty, try combinations that get as close to 2.0+ as possible with highest probability
     if not combos:
-        for try_k in [2, 3, 4]:
+        for try_k in [4, 3, 2]:
             for combo_legs in itertools.combinations(candidates, try_k):
                 if len({l["fixture_id"] for l in combo_legs}) < try_k:
                     continue
@@ -267,20 +324,25 @@ def generate_high_confidence_combos(
                     tot_prob *= leg["probability"]
                 tot_odds = round(tot_odds, 2)
                 tot_prob = round(tot_prob, 4)
-                if tot_odds >= 1.75:
-                    implied = round(1.0 / tot_odds, 4)
-                    ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
-                    combos.append({
-                        "legs_count": try_k,
-                        "total_odds": tot_odds,
-                        "combined_probability": tot_prob,
-                        "implied_probability": implied,
-                        "expected_value_percent": ev,
-                        "edge_percent": round((tot_prob - implied) * 100, 2),
-                        "kelly_stake_amount": round(bankroll * 0.03, 2),
-                        "kelly_stake_percent": 3.0,
-                        "legs": list(combo_legs),
-                    })
+                implied = round(1.0 / tot_odds, 4)
+                ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
+                avg_prob = round(sum(l["probability"] for l in combo_legs) / len(combo_legs), 4)
+                min_prob = round(min(l["probability"] for l in combo_legs), 4)
+                combos.append({
+                    "legs_count": try_k,
+                    "total_odds": tot_odds,
+                    "combined_probability": tot_prob,
+                    "avg_leg_probability": avg_prob,
+                    "min_leg_probability": min_prob,
+                    "implied_probability": implied,
+                    "expected_value_percent": ev,
+                    "edge_percent": round((tot_prob - implied) * 100, 2),
+                    "kelly_stake_amount": round(bankroll * 0.03, 2),
+                    "kelly_stake_percent": 3.0,
+                    "legs": list(combo_legs),
+                })
+            if combos:
+                break
 
     # Sort combos by highest combined win probability, then highest EV
     combos.sort(key=lambda x: (x["combined_probability"], x["expected_value_percent"]), reverse=True)

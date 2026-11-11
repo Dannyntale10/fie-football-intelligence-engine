@@ -53,6 +53,7 @@ from app.services.seeder import (                      # noqa: E402
     fetch_live_upcoming_fixtures,
     fetch_historical_league_season,
 )
+from app.services.live_feed import fetch_live_upcoming_fixtures_espn  # noqa: E402
 from app.services.backtest import run_backtest          # noqa: E402
 from app.services.portfolio import build_daily_portfolio  # noqa: E402
 from app.connectors.bookmakers import BOOKMAKERS       # noqa: E402
@@ -572,15 +573,28 @@ with tab_import:
     feed1, feed2 = st.columns(2)
 
     with feed1:
-        st.markdown("#### 1. Upcoming Matches & Live Odds")
+        st.markdown("#### 1. Live Games (Tomorrow & Weekend)")
         st.write(
-            "Fetches **160+ real upcoming European matches** across England, Spain, Germany, "
-            "Italy, France, and more — with multi-bookmaker odds from football-data.co.uk."
+            "Fetches **real upcoming matches** (UEFA Nations League tomorrow + European domestic rounds) "
+            "with **real-time live DraftKings odds**."
         )
         if st.button(
-            "⚡ Fetch Real Upcoming Matches (160+ Games)",
+            "🟢 Fetch Live Upcoming Games (DraftKings Odds)",
             type="primary", use_container_width=True,
         ):
+            with st.spinner("Downloading live upcoming matches and DraftKings odds…"):
+                db_live = _db()
+                try:
+                    result = fetch_live_upcoming_fixtures_espn(db_live)
+                    st.success(f"✅ {result['message']}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Live fetch error: {e}")
+                finally:
+                    db_live.close()
+
+        st.caption("Or fetch club league batch from football-data.co.uk:")
+        if st.button("📥 Fetch Football-Data.co.uk Batch", use_container_width=True):
             with st.spinner("Downloading upcoming fixtures and live odds…"):
                 db_u = _db()
                 try:

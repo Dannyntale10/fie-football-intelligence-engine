@@ -398,13 +398,30 @@ with tab_import:
     feed_col1, feed_col2 = st.columns(2)
 
     with feed_col1:
-        st.markdown("#### 1. Upcoming Matches & Live Odds")
-        st.write("Fetches **160+ real upcoming European matches** across England, Spain, Germany, Italy, and more with live multi-bookmaker odds.")
-        if st.button("⚡ Fetch Real Upcoming Matches (160+ Games)", type="primary", use_container_width=True):
+        st.markdown("#### 1. Live Games (Tomorrow & Weekend)")
+        st.write("Fetches **real upcoming matches** (UEFA Nations League tomorrow + European domestic rounds) with **real-time live DraftKings odds**.")
+        if st.button("🟢 Fetch Live Upcoming Games (DraftKings Odds)", type="primary", use_container_width=True):
             if not backend_online:
                 st.error("Backend is offline. Start FastAPI first.")
             else:
-                with st.spinner("Downloading real upcoming fixtures and odds..."):
+                with st.spinner("Downloading live upcoming matches and DraftKings odds..."):
+                    try:
+                        u_res = requests.post(f"{API_BASE}/fixtures/fetch-live-espn", timeout=15)
+                        if u_res.status_code == 200:
+                            u_data = u_res.json()
+                            st.success(f"✅ {u_data['message']}")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed: {u_res.text}")
+                    except Exception as e:
+                        st.error(f"Fetch error: {e}")
+
+        st.caption("Or fetch club league batch from football-data.co.uk:")
+        if st.button("📥 Fetch Football-Data.co.uk Batch", use_container_width=True):
+            if not backend_online:
+                st.error("Backend is offline. Start FastAPI first.")
+            else:
+                with st.spinner("Downloading football-data.co.uk fixtures..."):
                     try:
                         u_res = requests.post(f"{API_BASE}/fixtures/fetch-upcoming", timeout=15)
                         if u_res.status_code == 200:

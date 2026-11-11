@@ -34,6 +34,7 @@ from app.services.seeder import (
     fetch_live_upcoming_fixtures,
     fetch_historical_league_season,
 )
+from app.services.live_feed import fetch_live_upcoming_fixtures_espn
 from app.services.backtest import run_backtest
 from app.services.portfolio import build_daily_portfolio
 
@@ -285,6 +286,15 @@ def seed_historical(db: Session = Depends(get_db)):
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to seed historical data: {exc}") from exc
+
+@app.post("/fixtures/fetch-live-espn")
+def api_fetch_live_espn(db: Session = Depends(get_db)):
+    """Fetch real-time upcoming matches with live DraftKings odds across active competitions."""
+    try:
+        return fetch_live_upcoming_fixtures_espn(db)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Failed to fetch live matches: {exc}") from exc
 
 @app.post("/fixtures/fetch-upcoming")
 def api_fetch_upcoming_fixtures(db: Session = Depends(get_db)):

@@ -60,12 +60,25 @@ def _resolve_csv_path(raw_path: str) -> Path:
         return cand2
     return cand1
 
+from datetime import datetime, timezone, timedelta
+
+EAT_TZ = timezone(timedelta(hours=3), name="EAT")
+
+def format_eat(dt_val: Optional[datetime]) -> Optional[str]:
+    """Format UTC datetime into East Africa Time (EAT, UTC+3) for Uganda."""
+    if not dt_val:
+        return None
+    if dt_val.tzinfo is None:
+        dt_val = dt_val.replace(tzinfo=timezone.utc)
+    return dt_val.astimezone(EAT_TZ).strftime("%a %d %b, %H:%M EAT")
+
 def _build_fixture_out(f: Fixture, custom_signals: Optional[dict] = None) -> dict:
     signals = evaluate_fixture_signals(f, custom_signals=custom_signals)
     quality = grade_data_quality(signals)
     return {
         "id": f.id,
         "kickoff_utc": f.kickoff_utc,
+        "kickoff_eat": format_eat(f.kickoff_utc),
         "home_team": f.home_team,
         "away_team": f.away_team,
         "competition": f.competition,

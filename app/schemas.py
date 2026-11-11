@@ -15,6 +15,7 @@ class FixtureQualityRequest(BaseModel):
 class FixtureOut(BaseModel):
     id: int
     kickoff_utc: datetime
+    kickoff_eat: Optional[str] = None
     home_team: str
     away_team: str
     competition: str

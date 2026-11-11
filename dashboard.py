@@ -1,11 +1,30 @@
 from __future__ import annotations
 import io
 import os
+from datetime import datetime, timezone, timedelta
 import requests
 import pandas as pd
 import streamlit as st
 
 API_BASE = os.getenv("FIE_API_URL", "http://127.0.0.1:8000")
+EAT_TZ = timezone(timedelta(hours=3), name="EAT")
+
+def to_eat_str(val) -> str:
+    """Convert UTC timestamp to Ugandan Time (East Africa Time, EAT = UTC+3)."""
+    if not val or pd.isna(val):
+        return ""
+    if isinstance(val, str):
+        try:
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+        except Exception:
+            return val
+    elif isinstance(val, datetime):
+        dt = val
+    else:
+        return str(val)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(EAT_TZ).strftime("%a %d %b, %H:%M EAT")
 
 st.set_page_config(
     page_title="FIE | Football Intelligence Engine",
@@ -131,16 +150,32 @@ with tab_portfolio:
                         st.subheader(f"💰 +EV Value Bets ({len(value_bets)})")
                         if value_bets:
                             vdf = pd.DataFrame(value_bets)
-                            # Pretty column ordering
+                            if "kickoff_eat" not in vdf.columns and "kickoff_utc" in vdf.columns:
+                                vdf["kickoff_eat"] = vdf["kickoff_utc"].apply(to_eat_str)
+                            # Column ordering with Ugandan Time prominent
                             show_cols = [
-                                "kickoff_utc", "match", "competition", "market",
+                                "kickoff_eat", "match", "competition", "market",
                                 "model_probability", "bookmaker_odds", "implied_probability",
                                 "edge_percent", "ev_percent", "kelly_stake_percent", "kelly_stake_amount",
                                 "lambda_source",
                             ]
                             show_cols = [c for c in show_cols if c in vdf.columns]
                             vdf_display = vdf[show_cols].copy()
-                            vdf_display.columns = [c.replace("_", " ").title() for c in vdf_display.columns]
+                            rename_map = {
+                                "kickoff_eat": "Kickoff (Ugandan Time, EAT)",
+                                "match": "Match",
+                                "competition": "League",
+                                "market": "Selection",
+                                "model_probability": "Model Prob",
+                                "bookmaker_odds": "Odds",
+                                "implied_probability": "Implied Prob",
+                                "edge_percent": "Edge %",
+                                "ev_percent": "Expected Value (+EV)",
+                                "kelly_stake_percent": "Kelly %",
+                                "kelly_stake_amount": "Stake ($)",
+                                "lambda_source": "Model Source",
+                            }
+                            vdf_display.columns = [rename_map.get(c, c.replace("_", " ").title()) for c in vdf_display.columns]
                             st.dataframe(vdf_display, use_container_width=True, hide_index=True)
 
                             # Export button
@@ -162,10 +197,20 @@ with tab_portfolio:
                         st.subheader(f"🎯 Qualifying Markets ≥85% Confidence ({len(qualifying)})")
                         if qualifying:
                             qdf = pd.DataFrame(qualifying)
-                            q_show = ["kickoff_utc", "match", "competition", "market", "probability", "lambda_source"]
+                            if "kickoff_eat" not in qdf.columns and "kickoff_utc" in qdf.columns:
+                                qdf["kickoff_eat"] = qdf["kickoff_utc"].apply(to_eat_str)
+                            q_show = ["kickoff_eat", "match", "competition", "market", "probability", "lambda_source"]
                             q_show = [c for c in q_show if c in qdf.columns]
                             qdf_display = qdf[q_show].copy()
-                            qdf_display.columns = [c.replace("_", " ").title() for c in qdf_display.columns]
+                            q_rename = {
+                                "kickoff_eat": "Kickoff (Ugandan Time, EAT)",
+                                "match": "Match",
+                                "competition": "League",
+                                "market": "Market",
+                                "probability": "Model Prob",
+                                "lambda_source": "Source",
+                            }
+                            qdf_display.columns = [q_rename.get(c, c.replace("_", " ").title()) for c in qdf_display.columns]
                             st.dataframe(qdf_display, use_container_width=True, hide_index=True)
 
                             csv_q = qdf[q_show].to_csv(index=False).encode("utf-8")
@@ -249,14 +294,19 @@ with tab_fixtures:
 
             st.write(f"Showing **{len(filtered)}** of **{len(df)}** fixtures")
             
-            # Format display table
+            # Format display table with Ugandan Time
+            if "kickoff_eat" not in filtered.columns and "kickoff_utc" in filtered.columns:
+                filtered["kickoff_eat"] = filtered["kickoff_utc"].apply(to_eat_str)
             display_cols = [
-                "id", "kickoff_utc", "home_team", "away_team", "competition",
+                "id", "kickoff_eat", "home_team", "away_team", "competition",
                 "source", "home_odds", "draw_odds", "away_odds",
                 "data_quality_score", "data_quality_grade", "eligible_for_analysis"
             ]
             avail_cols = [c for c in display_cols if c in filtered.columns]
-            st.dataframe(filtered[avail_cols], use_container_width=True, hide_index=True)
+            disp_df = filtered[avail_cols].copy()
+            if "kickoff_eat" in disp_df.columns:
+                disp_df.rename(columns={"kickoff_eat": "Kickoff (Ugandan Time, EAT)"}, inplace=True)
+            st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
             # Fixture Deep-Dive Inspector
             st.markdown("---")

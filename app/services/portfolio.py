@@ -83,6 +83,11 @@ def build_daily_portfolio(
         analysed += 1
         match_label = f"{fixture.home_team} vs {fixture.away_team}"
         kickoff = fixture.kickoff_utc.isoformat() if fixture.kickoff_utc else None
+        eat_tz = timezone(timedelta(hours=3))
+        kickoff_eat = (
+            fixture.kickoff_utc.astimezone(eat_tz).strftime("%a %d %b, %H:%M EAT")
+            if fixture.kickoff_utc else None
+        )
 
         # Collect +EV bets above min_ev_percent
         for vb in result.get("value_bets", []):
@@ -90,6 +95,7 @@ def build_daily_portfolio(
                 value_slip.append({
                     "fixture_id": fixture.id,
                     "kickoff_utc": kickoff,
+                    "kickoff_eat": kickoff_eat,
                     "match": match_label,
                     "competition": fixture.competition,
                     "country": fixture.country,
@@ -111,6 +117,7 @@ def build_daily_portfolio(
             qualifying_slip.append({
                 "fixture_id": fixture.id,
                 "kickoff_utc": kickoff,
+                "kickoff_eat": kickoff_eat,
                 "match": match_label,
                 "competition": fixture.competition,
                 "country": fixture.country,

@@ -100,7 +100,26 @@ def poisson_market_probabilities(
         "away_over_0_5": prob(lambda h, a: a >= 1),
         "away_over_1_5": prob(lambda h, a: a >= 2),
         "either_team_over_1_5": prob(lambda h, a: h >= 2 or a >= 2),
+
+        # Asian Handicap lines
+        "ah_home_minus_0_5": prob(lambda h, a: h > a),
+        "ah_home_minus_1_5": prob(lambda h, a: h >= a + 2),
+        "ah_home_minus_2_5": prob(lambda h, a: h >= a + 3),
+        "ah_away_plus_0_5": prob(lambda h, a: a >= h),
+        "ah_away_plus_1_5": prob(lambda h, a: a + 1 >= h),
+        "ah_away_plus_2_5": prob(lambda h, a: a + 2 >= h),
     }
+
+    # Top 10 most likely exact scorelines
+    sorted_scores = sorted(scores, key=lambda x: x[2], reverse=True)[:10]
+    correct_score_top5 = [
+        {
+            "score": f"{h}-{a}",
+            "probability": round(p, 4),
+            "odds_equiv": round(1.0 / max(0.0001, p), 1)
+        }
+        for h, a, p in sorted_scores
+    ]
 
     # Filter markets that qualify at >= qualification_threshold
     qualifying: List[Dict[str, Any]] = [
@@ -115,6 +134,7 @@ def poisson_market_probabilities(
         "qualification_threshold": qualification_threshold,
         "qualifying_count": len(qualifying),
         "qualifying_markets": qualifying,
+        "correct_score_top5": correct_score_top5,
         "markets": markets,
         # Preserve backwards compatibility keys
         "btts_yes": markets["btts_yes"],
@@ -370,6 +390,7 @@ def analyze_fixture(
         "bookmaker_margin": margin_info,
         "value_bets": value_bets,
         "qualifying_markets": poisson_res["qualifying_markets"],
+        "correct_score_top5": poisson_res.get("correct_score_top5", []),
         "all_markets": markets,
         "data_quality": quality,
     }

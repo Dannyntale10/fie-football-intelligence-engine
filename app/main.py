@@ -42,6 +42,12 @@ from app.services.combo import generate_high_confidence_combos
 
 Base.metadata.create_all(bind=engine)
 
+try:
+    from app.services.scheduler import start_scheduler
+    start_scheduler()
+except Exception:
+    pass
+
 app = FastAPI(
     title=settings.app_name,
     version="0.2.0",

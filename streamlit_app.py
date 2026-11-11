@@ -65,6 +65,21 @@ from app.services.ai_insights import (                 # noqa: E402
     gemini_agent_rating_narrative,
     is_gemini_enabled,
 )
+from app.services.value_score import compute_value_score   # noqa: E402
+from app.services.currency import format_stake, format_stake_dual, get_currency_options  # noqa: E402
+from app.services.pdf_slip import generate_combo_pdf, generate_text_slip  # noqa: E402
+from app.services.h2h import get_h2h_stats                 # noqa: E402
+from app.services.inplay import fetch_live_scores           # noqa: E402
+from app.services.result_tracker import (                  # noqa: E402
+    fetch_and_update_results,
+    calculate_prediction_accuracy,
+)
+from app.services.odds_movement import get_odds_movement    # noqa: E402
+from app.services.ml_ensemble import (                     # noqa: E402
+    ensemble_predict,
+    train_ensemble,
+    is_model_trained,
+)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -187,6 +202,16 @@ with st.sidebar:
         st.caption("Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey)")
 
     st.divider()
+    st.header("💱 Currency & Staking")
+    sel_currency = st.selectbox(
+        "Display Currency",
+        get_currency_options(),
+        index=1,  # Default to UGX (Ugandan Shilling)
+        help="Select display currency for Kelly stakes and ticket slips (UGX, USD, KES, TZS, EUR, GBP)",
+        key="app_currency"
+    )
+
+    st.divider()
     st.header("⚙️ Engine Defaults")
     st.metric("Qualification Threshold", "85%",
               help="Markets ≥ 85% probability qualify for shortlisting.")
@@ -227,11 +252,13 @@ with st.sidebar:
 # Tabs
 # ═════════════════════════════════════════════════════════════════════════════
 (
-    tab_portfolio, tab_fixtures, tab_import,
-    tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating,
+    tab_portfolio, tab_fixtures, tab_live, tab_odds_movement,
+    tab_import, tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating,
 ) = st.tabs([
     "📋 Daily Portfolio",
     "📅 Fixtures & Odds",
+    "⚡ Live Scores",
+    "📉 Line Movement",
     "📥 Ingestion & Import",
     "🧪 Strategy Backtester",
     "📊 Market Probabilities",
@@ -322,7 +349,7 @@ with tab_portfolio:
                         <div><span style="color: #888; font-size: 12px;">AVG TEAM CONFIDENCE</span><br><strong style="font-size: 20px; color: #00C851;">{avg_p_val:.1f}% (Bankers)</strong></div>
                         <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #FFF;">{best['combined_probability']*100:.1f}%</strong></div>
                         <div><span style="color: #888; font-size: 12px;">EXPECTED VALUE (+EV)</span><br><strong style="font-size: 20px; color: #00C851;">{best['expected_value_percent']:+.1f}% EV</strong></div>
-                        <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 20px; color: #FFBB33;">${best['kelly_stake_amount']:.2f} ({best['kelly_stake_percent']}%)</strong></div>
+                        <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 18px; color: #FFBB33;">{format_stake_dual(best['kelly_stake_amount'], sel_currency)} ({best['kelly_stake_percent']}%)</strong></div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -346,8 +373,35 @@ with tab_portfolio:
                 slip_text = f"🔥 FIE {best['legs_count']}-TEAM BANKER SLIP (Total Odds: {best['total_odds']:.2f} | Avg Team Win Prob: {avg_p_val:.1f}%)\n"
                 for i, l in enumerate(best["legs"], 1):
                     slip_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f} (Prob: {l['probability']*100:.1f}%) [{l['kickoff_eat']}]\n"
-                slip_text += f"Total Odds: {best['total_odds']:.2f} | Kelly Stake: ${best['kelly_stake_amount']:.2f}"
+                slip_text += f"Total Odds: {best['total_odds']:.2f} | Kelly Stake: {format_stake_dual(best['kelly_stake_amount'], sel_currency)}"
                 st.text_area("📋 Copy Booking Slip Text", slip_text, height=130, key="cloud_slip_text")
+
+                # PDF & Text Slip Download buttons
+                btn_pdf_col, btn_txt_col = st.columns(2)
+                with btn_pdf_col:
+                    try:
+                        pdf_data = generate_combo_pdf(best, matchday_hdr, bankroll=sel_combo_bankroll, currency=sel_currency)
+                        if pdf_data:
+                            st.download_button(
+                                "📄 Download Branded PDF Slip",
+                                data=pdf_data,
+                                file_name=f"fie_ticket_{target_date_val or 'today'}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key="btn_download_pdf"
+                            )
+                    except Exception:
+                        pass
+                with btn_txt_col:
+                    txt_slip = generate_text_slip(best, matchday_hdr, currency=sel_currency)
+                    st.download_button(
+                        "📋 Download Text Slip",
+                        data=txt_slip.encode("utf-8"),
+                        file_name=f"fie_ticket_{target_date_val or 'today'}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="btn_download_txt"
+                    )
 
                 # AI Combo Explanation
                 combo_explain = gemini_combo_explanation(
@@ -670,6 +724,63 @@ with tab_fixtures:
                 else:
                     st.write("No markets reached the qualification threshold for this match.")
 
+                # 🌟 Value Score
+                val_data = compute_value_score(fx, a_data)
+                st.markdown(f"""
+                <div style="background: rgba(0,200,81,0.08); border: 1px solid #00C851; border-radius: 8px; padding: 10px 16px; margin: 12px 0;">
+                    <span style="font-weight: bold; font-size: 15px; color: #00C851;">💎 Match Value Index: {val_data['score']}/100 ({val_data['label']})</span>
+                    <span style="color: #AAA; font-size: 12px; margin-left: 15px;">Data Quality: {val_data['components']['data_quality_pts']}pt · EV Edge: {val_data['components']['ev_pts']}pt · Banker Confidence: {val_data['components']['qualifying_market_pts']}pt</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # 🤝 Head-to-Head Analytics
+                try:
+                    db_h2h = _db()
+                    h2h_data = get_h2h_stats(db_h2h, fx.home_team, fx.away_team)
+                    db_h2h.close()
+                    if h2h_data.get("total", 0) > 0:
+                        st.markdown("###### 🤝 Head-to-Head History")
+                        h_c1, h_c2, h_c3, h_c4 = st.columns(4)
+                        h_c1.metric(f"{fx.home_team} Wins", h2h_data["home_wins"], delta=f"In {h2h_data['total']} meetings")
+                        h_c2.metric("Draws", h2h_data["draws"])
+                        h_c3.metric(f"{fx.away_team} Wins", h2h_data["away_wins"])
+                        h_c4.metric("Avg Match Goals", f"{h2h_data['avg_total_goals']:.2f}")
+                        if h2h_data.get("last_5_results"):
+                            st.caption(f"Last meetings form: **{' - '.join(h2h_data['last_5_results'])}**")
+                except Exception:
+                    pass
+
+                # 🎯 Top 5 Most Likely Exact Scorelines
+                cs_list = a_data.get("correct_score_top5", [])
+                if cs_list:
+                    st.markdown("###### 🎯 Top 5 Exact Correct Score Predictions")
+                    cs_cols = st.columns(min(5, len(cs_list)))
+                    for idx_cs, cs in enumerate(cs_list[:5]):
+                        with cs_cols[idx_cs]:
+                            st.metric(
+                                label=f"Score {cs['score']}",
+                                value=f"{cs['probability']*100:.1f}%",
+                                delta=f"≈ {cs['odds_equiv']:.1f} Fair Odds",
+                                delta_color="off"
+                            )
+
+                # ⚡ Asian Handicap lines
+                all_m = a_data.get("all_markets", {})
+                ah_keys = [
+                    ("Home -0.5", "ah_home_minus_0_5"),
+                    ("Home -1.5", "ah_home_minus_1_5"),
+                    ("Away +0.5", "ah_away_plus_0_5"),
+                    ("Away +1.5", "ah_away_plus_1_5"),
+                ]
+                has_ah = any(k in all_m for _, k in ah_keys)
+                if has_ah:
+                    st.markdown("###### ⚡ Asian Handicap Lines")
+                    ah_cols = st.columns(4)
+                    for idx_ah, (lbl, k) in enumerate(ah_keys):
+                        with ah_cols[idx_ah]:
+                            prob_val = all_m.get(k, 0.0)
+                            st.metric(lbl, f"{prob_val*100:.1f}%", delta=f"Fair: {round(1.0/max(0.01, prob_val), 2):.2f}" if prob_val > 0.01 else None)
+
                 # Best Odds across bookmakers
                 st.markdown("---")
                 st.write("##### 🔖 Best Odds Line-Shopping (Multi-Bookmaker)")
@@ -724,6 +835,108 @@ with tab_fixtures:
                         "No multi-bookmaker odds available for this fixture. "
                         "Fetch upcoming fixtures to populate Pinnacle / MaxOdds columns."
                     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB — LIVE IN-PLAY SCORES
+# ═════════════════════════════════════════════════════════════════════════════
+with tab_live:
+    st.subheader("⚡ Real-Time Live In-Play & Today's Matches")
+    st.caption("Live score tracker across 17+ leagues directly from real-time ESPN scoreboard.")
+
+    c_live_btn, c_live_space = st.columns([2, 5])
+    with c_live_btn:
+        if st.button("🔄 Refresh Live Scores", use_container_width=True, key="btn_refresh_live"):
+            st.rerun()
+
+    db_live = _db()
+    try:
+        with st.spinner("Fetching live in-play scoreboard…"):
+            live_matches = fetch_live_scores(db_live)
+    except Exception as e:
+        live_matches = []
+        st.error(f"Error fetching live scores: {e}")
+    finally:
+        db_live.close()
+
+    if not live_matches:
+        st.info("No matches in play right now. Games scheduled for today will automatically show live minute-by-minute scores here once kicked off.")
+    else:
+        in_play = [m for m in live_matches if m["is_live"]]
+        finished_today = [m for m in live_matches if m["is_finished"]]
+        pre_match = [m for m in live_matches if not m["is_live"] and not m["is_finished"]]
+
+        if in_play:
+            st.markdown(f"#### 🔴 In-Play Right Now ({len(in_play)} matches)")
+            for m in in_play:
+                st.markdown(f"""
+                <div style="background: rgba(255, 68, 68, 0.12); border: 1px solid #FF4444; border-radius: 8px; padding: 12px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="font-size: 16px; font-weight: bold; color: #FFF;">{m['home_team']} &nbsp;<span style="color: #FF4444;">{m['home_score']} – {m['away_score']}</span>&nbsp; {m['away_team']}</span>
+                        <div style="font-size: 12px; color: #AAA;">{m['competition']} · {m['status_desc']}</div>
+                    </div>
+                    <span style="background: #FF4444; color: #FFF; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;">⏱️ {m['clock']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+        if pre_match:
+            st.markdown(f"#### 🕐 Scheduled Today ({len(pre_match)} matches)")
+            pre_df = pd.DataFrame([{
+                "Match": f"{m['home_team']} vs {m['away_team']}",
+                "League": m["competition"],
+                "Kickoff (EAT)": m["kickoff_eat"] or m["status_desc"],
+                "Status": m["status_desc"],
+            } for m in pre_match])
+            st.dataframe(pre_df, use_container_width=True, hide_index=True)
+
+        if finished_today:
+            st.markdown(f"#### ✅ Today's Results ({len(finished_today)} matches)")
+            fin_df = pd.DataFrame([{
+                "Match": f"{m['home_team']} {m['home_score']} – {m['away_score']} {m['away_team']}",
+                "League": m["competition"],
+                "Final Score": f"{m['home_score']} - {m['away_score']}",
+                "Status": m["status_desc"],
+            } for m in finished_today])
+            st.dataframe(fin_df, use_container_width=True, hide_index=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB — ODDS LINE MOVEMENT
+# ═════════════════════════════════════════════════════════════════════════════
+with tab_odds_movement:
+    st.subheader("📉 Odds Movement & Sharp Money Tracker")
+    st.caption("Tracks line movement between opening lines and current market odds. Big drops indicate sharp (smart money) action.")
+
+    db_om = _db()
+    try:
+        moves = get_odds_movement(db_om, upcoming_only=True)
+    except Exception as e:
+        moves = []
+        st.error(f"Error checking odds movement: {e}")
+    finally:
+        db_om.close()
+
+    if not moves:
+        st.info("No significant odds movement (>8% shift) recorded yet. As matches approach kickoff and opening odds are tracked, sharp line changes will be highlighted here.")
+    else:
+        st.success(f"⚡ Detected **{len(moves)} match(es)** with notable line movement!")
+        for mv in moves:
+            badge_color = "#FF4444" if "SHARP" in mv["sharp_signal"] else "#FFBB33"
+            st.markdown(f"""
+            <div style="background: rgba(22, 27, 34, 0.8); border: 1px solid {badge_color}; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="font-size: 15px; color: #FFF;">{mv['match']} ({mv['competition']})</strong>
+                    <span style="background: {badge_color}; color: #000; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: bold;">{mv['sharp_signal']}</span>
+                </div>
+                <div style="margin-top: 6px; font-size: 13px; color: #DDD;">
+                    {" &nbsp;•&nbsp; ".join(mv['signals'])}
+                </div>
+                <div style="margin-top: 4px; font-size: 11px; color: #888;">
+                    Opening: H {mv['opening_odds']['home'] or '—'} / D {mv['opening_odds']['draw'] or '—'} / A {mv['opening_odds']['away'] or '—'} &nbsp;➔&nbsp; 
+                    Current: H {mv['current_odds']['home'] or '—'} / D {mv['current_odds']['draw'] or '—'} / A {mv['current_odds']['away'] or '—'}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1337,6 +1550,59 @@ with tab_agent_rating:
             "to get an AI-generated assessment of the engine's strengths and gaps. "
             "Get a key at [aistudio.google.com](https://aistudio.google.com/app/apikey)"
         )
+
+    st.markdown("---")
+
+    # ── Machine Learning Ensemble Model ────────────────────────────────────────
+    st.markdown("### 🤖 Gradient Boosted Machine (GBM) Ensemble")
+    col_ml_stat, col_ml_act = st.columns([3, 1])
+    with col_ml_stat:
+        if is_model_trained():
+            st.success("✅ **GBM Model Trained & Active** — blending 60% Dixon-Coles Poisson + 40% Gradient Boosting Classifier.")
+        else:
+            st.warning("⚠️ **Ensemble Not Trained** — Currently running pure Dixon-Coles Poisson mode.")
+    with col_ml_act:
+        if st.button("🧠 Train Ensemble Model", use_container_width=True, key="btn_train_ensemble"):
+            db_train = _db()
+            with st.spinner("Training GradientBoostingClassifier on 1,750+ historical matches…"):
+                train_res = train_ensemble(db_train)
+            db_train.close()
+            if train_res.get("status") == "success":
+                st.success(train_res["message"])
+                st.rerun()
+            else:
+                st.error(train_res.get("message", "Training error."))
+
+    st.markdown("---")
+
+    # ── Prediction Accuracy & Result Tracker ───────────────────────────────────
+    st.markdown("### 🎯 Live Model Accuracy & Result Tracker")
+    col_acc_btn, col_acc_msg = st.columns([2, 5])
+    with col_acc_btn:
+        if st.button("🔄 Sync Finished Scores", use_container_width=True, key="btn_sync_scores", help="Fetch final scores for matches that finished recently"):
+            db_sc = _db()
+            with st.spinner("Fetching final scores from ESPN…"):
+                res_sc = fetch_and_update_results(db_sc)
+            db_sc.close()
+            st.toast(f"Updated {res_sc['updated']} finished scores.")
+            st.rerun()
+
+    db_acc = _db()
+    try:
+        acc_stats = calculate_prediction_accuracy(db_acc, days=30)
+    except Exception:
+        acc_stats = {"total_matches": 0, "accuracy_percent": 0.0, "details": []}
+    finally:
+        db_acc.close()
+
+    acc_col1, acc_col2, acc_col3 = st.columns(3)
+    acc_col1.metric("Matches Evaluated (30d)", acc_stats.get("total_matches", 0))
+    acc_col2.metric("Correct Predictions", acc_stats.get("correct_predictions", 0))
+    acc_col3.metric("Prediction Accuracy", f"{acc_stats.get('accuracy_percent', 0.0):.1f}%")
+
+    if acc_stats.get("details"):
+        with st.expander(f"📋 View Recent Predictions Log ({len(acc_stats['details'])} matches)"):
+            st.dataframe(pd.DataFrame(acc_stats["details"]), use_container_width=True, hide_index=True)
 
     st.markdown("---")
 

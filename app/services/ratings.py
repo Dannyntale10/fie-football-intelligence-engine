@@ -26,7 +26,10 @@ def upsert_team_rating(
     competition: str,
     attack_rating: float,
     defense_rating: float,
-    matches_played: int = 1
+    matches_played: int = 1,
+    home_attack_boost: float = 0.0,
+    home_goals_avg: float = 0.0,
+    away_goals_avg: float = 0.0,
 ) -> TeamRating:
     """Create or update a team rating record."""
     clean = clean_team_name(team_name)
@@ -36,6 +39,9 @@ def upsert_team_rating(
         rating.attack_rating = round(attack_rating, 3)
         rating.defense_rating = round(defense_rating, 3)
         rating.matches_played = matches_played
+        rating.home_attack_boost = round(home_attack_boost, 3)
+        rating.home_goals_avg = round(home_goals_avg, 3)
+        rating.away_goals_avg = round(away_goals_avg, 3)
         rating.updated_at = datetime.now(timezone.utc)
     else:
         rating = TeamRating(
@@ -44,6 +50,9 @@ def upsert_team_rating(
             attack_rating=round(attack_rating, 3),
             defense_rating=round(defense_rating, 3),
             matches_played=matches_played,
+            home_attack_boost=round(home_attack_boost, 3),
+            home_goals_avg=round(home_goals_avg, 3),
+            away_goals_avg=round(away_goals_avg, 3),
         )
         db.add(rating)
     db.commit()
@@ -68,10 +77,11 @@ def estimate_lambdas_from_ratings(
     if not home_r or not away_r:
         return None, None, False
 
-    # Standard attack/defense strength formulation:
-    # home_lambda = home_attack * away_defense * league_avg_home
-    # away_lambda = away_attack * home_defense * league_avg_away
-    home_lam = round(home_r.attack_rating * away_r.defense_rating * league_avg_home, 2)
+    # Standard attack/defense strength formulation with per-team home advantage:
+    home_boost = getattr(home_r, "home_attack_boost", 0.0) or 0.0
+    home_boost_factor = 1.0 + min(0.35, max(0.0, home_boost * 0.25))
+
+    home_lam = round(home_r.attack_rating * away_r.defense_rating * league_avg_home * home_boost_factor, 2)
     away_lam = round(away_r.attack_rating * home_r.defense_rating * league_avg_away, 2)
 
     # Bound to realistic range [0.1, 8.0]
@@ -151,13 +161,21 @@ def calculate_ratings_from_fixtures(db: Session, competition: Optional[str] = No
             away_def = (ts["away_conceded"] / ts["away_matches"]) / avg_h if ts["away_matches"] > 0 else 1.0
             overall_def = (home_def * ts["home_matches"] + away_def * ts["away_matches"]) / total_m
 
+            # Per-team Home Advantage metrics
+            h_avg = (ts["home_scored"] / ts["home_matches"]) if ts["home_matches"] > 0 else avg_h
+            a_avg = (ts["away_scored"] / ts["away_matches"]) if ts["away_matches"] > 0 else avg_a
+            h_boost = max(0.0, (h_avg / max(0.5, a_avg)) - 1.0)
+
             upsert_team_rating(
                 db=db,
                 team_name=team,
                 competition=comp,
                 attack_rating=overall_att,
                 defense_rating=overall_def,
-                matches_played=total_m
+                matches_played=total_m,
+                home_attack_boost=h_boost,
+                home_goals_avg=h_avg,
+                away_goals_avg=a_avg,
             )
             total_updated += 1
 

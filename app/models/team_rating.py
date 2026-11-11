@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
@@ -14,4 +15,7 @@ class TeamRating(Base):
     attack_rating: Mapped[float] = mapped_column(Float, default=1.0)
     defense_rating: Mapped[float] = mapped_column(Float, default=1.0)
     matches_played: Mapped[int] = mapped_column(Integer, default=0)
+    home_attack_boost: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    home_goals_avg: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    away_goals_avg: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

@@ -71,6 +71,16 @@ with st.sidebar:
         os.environ["GEMINI_API_KEY"] = _dash_key
 
     st.divider()
+    st.header("💱 Currency & Staking")
+    dash_currency = st.selectbox(
+        "Display Currency",
+        ["UGX", "USD", "KES", "TZS", "EUR", "GBP"],
+        index=0,
+        help="Select display currency for Kelly stakes and ticket slips (UGX, USD, KES, etc.)",
+        key="dash_currency"
+    )
+
+    st.divider()
     st.header("⚙️ Thresholds")
     st.metric("Qualification Threshold", "85%", help="Markets with probability >= 85% qualify for shortlisting.")
     st.metric("Data-Quality Minimum", "70 / 100", help="Fixtures must achieve grade A or B (>= 70) for model analysis.")
@@ -96,9 +106,11 @@ with st.sidebar:
                 st.error(f"Failed to clear: {e}")
 
 # Main Tabs
-tab_portfolio, tab_fixtures, tab_import, tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating = st.tabs([
+tab_portfolio, tab_fixtures, tab_live, tab_odds_movement, tab_import, tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating = st.tabs([
     "📋 Daily Portfolio",
     "📅 Fixtures & Odds",
+    "⚡ Live Scores",
+    "📉 Line Movement",
     "📥 Ingestion & Import",
     "🧪 Strategy Backtester",
     "📊 Market Probabilities",
@@ -531,6 +543,64 @@ with tab_fixtures:
                                 pass
                 except Exception as e:
                     st.error(f"Error inspecting fixture: {e}")
+
+# TAB: Live Scores
+with tab_live:
+    st.subheader("⚡ Real-Time Live In-Play & Today's Matches")
+    st.caption("Live score tracker across 17+ leagues directly from real-time ESPN scoreboard.")
+    if st.button("🔄 Refresh Live Scores", use_container_width=True, key="dash_btn_refresh_live"):
+        st.rerun()
+
+    try:
+        from app.database import get_db
+        from app.services.inplay import fetch_live_scores
+        db_l = next(get_db())
+        l_matches = fetch_live_scores(db_l)
+        db_l.close()
+    except Exception as e:
+        l_matches = []
+        st.error(f"Error fetching live scores: {e}")
+
+    if not l_matches:
+        st.info("No matches in play right now. Games scheduled for today will automatically show live scores here once kicked off.")
+    else:
+        in_p = [m for m in l_matches if m["is_live"]]
+        if in_p:
+            st.markdown(f"#### 🔴 In-Play Right Now ({len(in_p)} matches)")
+            for m in in_p:
+                st.markdown(f"**{m['home_team']} {m['home_score']} – {m['away_score']} {m['away_team']}** ⏱️ {m['clock']} · {m['competition']}")
+        rem = [m for m in l_matches if not m["is_live"]]
+        if rem:
+            st.markdown(f"#### 📋 Other Matches Today ({len(rem)} matches)")
+            st.dataframe(pd.DataFrame([{
+                "Match": f"{m['home_team']} vs {m['away_team']}",
+                "League": m["competition"],
+                "Score / Status": f"{m['home_score']} - {m['away_score']}" if m["is_finished"] else m["status_desc"],
+                "Kickoff (EAT)": m["kickoff_eat"],
+            } for m in rem]), use_container_width=True, hide_index=True)
+
+# TAB: Line Movement
+with tab_odds_movement:
+    st.subheader("📉 Odds Line Movement Tracker")
+    st.caption("Tracks line movement between opening lines and current market odds. Big drops indicate sharp money action.")
+    try:
+        from app.database import get_db
+        from app.services.odds_movement import get_odds_movement
+        db_om = next(get_db())
+        moves = get_odds_movement(db_om, upcoming_only=True)
+        db_om.close()
+    except Exception as e:
+        moves = []
+        st.error(f"Error checking odds movement: {e}")
+
+    if not moves:
+        st.info("No significant odds movement recorded yet. Sharp movements (>8% shift) will appear here.")
+    else:
+        for mv in moves:
+            st.markdown(f"**{mv['sharp_signal']} — {mv['match']}** ({mv['competition']})")
+            for sig in mv["signals"]:
+                st.write(f"  → {sig}")
+            st.divider()
 
 # TAB 2: Ingestion & Import
 with tab_import:

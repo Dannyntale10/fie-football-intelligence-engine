@@ -333,145 +333,76 @@ with tab_portfolio:
                             st.caption(" • ".join([f"{l['selection']} @ {l['odds']:.2f} ({l['probability']*100:.1f}%)" for l in alt["legs"]]))
 
     st.markdown("---")
-    st.markdown("### 📋 Individual Value Bets & Qualification Scan")
+    # ── MATCHES FOR SELECTED DAY ──────────────────────────────────────────────
+    day_label_hdr = target_date_val if target_date_val and target_date_val != "all" else "Selected Matchday"
+    for d in avail_days:
+        if d.get("date") == target_date_val:
+            day_label_hdr = d.get("label", day_label_hdr)
+            break
+    if target_date_val == "all":
+        day_label_hdr = "All Upcoming Matchdays"
 
-    pf_c1, pf_c2, pf_c3, pf_c4 = st.columns(4)
-    with pf_c1:
-        pf_days = st.slider("Look-ahead window (days)", 1, 14, 7)
-    with pf_c2:
-        pf_bankroll = st.number_input("Bankroll ($)", 50.0, 1_000_000.0, 1000.0, 50.0)
-    with pf_c3:
-        pf_min_ev = st.slider("Min +EV %", 0.0, 15.0, 0.0, 0.5,
-                              help="Only show bets where model EV exceeds this threshold")
-    with pf_c4:
-        pf_kelly = st.selectbox(
-            "Kelly Fraction",
-            [0.25, 0.5, 1.0],
-            format_func=lambda x: {
-                0.25: "¼ Quarter Kelly (Recommended)",
-                0.5:  "½ Half Kelly",
-                1.0:  "Full Kelly (Aggressive)",
-            }[x],
-        )
+    st.subheader(f"📅 Matches Playing on {day_label_hdr} (Ugandan Time, EAT)")
 
-    pf_comp = st.text_input(
-        "Filter by competition (optional)",
-        placeholder="e.g. Premier League, La Liga, Bundesliga…"
-    )
+    db_fx_day = _db()
+    try:
+        now_utc = datetime.now(timezone.utc)
+        query = select(Fixture).where(Fixture.status == "scheduled").where(Fixture.kickoff_utc >= now_utc).order_by(Fixture.kickoff_utc)
+        all_fx = db_fx_day.scalars(query).all()
+        day_matches = []
+        for f in all_fx:
+            dt_f = f.kickoff_utc
+            if dt_f.tzinfo is None:
+                dt_f = dt_f.replace(tzinfo=timezone.utc)
+            f_day = dt_f.astimezone(EAT_TZ).strftime("%Y-%m-%d")
+            if target_date_val and target_date_val != "all" and f_day != target_date_val:
+                continue
 
-    if st.button("🔍 Build Daily Value Portfolio", type="primary", use_container_width=True):
-        with st.spinner("Scanning upcoming fixtures for +EV opportunities…"):
-            db_pf = _db()
-            try:
-                pf_data = build_daily_portfolio(
-                    db=db_pf,
-                    days_ahead=pf_days,
-                    min_ev_percent=pf_min_ev,
-                    bankroll=pf_bankroll,
-                    kelly_fraction=pf_kelly,
-                    competition=pf_comp.strip() if pf_comp.strip() else None,
-                )
-            except Exception as e:
-                st.error(f"Portfolio error: {e}")
-                db_pf.close()
-                st.stop()
-            finally:
-                db_pf.close()
+            h = f.home_odds
+            d = f.draw_odds
+            a = f.away_odds
+            fav = "—"
+            if h and a:
+                if h < a and h <= 1.45:
+                    fav = f"🔥 {f.home_team} to Win ({h:.2f})"
+                elif a < h and a <= 1.45:
+                    fav = f"🔥 {f.away_team} to Win ({a:.2f})"
+                elif h < a:
+                    fav = f"🛡️ {f.home_team} Win or Draw (1X)"
+                else:
+                    fav = f"🛡️ {f.away_team} Win or Draw (X2)"
 
-        summary = pf_data["summary"]
+            eat_time = to_eat_str(f.kickoff_utc)
+            sigs = evaluate_fixture_signals(f)
+            q = grade_data_quality(sigs)
 
-        # ── Summary banner ──────────────────────────────────────────────────
-        sm1, sm2, sm3, sm4, sm5 = st.columns(5)
-        sm1.metric("Fixtures Scanned", summary["fixtures_scanned"])
-        sm2.metric("Analysed", summary["fixtures_analysed"])
-        sm3.metric("Value Bets Found", summary["value_bets_found"])
-        sm4.metric("Qualifying Markets", summary["qualifying_markets_found"])
-        sm5.metric("Total Kelly Exposure", f"${summary['total_kelly_exposure']:.2f}")
+            day_matches.append({
+                "Kickoff (Ugandan Time, EAT)": eat_time,
+                "Match": f"{f.home_team} vs {f.away_team}",
+                "Competition": f.competition,
+                "Home (1)": f"{h:.2f}" if h else "—",
+                "Draw (X)": f"{d:.2f}" if d else "—",
+                "Away (2)": f"{a:.2f}" if a else "—",
+                "Key Banker Selection": fav,
+                "Quality": f"{_grade_color(q['grade'])} Grade {q['grade']}",
+            })
 
-        if summary["fixtures_scanned"] == 0:
-            st.warning(
-                "⚠️ No upcoming fixtures found in the database.\n\n"
-                "Go to the **📥 Ingestion & Import** tab and click "
-                "**⚡ Fetch Real Upcoming Matches** to load 160+ live fixtures."
+        if day_matches:
+            st.caption(f"Showing **{len(day_matches)} matches** scheduled for **{day_label_hdr}**.")
+            m_df = pd.DataFrame(day_matches)
+            st.dataframe(m_df, use_container_width=True, hide_index=True)
+            csv_day = m_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                f"📥 Export {len(day_matches)} Matches as CSV",
+                data=csv_day,
+                file_name=f"fie_matches_{target_date_val or 'all'}.csv",
+                mime="text/csv",
+                use_container_width=True,
             )
         else:
-            st.markdown("---")
-
-            # ── Value Bets ──────────────────────────────────────────────────
-            value_bets = pf_data.get("value_bets", [])
-            st.subheader(f"💰 +EV Value Bets  ({len(value_bets)})")
-            if value_bets:
-                vdf = pd.DataFrame(value_bets)
-                if "kickoff_eat" not in vdf.columns and "kickoff_utc" in vdf.columns:
-                    vdf["kickoff_eat"] = vdf["kickoff_utc"].apply(to_eat_str)
-                show = ["kickoff_eat", "match", "competition", "market",
-                        "model_probability", "bookmaker_odds", "implied_probability",
-                        "edge_percent", "ev_percent",
-                        "kelly_stake_percent", "kelly_stake_amount", "lambda_source"]
-                show = [c for c in show if c in vdf.columns]
-                vdf_disp = vdf[show].copy()
-                rename_map = {
-                    "kickoff_eat": "Kickoff (Ugandan Time, EAT)",
-                    "match": "Match",
-                    "competition": "League",
-                    "market": "Selection",
-                    "model_probability": "Model Prob",
-                    "bookmaker_odds": "Odds",
-                    "implied_probability": "Implied Prob",
-                    "edge_percent": "Edge %",
-                    "ev_percent": "Expected Value (+EV)",
-                    "kelly_stake_percent": "Kelly %",
-                    "kelly_stake_amount": "Stake ($)",
-                    "lambda_source": "Model Source",
-                }
-                vdf_disp.columns = [rename_map.get(c, c.replace("_", " ").title()) for c in vdf_disp.columns]
-                st.dataframe(vdf_disp, use_container_width=True, hide_index=True)
-                csv_vb = vdf[show].to_csv(index=False).encode()
-                st.download_button(
-                    "📥 Export Value Slip as CSV",
-                    data=csv_vb,
-                    file_name=f"fie_value_slip_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-            else:
-                st.info(
-                    "No +EV bets found with current filters. "
-                    "Try lowering the Min +EV % slider or extending the look-ahead window."
-                )
-
-            # ── Qualifying Markets ──────────────────────────────────────────
-            st.markdown("---")
-            qualifying = pf_data.get("qualifying_markets", [])
-            st.subheader(f"🎯 Qualifying Markets ≥ 85% Confidence  ({len(qualifying)})")
-            if qualifying:
-                qdf = pd.DataFrame(qualifying)
-                if "kickoff_eat" not in qdf.columns and "kickoff_utc" in qdf.columns:
-                    qdf["kickoff_eat"] = qdf["kickoff_utc"].apply(to_eat_str)
-                q_show = ["kickoff_eat", "match", "competition", "market",
-                          "probability", "lambda_source"]
-                q_show = [c for c in q_show if c in qdf.columns]
-                qdf_disp = qdf[q_show].copy()
-                q_ren = {
-                    "kickoff_eat": "Kickoff (Ugandan Time, EAT)",
-                    "match": "Match",
-                    "competition": "League",
-                    "market": "Market",
-                    "probability": "Model Prob",
-                    "lambda_source": "Source",
-                }
-                qdf_disp.columns = [q_ren.get(c, c.replace("_", " ").title()) for c in qdf_disp.columns]
-                st.dataframe(qdf_disp, use_container_width=True, hide_index=True)
-                csv_qm = qdf[q_show].to_csv(index=False).encode()
-                st.download_button(
-                    "📥 Export Qualifying Markets as CSV",
-                    data=csv_qm,
-                    file_name=f"fie_qualifying_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-            else:
-                st.info("No markets reached the 85% confidence threshold.")
+            st.info(f"No matches scheduled for {day_label_hdr}.")
+    finally:
+        db_fx_day.close()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

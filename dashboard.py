@@ -219,130 +219,74 @@ with tab_portfolio:
                     st.error(f"Request error: {e}")
 
         st.markdown("---")
-        st.markdown("### 📋 Individual Value Bets & Qualification Scan")
+        # ── MATCHES FOR SELECTED DAY ──────────────────────────────────────────────
+        day_label_hdr = target_date_val if target_date_val and target_date_val != "all" else "Selected Matchday"
+        for d in avail_days:
+            if d.get("date") == target_date_val:
+                day_label_hdr = d.get("label", day_label_hdr)
+                break
+        if target_date_val == "all":
+            day_label_hdr = "All Upcoming Matchdays"
 
-        pf_c1, pf_c2, pf_c3, pf_c4 = st.columns(4)
-        with pf_c1:
-            pf_days = st.slider("Look-ahead (days)", 1, 14, 7)
-        with pf_c2:
-            pf_bankroll = st.number_input("Bankroll ($)", min_value=50.0, max_value=1_000_000.0, value=1000.0, step=100.0)
-        with pf_c3:
-            pf_min_ev = st.slider("Min +EV %", 0.0, 15.0, 0.0, 0.5)
-        with pf_c4:
-            pf_kelly = st.selectbox("Kelly Fraction", [0.25, 0.5, 1.0], format_func=lambda x: {0.25: "¼ Quarter Kelly", 0.5: "½ Half Kelly", 1.0: "Full Kelly"}[x])
+        st.subheader(f"📅 Matches Playing on {day_label_hdr} (Ugandan Time, EAT)")
 
-        pf_comp = st.text_input("Filter by competition (optional)", placeholder="e.g. Premier League")
+        try:
+            f_resp = requests.get(f"{API_BASE}/fixtures", params={"upcoming_only": True, "limit": 300}, timeout=10)
+            if f_resp.status_code == 200:
+                all_fx = f_resp.json()
+                day_matches = []
+                for f in all_fx:
+                    u_str = f.get("kickoff_utc")
+                    if not u_str:
+                        continue
+                    dt_f = datetime.fromisoformat(u_str.replace("Z", "+00:00"))
+                    if dt_f.tzinfo is None:
+                        dt_f = dt_f.replace(tzinfo=timezone.utc)
+                    f_day = dt_f.astimezone(EAT_TZ).strftime("%Y-%m-%d")
+                    if target_date_val and target_date_val != "all" and f_day != target_date_val:
+                        continue
 
-        if st.button("🔍 Build Daily Value Portfolio", type="primary", use_container_width=True):
-            with st.spinner("Scanning all upcoming fixtures for +EV opportunities…"):
-                try:
-                    pf_res = requests.get(
-                        f"{API_BASE}/portfolio/today",
-                        params={
-                            "days_ahead": pf_days,
-                            "bankroll": pf_bankroll,
-                            "min_ev_percent": pf_min_ev,
-                            "kelly_fraction": pf_kelly,
-                            "competition": pf_comp if pf_comp else None,
-                        },
-                        timeout=30,
+                    h = f.get("home_odds")
+                    d = f.get("draw_odds")
+                    a = f.get("away_odds")
+                    fav = "—"
+                    if h and a:
+                        if h < a and h <= 1.45:
+                            fav = f"🔥 {f['home_team']} to Win ({h:.2f})"
+                        elif a < h and a <= 1.45:
+                            fav = f"🔥 {f['away_team']} to Win ({a:.2f})"
+                        elif h < a:
+                            fav = f"🛡️ {f['home_team']} Win or Draw (1X)"
+                        else:
+                            fav = f"🛡️ {f['away_team']} Win or Draw (X2)"
+
+                    day_matches.append({
+                        "Kickoff (Ugandan Time, EAT)": f.get("kickoff_eat") or to_eat_str(f.get("kickoff_utc")),
+                        "Match": f"{f['home_team']} vs {f['away_team']}",
+                        "Competition": f.get("competition"),
+                        "Home (1)": f"{h:.2f}" if h else "—",
+                        "Draw (X)": f"{d:.2f}" if d else "—",
+                        "Away (2)": f"{a:.2f}" if a else "—",
+                        "Key Banker Selection": fav,
+                        "Quality": f"{_grade_color(f.get('data_quality_grade'))} Grade {f.get('data_quality_grade')}",
+                    })
+
+                if day_matches:
+                    st.caption(f"Showing **{len(day_matches)} matches** scheduled for **{day_label_hdr}**.")
+                    m_df = pd.DataFrame(day_matches)
+                    st.dataframe(m_df, use_container_width=True, hide_index=True)
+                    csv_day = m_df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        f"📥 Export {len(day_matches)} Matches as CSV",
+                        data=csv_day,
+                        file_name=f"fie_matches_{target_date_val or 'all'}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
                     )
-                    if pf_res.status_code == 200:
-                        pf_data = pf_res.json()
-                        summary = pf_data.get("summary", {})
-
-                        # Summary metrics
-                        sm1, sm2, sm3, sm4, sm5 = st.columns(5)
-                        sm1.metric("Fixtures Scanned", summary.get("fixtures_scanned", 0))
-                        sm2.metric("Fixtures Analysed", summary.get("fixtures_analysed", 0))
-                        sm3.metric("Value Bets Found", summary.get("value_bets_found", 0))
-                        sm4.metric("Qualifying Markets", summary.get("qualifying_markets_found", 0))
-                        sm5.metric("Total Kelly Exposure", f"${summary.get('total_kelly_exposure', 0):.2f}")
-
-                        st.markdown("---")
-
-                        # ── VALUE BETS SLIP ──
-                        value_bets = pf_data.get("value_bets", [])
-                        st.subheader(f"💰 +EV Value Bets ({len(value_bets)})")
-                        if value_bets:
-                            vdf = pd.DataFrame(value_bets)
-                            if "kickoff_eat" not in vdf.columns and "kickoff_utc" in vdf.columns:
-                                vdf["kickoff_eat"] = vdf["kickoff_utc"].apply(to_eat_str)
-                            # Column ordering with Ugandan Time prominent
-                            show_cols = [
-                                "kickoff_eat", "match", "competition", "market",
-                                "model_probability", "bookmaker_odds", "implied_probability",
-                                "edge_percent", "ev_percent", "kelly_stake_percent", "kelly_stake_amount",
-                                "lambda_source",
-                            ]
-                            show_cols = [c for c in show_cols if c in vdf.columns]
-                            vdf_display = vdf[show_cols].copy()
-                            rename_map = {
-                                "kickoff_eat": "Kickoff (Ugandan Time, EAT)",
-                                "match": "Match",
-                                "competition": "League",
-                                "market": "Selection",
-                                "model_probability": "Model Prob",
-                                "bookmaker_odds": "Odds",
-                                "implied_probability": "Implied Prob",
-                                "edge_percent": "Edge %",
-                                "ev_percent": "Expected Value (+EV)",
-                                "kelly_stake_percent": "Kelly %",
-                                "kelly_stake_amount": "Stake ($)",
-                                "lambda_source": "Model Source",
-                            }
-                            vdf_display.columns = [rename_map.get(c, c.replace("_", " ").title()) for c in vdf_display.columns]
-                            st.dataframe(vdf_display, use_container_width=True, hide_index=True)
-
-                            # Export button
-                            csv_bytes = vdf[show_cols].to_csv(index=False).encode("utf-8")
-                            st.download_button(
-                                "📥 Export Value Slip as CSV",
-                                data=csv_bytes,
-                                file_name="fie_value_slip.csv",
-                                mime="text/csv",
-                                use_container_width=True,
-                            )
-                        else:
-                            st.info("No +EV bets found with current filters. Try lowering Min +EV % or extending look-ahead days, or ingest upcoming fixtures first.")
-
-                        st.markdown("---")
-
-                        # ── QUALIFYING MARKETS ──
-                        qualifying = pf_data.get("qualifying_markets", [])
-                        st.subheader(f"🎯 Qualifying Markets ≥85% Confidence ({len(qualifying)})")
-                        if qualifying:
-                            qdf = pd.DataFrame(qualifying)
-                            if "kickoff_eat" not in qdf.columns and "kickoff_utc" in qdf.columns:
-                                qdf["kickoff_eat"] = qdf["kickoff_utc"].apply(to_eat_str)
-                            q_show = ["kickoff_eat", "match", "competition", "market", "probability", "lambda_source"]
-                            q_show = [c for c in q_show if c in qdf.columns]
-                            qdf_display = qdf[q_show].copy()
-                            q_rename = {
-                                "kickoff_eat": "Kickoff (Ugandan Time, EAT)",
-                                "match": "Match",
-                                "competition": "League",
-                                "market": "Market",
-                                "probability": "Model Prob",
-                                "lambda_source": "Source",
-                            }
-                            qdf_display.columns = [q_rename.get(c, c.replace("_", " ").title()) for c in qdf_display.columns]
-                            st.dataframe(qdf_display, use_container_width=True, hide_index=True)
-
-                            csv_q = qdf[q_show].to_csv(index=False).encode("utf-8")
-                            st.download_button(
-                                "📥 Export Qualifying Markets as CSV",
-                                data=csv_q,
-                                file_name="fie_qualifying_markets.csv",
-                                mime="text/csv",
-                                use_container_width=True,
-                            )
-                        else:
-                            st.info("No markets reached the 85% qualification threshold.")
-                    else:
-                        st.error(f"Portfolio error: {pf_res.text}")
-                except Exception as e:
-                    st.error(f"Request error: {e}")
+                else:
+                    st.info(f"No matches scheduled for {day_label_hdr}.")
+        except Exception as e:
+            st.error(f"Error loading day fixtures: {e}")
 
 # TAB 1: Fixtures
 with tab_fixtures:

@@ -222,8 +222,26 @@ with tab_portfolio:
     # ══════════════════════════════════════════════════════════════════════
     # 🎯 HIGH-CONFIDENCE COMBO BUILDER (ODDS >= 2.00+)
     # ══════════════════════════════════════════════════════════════════════
-    st.markdown("### 🔥 High-Confidence Combo Slip (Odds ≥ 2.0+)")
-    st.write("Automatically combines the safest 85%+ probability teams into a 2-leg or 3-leg multi-bet reaching total target odds of **2.00 or higher**.")
+    st.markdown("### 🔥 High-Confidence Daily Combo Slip (Odds ≥ 2.0+)")
+    st.write("Generates **same-day accumulator slips** using 85%+ win probability teams from a chosen matchday so bets settle on the same night.")
+
+    # Matchday selector from DB
+    db_md = _db()
+    from app.services.combo import get_available_matchdays
+    avail_days = get_available_matchdays(db_md)
+    db_md.close()
+
+    day_options = ["Auto (Next Active Matchday)"] + [f"📅 {d['label']} ({d['count']} matches)" for d in avail_days] + ["🌐 All Upcoming Matchdays Combined"]
+    sel_day_idx = st.selectbox("📅 Select Matchday (Ugandan Time, EAT):", day_options, index=0, key="cloud_sel_day")
+
+    target_date_val = None
+    if sel_day_idx.startswith("🌐"):
+        target_date_val = "all"
+    elif not sel_day_idx.startswith("Auto"):
+        for d in avail_days:
+            if d["label"] in sel_day_idx:
+                target_date_val = d["date"]
+                break
 
     combo_col1, combo_col2, combo_col3, combo_col4 = st.columns(4)
     with combo_col1:
@@ -236,12 +254,13 @@ with tab_portfolio:
     with combo_col4:
         sel_combo_bankroll = st.number_input("Bankroll ($)", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cloud_combo_bankroll")
 
-    if st.button(f"⚡ Generate {sel_legs}-Team Combo Slip (Odds ≥ {sel_min_odds:.2f})", type="primary", use_container_width=True, key="cloud_btn_combo"):
-        with st.spinner("Finding optimal combinations of 85%+ teams…"):
+    if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Odds ≥ {sel_min_odds:.2f})", type="primary", use_container_width=True, key="cloud_btn_combo"):
+        with st.spinner("Finding optimal same-day combinations of 85%+ teams…"):
             db_combo = _db()
             try:
                 c_data = generate_high_confidence_combos(
                     db=db_combo,
+                    target_date=target_date_val,
                     num_legs=sel_legs,
                     min_leg_prob=sel_min_leg_prob,
                     min_total_odds=sel_min_odds,
@@ -251,16 +270,20 @@ with tab_portfolio:
                 db_combo.close()
 
             best = c_data.get("best_combo")
+            matchday_hdr = c_data.get("matchday_label", "Daily")
             if not best:
-                st.warning(f"No {sel_legs}-team combos found with odds ≥ {sel_min_odds:.2f} at {sel_min_leg_prob*100:.0f}% confidence. Try lowering the Min Team Confidence slider (e.g. to 75%) or Target Odds.")
+                st.warning(f"No {sel_legs}-team combos found on {matchday_hdr} with odds ≥ {sel_min_odds:.2f} at {sel_min_leg_prob*100:.0f}% confidence. Try selecting a different matchday or adjusting the Min Team Confidence slider.")
             else:
-                st.success(f"✅ Found **{c_data['total_combos_generated']}** valid combos! Here is your **Top Recommended Banker Slip**:")
+                st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
                 
                 # Banker Slip Banner Card
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
-                        <h3 style="margin: 0; color: #00C851;">🏆 TOP BANKER MULTI-BET ({sel_legs} TEAMS)</h3>
+                        <div>
+                            <h3 style="margin: 0; color: #00C851;">🏆 TOP DAILY BANKER MULTI-BET ({best['legs_count']} TEAMS)</h3>
+                            <span style="color: #AAA; font-size: 14px;">📅 Matchday: <strong>{matchday_hdr}</strong> (All games finish same day)</span>
+                        </div>
                         <span style="font-size: 24px; font-weight: bold; background: #00C851; color: #000; padding: 4px 16px; border-radius: 8px;">ODDS {best['total_odds']:.2f}</span>
                     </div>
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">

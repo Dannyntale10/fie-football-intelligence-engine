@@ -404,16 +404,18 @@ def get_daily_portfolio(
 
 @app.get("/portfolio/combos")
 def get_portfolio_combos(
-    num_legs: int = Query(3, ge=2, le=4, description="Number of teams in the multi-bet combo (2 or 3)"),
+    target_date: Optional[str] = Query(None, description="Specific YYYY-MM-DD matchday (in EAT), or None for next active matchday"),
+    num_legs: int = Query(3, ge=2, le=4, description="Target number of teams in the combo (2, 3, or 4)"),
     min_total_odds: float = Query(2.00, ge=1.50, le=10.0, description="Minimum combined total odds"),
-    min_leg_prob: float = Query(0.80, ge=0.50, le=0.99, description="Minimum individual leg win/draw probability"),
+    min_leg_prob: float = Query(0.75, ge=0.50, le=0.99, description="Minimum individual leg win/draw probability"),
     bankroll: float = Query(1000.0, ge=10.0, description="Bankroll for Kelly sizing"),
     competition: Optional[str] = Query(None, description="Optional competition filter"),
     db: Session = Depends(get_db)
 ):
-    """Generate high-confidence 2-leg or 3-leg accumulators with combined odds >= 2.0+."""
+    """Generate same-day daily high-confidence accumulators with combined odds >= 2.0+."""
     return generate_high_confidence_combos(
         db=db,
+        target_date=target_date,
         num_legs=num_legs,
         min_leg_prob=min_leg_prob,
         min_total_odds=min_total_odds,

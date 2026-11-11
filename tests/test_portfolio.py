@@ -102,7 +102,7 @@ def test_portfolio_combos_endpoint():
     if data["best_combo"]:
         bc = data["best_combo"]
         assert bc["total_odds"] >= 2.0
-        assert len(bc["legs"]) == 3
+        assert len(bc["legs"]) in [2, 3, 4]
         assert "combined_probability" in bc
         assert "expected_value_percent" in bc
 

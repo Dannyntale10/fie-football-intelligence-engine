@@ -1,15 +1,15 @@
 from __future__ import annotations
 """
-combo.py – High-Confidence Accumulator / Combo Slip Engine.
+combo.py – Daily High-Confidence Multi-Bet / Combo Engine.
 
-Generates 2-leg and 3-leg multi-bets ("combos") combining high-confidence selections
-(≥80-85% win/draw probability) from upcoming fixtures to achieve total target odds
-of 2.00+ (or custom), calculating combined probability, mathematical edge (+EV),
-and Kelly staking.
+Builds same-day accumulator tickets (2-leg, 3-leg, or 4-leg) strictly from
+matches playing on a specific matchday in Ugandan Time (East Africa Time, EAT),
+ensuring bets settle on the same day.
 """
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 import itertools
+from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,41 +27,76 @@ def _format_eat(dt: Optional[datetime]) -> str:
     return dt.astimezone(EAT_TZ).strftime("%a %d %b, %H:%M EAT")
 
 
+def get_available_matchdays(db: Session) -> List[Dict[str, Any]]:
+    """Return a list of all active upcoming matchdays in Ugandan Time (EAT) with match counts."""
+    now = datetime.now(timezone.utc)
+    fixtures = db.scalars(
+        select(Fixture)
+        .where(Fixture.status == "scheduled")
+        .where(Fixture.kickoff_utc > now)
+        .order_by(Fixture.kickoff_utc)
+    ).all()
+
+    counts: Dict[str, Dict[str, Any]] = {}
+    for f in fixtures:
+        eat_dt = f.kickoff_utc.astimezone(EAT_TZ)
+        day_key = eat_dt.strftime("%Y-%m-%d")
+        if day_key not in counts:
+            counts[day_key] = {
+                "date": day_key,
+                "label": eat_dt.strftime("%A, %d %b %Y"),
+                "short_label": eat_dt.strftime("%a %d %b"),
+                "count": 0,
+            }
+        counts[day_key]["count"] += 1
+
+    return list(counts.values())
+
+
 def generate_high_confidence_combos(
     db: Session,
+    target_date: Optional[str] = None,
     num_legs: int = 3,
-    min_leg_prob: float = 0.80,
+    min_leg_prob: float = 0.75,
     min_total_odds: float = 2.00,
-    max_total_odds: float = 5.00,
+    max_total_odds: float = 6.00,
     bankroll: float = 1000.0,
     kelly_fraction: float = 0.25,
-    days_ahead: int = 14,
     competition: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Generate optimal 2-leg or 3-leg high-confidence multi-bet slips with combined odds >= 2.00+.
+    """Generate optimal same-day high-confidence multi-bet slips (Odds >= 2.00+).
 
     Args:
         db: SQLAlchemy session.
-        num_legs: 2 or 3 teams in the combo.
-        min_leg_prob: Minimum individual leg confidence (e.g. 0.80 = 80%, 0.85 = 85%).
-        min_total_odds: Target combined accumulator odds (default 2.00+).
-        max_total_odds: Cap for total accumulator odds (default 5.00).
+        target_date: Specific YYYY-MM-DD matchday (in EAT), or None for next active matchday.
+        num_legs: Target number of legs (2, 3, or 4).
+        min_leg_prob: Minimum individual leg win/draw probability.
+        min_total_odds: Target combined accumulator odds (e.g. 2.00).
+        max_total_odds: Cap for total accumulator odds.
         bankroll: Total bankroll for Kelly stake sizing.
-        kelly_fraction: Conservative Kelly fraction (0.25 = quarter Kelly).
-        days_ahead: Maximum days lookahead.
-        competition: Optional league filter substring.
+        kelly_fraction: Kelly fraction (0.25 = quarter Kelly).
+        competition: Optional competition name filter.
 
     Returns:
-        dict with best_combo, alternative_combos, total_candidate_legs, and summary.
+        dict with target_matchday, best_combo, alternatives, candidate_legs, and available_matchdays.
     """
     now = datetime.now(timezone.utc)
-    cutoff = now + timedelta(days=days_ahead)
+    matchdays = get_available_matchdays(db)
 
+    # If no target date provided, default to next active matchday
+    if not target_date and matchdays:
+        target_date = matchdays[0]["date"]
+
+    target_matchday_info = next((m for m in matchdays if m["date"] == target_date), None)
+    if not target_matchday_info and matchdays:
+        target_date = matchdays[0]["date"]
+        target_matchday_info = matchdays[0]
+
+    # Query fixtures
     query = (
         select(Fixture)
         .where(Fixture.status == "scheduled")
         .where(Fixture.kickoff_utc > now)
-        .where(Fixture.kickoff_utc <= cutoff)
         .where(Fixture.home_odds.is_not(None))
         .where(Fixture.away_odds.is_not(None))
         .order_by(Fixture.kickoff_utc)
@@ -70,6 +105,13 @@ def generate_high_confidence_combos(
         query = query.where(Fixture.competition.ilike(f"%{competition}%"))
 
     fixtures = db.scalars(query).all()
+
+    # Filter to target matchday if set
+    if target_date and target_date != "all":
+        fixtures = [
+            f for f in fixtures
+            if f.kickoff_utc.astimezone(EAT_TZ).strftime("%Y-%m-%d") == target_date
+        ]
 
     candidates: List[Dict[str, Any]] = []
 
@@ -122,7 +164,7 @@ def generate_high_confidence_combos(
         p_1x = probs.get("double_chance_1x", 0.0)
         if h_odds and d_odds:
             dc_1x_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / d_odds)), 2)
-            if p_1x >= max(0.85, min_leg_prob) and dc_1x_odds >= 1.15:
+            if p_1x >= max(0.80, min_leg_prob) and dc_1x_odds >= 1.12:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -141,7 +183,7 @@ def generate_high_confidence_combos(
         p_x2 = probs.get("double_chance_x2", 0.0)
         if a_odds and d_odds:
             dc_x2_odds = round(1.0 / ((1.0 / a_odds) + (1.0 / d_odds)), 2)
-            if p_x2 >= max(0.85, min_leg_prob) and dc_x2_odds >= 1.15:
+            if p_x2 >= max(0.80, min_leg_prob) and dc_x2_odds >= 1.12:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -156,57 +198,101 @@ def generate_high_confidence_combos(
                     "kickoff_eat": _format_eat(f.kickoff_utc),
                 })
 
-    # Generate combos of size num_legs (2 or 3)
-    k = max(2, min(3, num_legs))
+    # Search combinations for requested leg count, or flexibly adapt if needed
+    k = max(2, min(4, num_legs))
     combos: List[Dict[str, Any]] = []
 
-    for combo_legs in itertools.combinations(candidates, k):
-        # Ensure no duplicate fixtures in the same combo
-        fixture_ids = {leg["fixture_id"] for leg in combo_legs}
-        if len(fixture_ids) < k:
-            continue
+    leg_counts_to_try = [k]
+    # If not enough combos found with k legs on a smaller day, also try k+1 or k-1
+    if k == 3:
+        leg_counts_to_try = [3, 2, 4]
+    elif k == 2:
+        leg_counts_to_try = [2, 3]
 
-        tot_odds = 1.0
-        tot_prob = 1.0
-        for leg in combo_legs:
-            tot_odds *= leg["odds"]
-            tot_prob *= leg["probability"]
+    for try_k in leg_counts_to_try:
+        for combo_legs in itertools.combinations(candidates, try_k):
+            # Ensure distinct fixtures
+            fixture_ids = {leg["fixture_id"] for leg in combo_legs}
+            if len(fixture_ids) < try_k:
+                continue
 
-        tot_odds = round(tot_odds, 2)
-        tot_prob = round(tot_prob, 4)
+            tot_odds = 1.0
+            tot_prob = 1.0
+            for leg in combo_legs:
+                tot_odds *= leg["odds"]
+                tot_prob *= leg["probability"]
 
-        if min_total_odds <= tot_odds <= max_total_odds:
-            implied_prob = round(1.0 / tot_odds, 4)
-            ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
-            edge = round((tot_prob - implied_prob) * 100, 2)
+            tot_odds = round(tot_odds, 2)
+            tot_prob = round(tot_prob, 4)
 
-            kelly = calculate_kelly_stake(
-                model_probability=tot_prob,
-                bookmaker_odds=tot_odds,
-                bankroll=bankroll,
-                fraction=kelly_fraction,
-                max_stake_percent=5.0,
-            )
+            # Accept combos that hit min_total_odds, or if exact 2.0 isn't hit, keep near-2.0 bankers
+            if tot_odds >= min_total_odds and tot_odds <= max_total_odds:
+                implied_prob = round(1.0 / tot_odds, 4)
+                ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
+                edge = round((tot_prob - implied_prob) * 100, 2)
 
-            combos.append({
-                "legs_count": k,
-                "total_odds": tot_odds,
-                "combined_probability": tot_prob,
-                "implied_probability": implied_prob,
-                "expected_value_percent": ev,
-                "edge_percent": edge,
-                "kelly_stake_amount": kelly.get("stake_amount", 0.0),
-                "kelly_stake_percent": kelly.get("stake_percent", 0.0),
-                "legs": list(combo_legs),
-            })
+                kelly = calculate_kelly_stake(
+                    model_probability=tot_prob,
+                    bookmaker_odds=tot_odds,
+                    bankroll=bankroll,
+                    fraction=kelly_fraction,
+                    max_stake_percent=5.0,
+                )
+
+                combos.append({
+                    "legs_count": try_k,
+                    "total_odds": tot_odds,
+                    "combined_probability": tot_prob,
+                    "implied_probability": implied_prob,
+                    "expected_value_percent": ev,
+                    "edge_percent": edge,
+                    "kelly_stake_amount": kelly.get("stake_amount", 0.0),
+                    "kelly_stake_percent": kelly.get("stake_percent", 0.0),
+                    "legs": list(combo_legs),
+                })
+
+        if combos and try_k == k:
+            break
+
+    # If still empty on a strict day, find the highest probability combo even if slightly below 2.0 (e.g. 1.85+)
+    if not combos:
+        for try_k in [2, 3, 4]:
+            for combo_legs in itertools.combinations(candidates, try_k):
+                if len({l["fixture_id"] for l in combo_legs}) < try_k:
+                    continue
+                tot_odds = 1.0
+                tot_prob = 1.0
+                for leg in combo_legs:
+                    tot_odds *= leg["odds"]
+                    tot_prob *= leg["probability"]
+                tot_odds = round(tot_odds, 2)
+                tot_prob = round(tot_prob, 4)
+                if tot_odds >= 1.75:
+                    implied = round(1.0 / tot_odds, 4)
+                    ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
+                    combos.append({
+                        "legs_count": try_k,
+                        "total_odds": tot_odds,
+                        "combined_probability": tot_prob,
+                        "implied_probability": implied,
+                        "expected_value_percent": ev,
+                        "edge_percent": round((tot_prob - implied) * 100, 2),
+                        "kelly_stake_amount": round(bankroll * 0.03, 2),
+                        "kelly_stake_percent": 3.0,
+                        "legs": list(combo_legs),
+                    })
 
     # Sort combos by highest combined win probability, then highest EV
     combos.sort(key=lambda x: (x["combined_probability"], x["expected_value_percent"]), reverse=True)
 
     best_combo = combos[0] if combos else None
-    alternatives = combos[1:6] if len(combos) > 1 else []
+    alternatives = combos[1:7] if len(combos) > 1 else []
 
     return {
+        "target_date": target_date,
+        "matchday_label": target_matchday_info["label"] if target_matchday_info else (target_date or "All Matchdays"),
+        "matchday_matches_count": target_matchday_info["count"] if target_matchday_info else len(fixtures),
+        "available_matchdays": matchdays,
         "params": {
             "num_legs": k,
             "min_leg_prob": min_leg_prob,

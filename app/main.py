@@ -37,6 +37,7 @@ from app.services.seeder import (
 from app.services.live_feed import fetch_live_upcoming_fixtures_espn
 from app.services.backtest import run_backtest
 from app.services.portfolio import build_daily_portfolio
+from app.services.combo import generate_high_confidence_combos
 
 Base.metadata.create_all(bind=engine)
 
@@ -398,6 +399,25 @@ def get_daily_portfolio(
         kelly_fraction=kelly_fraction,
         rho=rho,
         qualification_threshold=qualification_threshold,
+        competition=competition,
+    )
+
+@app.get("/portfolio/combos")
+def get_portfolio_combos(
+    num_legs: int = Query(3, ge=2, le=4, description="Number of teams in the multi-bet combo (2 or 3)"),
+    min_total_odds: float = Query(2.00, ge=1.50, le=10.0, description="Minimum combined total odds"),
+    min_leg_prob: float = Query(0.80, ge=0.50, le=0.99, description="Minimum individual leg win/draw probability"),
+    bankroll: float = Query(1000.0, ge=10.0, description="Bankroll for Kelly sizing"),
+    competition: Optional[str] = Query(None, description="Optional competition filter"),
+    db: Session = Depends(get_db)
+):
+    """Generate high-confidence 2-leg or 3-leg accumulators with combined odds >= 2.0+."""
+    return generate_high_confidence_combos(
+        db=db,
+        num_legs=num_legs,
+        min_leg_prob=min_leg_prob,
+        min_total_odds=min_total_odds,
+        bankroll=bankroll,
         competition=competition,
     )
 

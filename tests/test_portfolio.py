@@ -91,6 +91,23 @@ def test_portfolio_competition_filter_accepted():
     assert res.status_code == 200
 
 
+def test_portfolio_combos_endpoint():
+    """Portfolio combos endpoint responds with valid combo structures."""
+    res = client.get("/portfolio/combos", params={"num_legs": 3, "min_total_odds": 2.0, "min_leg_prob": 0.80})
+    assert res.status_code == 200
+    data = res.json()
+    assert "total_combos_generated" in data
+    assert "best_combo" in data
+    assert "alternatives" in data
+    if data["best_combo"]:
+        bc = data["best_combo"]
+        assert bc["total_odds"] >= 2.0
+        assert len(bc["legs"]) == 3
+        assert "combined_probability" in bc
+        assert "expected_value_percent" in bc
+
+
+
 # ---------------------------------------------------------------------------
 # Best Odds endpoint tests
 # ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ from app.services.seeder import (                      # noqa: E402
 from app.services.live_feed import fetch_live_upcoming_fixtures_espn  # noqa: E402
 from app.services.backtest import run_backtest          # noqa: E402
 from app.services.portfolio import build_daily_portfolio  # noqa: E402
+from app.services.combo import generate_high_confidence_combos  # noqa: E402
 from app.connectors.bookmakers import BOOKMAKERS       # noqa: E402
 
 
@@ -212,12 +213,95 @@ with st.sidebar:
 # TAB 0 — DAILY VALUE PORTFOLIO
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_portfolio:
-    st.subheader("📋 Daily Value Portfolio")
+    st.subheader("📋 Daily Value Portfolio & High-Confidence Combos")
     st.caption(
-        "Scans all upcoming scheduled fixtures within the look-ahead window, "
-        "runs the Dixon-Coles Poisson model on each, and surfaces +EV bets and "
-        "≥85% qualifying markets as an exportable shortlist."
+        "Quantitative selection engine: generate optimal 2-team or 3-team accumulators (Odds ≥ 2.00+) "
+        "and scan individual +EV value bets with fractional Kelly stake sizing."
     )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🎯 HIGH-CONFIDENCE COMBO BUILDER (ODDS >= 2.00+)
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown("### 🔥 High-Confidence Combo Slip (Odds ≥ 2.0+)")
+    st.write("Automatically combines the safest 85%+ probability teams into a 2-leg or 3-leg multi-bet reaching total target odds of **2.00 or higher**.")
+
+    combo_col1, combo_col2, combo_col3, combo_col4 = st.columns(4)
+    with combo_col1:
+        sel_legs = st.radio("Number of Teams", [2, 3], index=1, horizontal=True, format_func=lambda x: f"{x}-Team Combo", key="cloud_combo_legs")
+    with combo_col2:
+        sel_min_odds = st.slider("Target Min Combined Odds", min_value=1.80, max_value=4.00, value=2.00, step=0.05, key="cloud_combo_odds")
+    with combo_col3:
+        default_prob = 0.72 if sel_legs == 2 else 0.85
+        sel_min_leg_prob = st.slider("Min Team Confidence", min_value=0.70, max_value=0.95, value=default_prob, step=0.01, format="%.0f%%", key="cloud_combo_prob")
+    with combo_col4:
+        sel_combo_bankroll = st.number_input("Bankroll ($)", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cloud_combo_bankroll")
+
+    if st.button(f"⚡ Generate {sel_legs}-Team Combo Slip (Odds ≥ {sel_min_odds:.2f})", type="primary", use_container_width=True, key="cloud_btn_combo"):
+        with st.spinner("Finding optimal combinations of 85%+ teams…"):
+            db_combo = _db()
+            try:
+                c_data = generate_high_confidence_combos(
+                    db=db_combo,
+                    num_legs=sel_legs,
+                    min_leg_prob=sel_min_leg_prob,
+                    min_total_odds=sel_min_odds,
+                    bankroll=sel_combo_bankroll,
+                )
+            finally:
+                db_combo.close()
+
+            best = c_data.get("best_combo")
+            if not best:
+                st.warning(f"No {sel_legs}-team combos found with odds ≥ {sel_min_odds:.2f} at {sel_min_leg_prob*100:.0f}% confidence. Try lowering the Min Team Confidence slider (e.g. to 75%) or Target Odds.")
+            else:
+                st.success(f"✅ Found **{c_data['total_combos_generated']}** valid combos! Here is your **Top Recommended Banker Slip**:")
+                
+                # Banker Slip Banner Card
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
+                        <h3 style="margin: 0; color: #00C851;">🏆 TOP BANKER MULTI-BET ({sel_legs} TEAMS)</h3>
+                        <span style="font-size: 24px; font-weight: bold; background: #00C851; color: #000; padding: 4px 16px; border-radius: 8px;">ODDS {best['total_odds']:.2f}</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
+                        <div><span style="color: #888; font-size: 12px;">COMBINED WIN PROB</span><br><strong style="font-size: 20px; color: #FFF;">{best['combined_probability']*100:.1f}%</strong></div>
+                        <div><span style="color: #888; font-size: 12px;">EXPECTED VALUE (+EV)</span><br><strong style="font-size: 20px; color: #00C851;">{best['expected_value_percent']:+.1f}% EV</strong></div>
+                        <div><span style="color: #888; font-size: 12px;">VALUE EDGE</span><br><strong style="font-size: 20px; color: #FFF;">+{best['edge_percent']:.1f}%</strong></div>
+                        <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 20px; color: #FFBB33;">${best['kelly_stake_amount']:.2f} ({best['kelly_stake_percent']}%)</strong></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Table of Legs
+                legs_df = pd.DataFrame([{
+                    "Leg": f"Leg #{i+1}",
+                    "Match": l["match"],
+                    "Selection": l["selection"],
+                    "Market Type": l["market_type"],
+                    "Odds": f"{l['odds']:.2f}",
+                    "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
+                    "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],
+                    "League": l["competition"],
+                } for i, l in enumerate(best["legs"])])
+                st.dataframe(legs_df, use_container_width=True, hide_index=True)
+
+                # Formatted Booking Text to copy
+                slip_text = f"🔥 FIE {sel_legs}-TEAM COMBO SLIP (Odds: {best['total_odds']:.2f} | Win Prob: {best['combined_probability']*100:.1f}%)\n"
+                for i, l in enumerate(best["legs"], 1):
+                    slip_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f} ({l['kickoff_eat']})\n"
+                slip_text += f"Total Odds: {best['total_odds']:.2f} | Kelly Stake: ${best['kelly_stake_amount']:.2f}"
+                st.text_area("📋 Copy Booking Slip Text", slip_text, height=130, key="cloud_slip_text")
+
+                # Alternative Combos
+                alts = c_data.get("alternatives", [])
+                if alts:
+                    with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ {sel_min_odds:.2f})"):
+                        for idx, alt in enumerate(alts, 2):
+                            st.write(f"**Combo Option #{idx}** — Odds: `{alt['total_odds']:.2f}` | Win Prob: `{alt['combined_probability']*100:.1f}%` | EV: `+{alt['expected_value_percent']:.1f}%`")
+                            st.caption(" • ".join([f"{l['selection']} @ {l['odds']:.2f}" for l in alt["legs"]]))
+
+    st.markdown("---")
+    st.markdown("### 📋 Individual Value Bets & Qualification Scan")
 
     pf_c1, pf_c2, pf_c3, pf_c4 = st.columns(4)
     with pf_c1:

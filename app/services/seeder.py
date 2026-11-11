@@ -180,8 +180,9 @@ def import_football_data_dataframe(db: Session, df: pd.DataFrame, default_source
                 status=status,
             )
             db.add(fix)
-            db.commit()
             inserted += 1
+
+    db.commit()
 
     # Recalculate ratings from the imported scores
     rating_res = calculate_ratings_from_fixtures(db)
@@ -227,3 +228,55 @@ def fetch_historical_league_season(db: Session, division_code: str = "E0", seaso
     url = f"https://football-data.co.uk/mmz4281/{season}/{division_code}.csv"
     comp_name = DIV_MAPPING.get(division_code, division_code)
     return fetch_and_import_url(db, url, default_source=f"{comp_name}_{season}")
+
+MAJOR_DIVISIONS = [
+    ("E0", "Premier League"),
+    ("SP1", "La Liga"),
+    ("I1", "Serie A"),
+    ("D1", "Bundesliga"),
+    ("F1", "Ligue 1"),
+]
+
+def fetch_all_major_leagues(db: Session, season: str = "2324") -> Dict[str, Any]:
+    """Automatically ingest complete season results & odds for all 5 major European leagues and calibrate team ratings."""
+    total_inserted = 0
+    total_processed = 0
+    total_duplicates = 0
+    league_reports = []
+
+    for div, name in MAJOR_DIVISIONS:
+        try:
+            res = fetch_historical_league_season(db, division_code=div, season=season)
+            ins = res.get("inserted", 0)
+            dup = res.get("duplicates", 0)
+            tot = res.get("total_processed", 0)
+            total_inserted += ins
+            total_duplicates += dup
+            total_processed += tot
+            league_reports.append({
+                "league": name,
+                "division": div,
+                "matches": tot,
+                "new": ins,
+                "status": "success",
+            })
+        except Exception as e:
+            league_reports.append({
+                "league": name,
+                "division": div,
+                "matches": 0,
+                "new": 0,
+                "status": f"error: {str(e)}",
+            })
+
+    rating_res = calculate_ratings_from_fixtures(db)
+    return {
+        "status": "success",
+        "season": season,
+        "total_processed": total_processed,
+        "total_inserted": total_inserted,
+        "total_duplicates": total_duplicates,
+        "teams_rated": rating_res.get("updated_teams", 0),
+        "leagues": league_reports,
+        "message": f"Successfully ingested {total_processed} matches across all 5 major leagues. Calibrated {rating_res.get('updated_teams', 0)} team ratings.",
+    }

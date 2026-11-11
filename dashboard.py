@@ -528,12 +528,46 @@ with tab_import:
     )
 
     st.markdown("### 🌐 Real Data Feeds (Live & Full Seasons)")
+
+    # Master One-Click Auto Sync Banner
+    st.markdown("""
+    <div style="background: rgba(0, 200, 81, 0.1); border: 1px solid #00C851; border-radius: 10px; padding: 15px; margin-bottom: 20px;">
+        <h4 style="margin: 0 0 5px 0; color: #00C851;">⚡ Master Auto-Setup: Live Matches + All 5 Major European Leagues</h4>
+        <p style="margin: 0; color: #DDD; font-size: 14px;">
+            Automatically ingests genuine real-time upcoming matches (UEFA Nations League + club rounds) with live DraftKings odds 
+            <strong>AND</strong> complete seasons for <strong>Premier League, La Liga, Serie A, Bundesliga, and Ligue 1</strong> to calibrate ratings for all 96 top European clubs.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("🚀 Run Full Auto-Setup (Live Games + All 5 Major Leagues)", type="primary", use_container_width=True, key="btn_master_auto"):
+        if not backend_online:
+            st.error("Backend is offline. Start FastAPI first.")
+        else:
+            with st.spinner("1/2 Fetching real live upcoming fixtures with DraftKings odds..."):
+                try:
+                    u_res = requests.post(f"{API_BASE}/fixtures/fetch-live-espn", timeout=20)
+                except Exception as e:
+                    st.warning(f"Live feed error: {e}")
+            with st.spinner("2/2 Ingesting all 5 Major European Leagues (EPL, La Liga, Serie A, Bundesliga, Ligue 1) & calibrating ratings..."):
+                try:
+                    m_res = requests.post(f"{API_BASE}/fixtures/fetch-all-major-leagues", params={"season": "2324"}, timeout=60)
+                    if m_res.status_code == 200:
+                        m_data = m_res.json()
+                        st.success(f"✅ {m_data['message']}")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed: {m_res.text}")
+                except Exception as e:
+                    st.error(f"Major leagues import error: {e}")
+
+    st.markdown("---")
     feed_col1, feed_col2 = st.columns(2)
 
     with feed_col1:
         st.markdown("#### 1. Live Games (Tomorrow & Weekend)")
         st.write("Fetches **real upcoming matches** (UEFA Nations League tomorrow + European domestic rounds) with **real-time live DraftKings odds**.")
-        if st.button("🟢 Fetch Live Upcoming Games (DraftKings Odds)", type="primary", use_container_width=True):
+        if st.button("🟢 Fetch Live Upcoming Games (DraftKings Odds)", use_container_width=True):
             if not backend_online:
                 st.error("Backend is offline. Start FastAPI first.")
             else:
@@ -567,10 +601,35 @@ with tab_import:
                         st.error(f"Fetch error: {e}")
 
     with feed_col2:
-        st.markdown("#### 2. Full League Season (380 Real Matches)")
-        st.write("Ingest complete seasons with final scores, half-time stats, and closing market odds to calibrate team strength ratings.")
-        l_col_div, l_col_sea = st.columns(2)
-        with l_col_div:
+        st.markdown("#### 2. Major European Leagues (All Seasons)")
+        st.write("Automatically ingests complete seasons with final scores, half-time stats, and closing market odds to calibrate team strength ratings.")
+
+        l_sea_col, l_btn_col = st.columns([1, 2])
+        with l_sea_col:
+            sel_all_sea = st.selectbox("Season", ["2324", "2425"], format_func=lambda x: "2023/24" if x == "2324" else "2024/25", key="dash_major_sea")
+        with l_btn_col:
+            st.write("") # vertical spacing
+            if st.button("⚡ Ingest All 5 Major Leagues", use_container_width=True, key="dash_btn_all_major"):
+                if not backend_online:
+                    st.error("Backend is offline. Start FastAPI first.")
+                else:
+                    with st.spinner("Downloading all 5 major leagues (EPL, La Liga, Serie A, Bundesliga, Ligue 1)..."):
+                        try:
+                            s_res = requests.post(
+                                f"{API_BASE}/fixtures/fetch-all-major-leagues",
+                                params={"season": sel_all_sea},
+                                timeout=60
+                            )
+                            if s_res.status_code == 200:
+                                s_data = s_res.json()
+                                st.success(f"✅ {s_data['message']}")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed: {s_res.text}")
+                        except Exception as e:
+                            st.error(f"Download error: {e}")
+
+        with st.expander("⚙️ Or Ingest Single Specific League"):
             sel_div = st.selectbox(
                 "Select League",
                 ["E0", "SP1", "I1", "D1", "F1", "E1"],
@@ -581,30 +640,28 @@ with tab_import:
                     "D1": "🇩🇪 Bundesliga",
                     "F1": "🇫🇷 Ligue 1",
                     "E1": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Championship"
-                }.get(x, x)
+                }.get(x, x),
+                key="dash_single_div"
             )
-        with l_col_sea:
-            sel_sea = st.selectbox("Season", ["2324", "2425"], format_func=lambda x: "2023/24" if x == "2324" else "2024/25")
-
-        if st.button("📥 Download & Ingest Season", use_container_width=True):
-            if not backend_online:
-                st.error("Backend is offline. Start FastAPI first.")
-            else:
-                with st.spinner(f"Downloading real league season data..."):
-                    try:
-                        s_res = requests.post(
-                            f"{API_BASE}/fixtures/fetch-league",
-                            params={"division": sel_div, "season": sel_sea},
-                            timeout=20
-                        )
-                        if s_res.status_code == 200:
-                            s_data = s_res.json()
-                            st.success(f"✅ {s_data['message']}")
-                            st.rerun()
-                        else:
-                            st.error(f"Failed: {s_res.text}")
-                    except Exception as e:
-                        st.error(f"Download error: {e}")
+            if st.button("📥 Download Single League", use_container_width=True, key="dash_btn_single_div"):
+                if not backend_online:
+                    st.error("Backend is offline. Start FastAPI first.")
+                else:
+                    with st.spinner(f"Downloading {sel_div} {sel_all_sea}..."):
+                        try:
+                            s_res = requests.post(
+                                f"{API_BASE}/fixtures/fetch-league",
+                                params={"division": sel_div, "season": sel_all_sea},
+                                timeout=20
+                            )
+                            if s_res.status_code == 200:
+                                s_data = s_res.json()
+                                st.success(f"✅ {s_data['message']}")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed: {s_res.text}")
+                        except Exception as e:
+                            st.error(f"Download error: {e}")
 
     st.markdown("---")
     st.markdown("### 📁 Local CSV & Offline Data")

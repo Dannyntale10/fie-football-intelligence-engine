@@ -52,6 +52,7 @@ from app.services.seeder import (                      # noqa: E402
     seed_sample_historical_data,
     fetch_live_upcoming_fixtures,
     fetch_historical_league_season,
+    fetch_all_major_leagues,
 )
 from app.services.live_feed import fetch_live_upcoming_fixtures_espn  # noqa: E402
 from app.services.backtest import run_backtest          # noqa: E402
@@ -683,6 +684,40 @@ with tab_import:
     )
 
     st.markdown("### 🌐 Real Data Feeds (Live & Full Seasons)")
+
+    # Master One-Click Auto Sync Banner
+    st.markdown("""
+    <div style="background: rgba(0, 200, 81, 0.1); border: 1px solid #00C851; border-radius: 10px; padding: 15px; margin-bottom: 20px;">
+        <h4 style="margin: 0 0 5px 0; color: #00C851;">⚡ Master Auto-Setup: Live Matches + All 5 Major European Leagues</h4>
+        <p style="margin: 0; color: #DDD; font-size: 14px;">
+            Automatically ingests genuine real-time upcoming matches (UEFA Nations League + club rounds) with live DraftKings odds 
+            <strong>AND</strong> complete seasons for <strong>Premier League, La Liga, Serie A, Bundesliga, and Ligue 1</strong> to calibrate ratings for all 96 top European clubs.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("🚀 Run Full Auto-Setup (Live Games + All 5 Major Leagues)", type="primary", use_container_width=True, key="cloud_master_auto"):
+        with st.spinner("1/2 Fetching real live upcoming fixtures with DraftKings odds..."):
+            db_m1 = _db()
+            try:
+                fetch_live_upcoming_fixtures_espn(db_m1)
+            except Exception as e:
+                st.warning(f"Live fetch error: {e}")
+            finally:
+                db_m1.close()
+
+        with st.spinner("2/2 Ingesting all 5 Major European Leagues (EPL, La Liga, Serie A, Bundesliga, Ligue 1) & calibrating ratings..."):
+            db_m2 = _db()
+            try:
+                res = fetch_all_major_leagues(db_m2, season="2324")
+                st.success(f"✅ {res['message']}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Major leagues error: {e}")
+            finally:
+                db_m2.close()
+
+    st.markdown("---")
     feed1, feed2 = st.columns(2)
 
     with feed1:
@@ -693,7 +728,8 @@ with tab_import:
         )
         if st.button(
             "🟢 Fetch Live Upcoming Games (DraftKings Odds)",
-            type="primary", use_container_width=True,
+            use_container_width=True,
+            key="cloud_btn_live",
         ):
             with st.spinner("Downloading live upcoming matches and DraftKings odds…"):
                 db_live = _db()
@@ -707,7 +743,7 @@ with tab_import:
                     db_live.close()
 
         st.caption("Or fetch club league batch from football-data.co.uk:")
-        if st.button("📥 Fetch Football-Data.co.uk Batch", use_container_width=True):
+        if st.button("📥 Fetch Football-Data.co.uk Batch", use_container_width=True, key="cloud_btn_batch"):
             with st.spinner("Downloading upcoming fixtures and live odds…"):
                 db_u = _db()
                 try:
@@ -720,13 +756,30 @@ with tab_import:
                     db_u.close()
 
     with feed2:
-        st.markdown("#### 2. Full League Season (380 Matches)")
+        st.markdown("#### 2. Major European Leagues (All Seasons)")
         st.write(
-            "Ingest a complete historical season with final scores and closing odds "
-            "to auto-calibrate all 20 team ratings."
+            "Automatically ingests complete seasons with final scores, half-time stats, and closing market odds "
+            "to auto-calibrate all team ratings across Europe."
         )
-        l_div, l_sea = st.columns(2)
-        with l_div:
+
+        l_sea_col, l_btn_col = st.columns([1, 2])
+        with l_sea_col:
+            sel_all_sea = st.selectbox("Season", ["2324", "2425"], format_func=lambda x: "2023/24" if x == "2324" else "2024/25", key="cloud_major_sea")
+        with l_btn_col:
+            st.write("") # spacing
+            if st.button("⚡ Ingest All 5 Major Leagues", use_container_width=True, key="cloud_btn_all_major"):
+                with st.spinner("Downloading all 5 major leagues (EPL, La Liga, Serie A, Bundesliga, Ligue 1)..."):
+                    db_s = _db()
+                    try:
+                        result = fetch_all_major_leagues(db_s, season=sel_all_sea)
+                        st.success(f"✅ {result['message']}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Download error: {e}")
+                    finally:
+                        db_s.close()
+
+        with st.expander("⚙️ Or Ingest Single Specific League"):
             sel_div = st.selectbox(
                 "League",
                 ["E0", "SP1", "I1", "D1", "F1", "E1", "N1", "P1", "B1"],
@@ -741,28 +794,19 @@ with tab_import:
                     "P1":  "🇵🇹 Primeira Liga",
                     "B1":  "🇧🇪 Belgian Pro League",
                 }.get(x, x),
+                key="cloud_single_div",
             )
-        with l_sea:
-            sel_sea = st.selectbox(
-                "Season",
-                ["2425", "2324", "2223"],
-                format_func=lambda x: {
-                    "2425": "2024/25",
-                    "2324": "2023/24",
-                    "2223": "2022/23",
-                }.get(x, x),
-            )
-        if st.button("📥 Download & Ingest Season", use_container_width=True):
-            with st.spinner(f"Downloading {sel_div} {sel_sea}…"):
-                db_s = _db()
-                try:
-                    result = fetch_historical_league_season(db_s, sel_div, sel_sea)
-                    st.success(f"✅ {result['message']}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Download error: {e}")
-                finally:
-                    db_s.close()
+            if st.button("📥 Download Single League", use_container_width=True, key="cloud_btn_single"):
+                with st.spinner(f"Downloading {sel_div} {sel_all_sea}…"):
+                    db_s2 = _db()
+                    try:
+                        result = fetch_historical_league_season(db_s2, sel_div, sel_all_sea)
+                        st.success(f"✅ {result['message']}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Download error: {e}")
+                    finally:
+                        db_s2.close()
 
     st.markdown("---")
     st.markdown("### 📁 Local CSV & Offline Data")

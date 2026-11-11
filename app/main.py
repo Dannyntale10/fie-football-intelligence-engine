@@ -33,6 +33,7 @@ from app.services.seeder import (
     seed_sample_historical_data,
     fetch_live_upcoming_fixtures,
     fetch_historical_league_season,
+    fetch_all_major_leagues,
 )
 from app.services.live_feed import fetch_live_upcoming_fixtures_espn
 from app.services.backtest import run_backtest
@@ -347,6 +348,18 @@ def api_fetch_league_season(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Failed to fetch league {division} season {season}: {exc}") from exc
+
+@app.post("/fixtures/fetch-all-major-leagues")
+def api_fetch_all_major_leagues(
+    season: str = Query("2324", description="Season code (e.g. 2324 for 2023-2024, 2425 for 2024-2025)"),
+    db: Session = Depends(get_db)
+):
+    """Fetch complete historical seasons for Premier League, La Liga, Serie A, Bundesliga, and Ligue 1, calibrating all team ratings."""
+    try:
+        return fetch_all_major_leagues(db, season=season)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Failed to fetch all major leagues: {exc}") from exc
 
 @app.post("/backtest/run", response_model=BacktestSummaryOut)
 def api_run_backtest(

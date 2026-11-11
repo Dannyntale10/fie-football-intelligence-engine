@@ -115,6 +115,9 @@ def generate_high_confidence_combos(
 
     candidates: List[Dict[str, Any]] = []
 
+    # Use threshold to filter candidates, allowing safe candidates down to 0.70 so max-3-team combos can reach >= 2.00 odds
+    cand_thresh = min(0.70, min_leg_prob)
+
     for f in fixtures:
         try:
             analysis = analyze_fixture(f, db=db)
@@ -128,7 +131,7 @@ def generate_high_confidence_combos(
 
         # 1. Direct Home Win
         p_hw = probs.get("home_win", 0.0)
-        if p_hw >= min_leg_prob and h_odds and h_odds >= 1.15:
+        if p_hw >= cand_thresh and h_odds and h_odds >= 1.15:
             candidates.append({
                 "fixture_id": f.id,
                 "match": f"{f.home_team} vs {f.away_team}",
@@ -145,7 +148,7 @@ def generate_high_confidence_combos(
 
         # 2. Direct Away Win
         p_aw = probs.get("away_win", 0.0)
-        if p_aw >= min_leg_prob and a_odds and a_odds >= 1.15:
+        if p_aw >= cand_thresh and a_odds and a_odds >= 1.15:
             candidates.append({
                 "fixture_id": f.id,
                 "match": f"{f.home_team} vs {f.away_team}",
@@ -164,7 +167,7 @@ def generate_high_confidence_combos(
         p_1x = probs.get("double_chance_1x", 0.0)
         if h_odds and d_odds:
             dc_1x_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / d_odds)), 2)
-            if p_1x >= min_leg_prob and dc_1x_odds >= 1.10:
+            if p_1x >= cand_thresh and dc_1x_odds >= 1.10:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -183,7 +186,7 @@ def generate_high_confidence_combos(
         p_x2 = probs.get("double_chance_x2", 0.0)
         if a_odds and d_odds:
             dc_x2_odds = round(1.0 / ((1.0 / a_odds) + (1.0 / d_odds)), 2)
-            if p_x2 >= min_leg_prob and dc_x2_odds >= 1.10:
+            if p_x2 >= cand_thresh and dc_x2_odds >= 1.10:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -202,7 +205,7 @@ def generate_high_confidence_combos(
         p_12 = probs.get("double_chance_12", 0.0)
         if h_odds and a_odds:
             dc_12_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / a_odds)), 2)
-            if p_12 >= min_leg_prob and dc_12_odds >= 1.12:
+            if p_12 >= cand_thresh and dc_12_odds >= 1.12:
                 candidates.append({
                     "fixture_id": f.id,
                     "match": f"{f.home_team} vs {f.away_team}",
@@ -219,7 +222,7 @@ def generate_high_confidence_combos(
 
         # 6. Team to score at least 1 goal (Team Over 0.5) - Banker safety (88-92%+)
         p_ho05 = probs.get("home_over_0_5", 0.0)
-        if p_ho05 >= max(0.85, min_leg_prob) and h_odds and h_odds <= 1.45:
+        if p_ho05 >= max(0.85, cand_thresh) and h_odds and h_odds <= 1.45:
             t_odds = round(max(1.10, min(1.28, 1.0 / (p_ho05 * 0.94))), 2)
             candidates.append({
                 "fixture_id": f.id,
@@ -236,7 +239,7 @@ def generate_high_confidence_combos(
             })
 
         p_ao05 = probs.get("away_over_0_5", 0.0)
-        if p_ao05 >= max(0.85, min_leg_prob) and a_odds and a_odds <= 1.45:
+        if p_ao05 >= max(0.85, cand_thresh) and a_odds and a_odds <= 1.45:
             t_odds = round(max(1.10, min(1.28, 1.0 / (p_ao05 * 0.94))), 2)
             candidates.append({
                 "fixture_id": f.id,
@@ -252,13 +255,13 @@ def generate_high_confidence_combos(
                 "kickoff_eat": _format_eat(f.kickoff_utc),
             })
 
-    # Search combinations for requested leg count, or flexibly adapt if needed
-    k = max(2, min(4, num_legs))
+    # Search combinations for requested leg count (strictly 2 or 3 teams, max 3)
+    k = max(2, min(3, num_legs))
     combos: List[Dict[str, Any]] = []
 
-    # Try 2, 3, 4 legs dynamically to reach min_total_odds >= 2.00
+    # Strictly 2 or 3 teams only to respect max 3-team multi-bet constraint
     leg_counts_to_try = [k]
-    for alt_k in [2, 3, 4]:
+    for alt_k in [3, 2]:
         if alt_k not in leg_counts_to_try:
             leg_counts_to_try.append(alt_k)
 
@@ -311,41 +314,16 @@ def generate_high_confidence_combos(
         if len(combos) >= 5 and try_k >= k:
             break
 
-    # If still empty, try combinations that get as close to 2.0+ as possible with highest probability
-    if not combos:
-        for try_k in [4, 3, 2]:
-            for combo_legs in itertools.combinations(candidates, try_k):
-                if len({l["fixture_id"] for l in combo_legs}) < try_k:
-                    continue
-                tot_odds = 1.0
-                tot_prob = 1.0
-                for leg in combo_legs:
-                    tot_odds *= leg["odds"]
-                    tot_prob *= leg["probability"]
-                tot_odds = round(tot_odds, 2)
-                tot_prob = round(tot_prob, 4)
-                implied = round(1.0 / tot_odds, 4)
-                ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
-                avg_prob = round(sum(l["probability"] for l in combo_legs) / len(combo_legs), 4)
-                min_prob = round(min(l["probability"] for l in combo_legs), 4)
-                combos.append({
-                    "legs_count": try_k,
-                    "total_odds": tot_odds,
-                    "combined_probability": tot_prob,
-                    "avg_leg_probability": avg_prob,
-                    "min_leg_probability": min_prob,
-                    "implied_probability": implied,
-                    "expected_value_percent": ev,
-                    "edge_percent": round((tot_prob - implied) * 100, 2),
-                    "kelly_stake_amount": round(bankroll * 0.03, 2),
-                    "kelly_stake_percent": 3.0,
-                    "legs": list(combo_legs),
-                })
-            if combos:
-                break
-
-    # Sort combos by highest combined win probability, then highest EV
-    combos.sort(key=lambda x: (x["combined_probability"], x["expected_value_percent"]), reverse=True)
+    # Sort combos by highest average team confidence, then highest joint win probability, then EV
+    combos.sort(
+        key=lambda x: (
+            x["avg_leg_probability"],
+            x["combined_probability"],
+            x["min_leg_probability"],
+            x["expected_value_percent"]
+        ),
+        reverse=True
+    )
 
     best_combo = combos[0] if combos else None
     alternatives = combos[1:7] if len(combos) > 1 else []

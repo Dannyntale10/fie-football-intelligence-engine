@@ -251,9 +251,9 @@ with tab_portfolio:
 
     combo_col1, combo_col2, combo_col3, combo_col4 = st.columns(4)
     with combo_col1:
-        sel_legs = st.radio("Number of Teams", [2, 3, 4], index=1, horizontal=True, format_func=lambda x: f"{x}-Team Combo", key="cloud_combo_legs")
+        sel_legs = st.radio("Number of Teams (Max 3)", [2, 3], index=1, horizontal=True, format_func=lambda x: f"{x}-Team Combo", key="cloud_combo_legs")
     with combo_col2:
-        sel_min_odds = st.slider("Target Min Combined Odds", min_value=1.90, max_value=4.00, value=2.00, step=0.05, key="cloud_combo_odds")
+        sel_min_odds = st.slider("Target Min Combined Odds", min_value=2.00, max_value=4.00, value=2.00, step=0.05, key="cloud_combo_odds")
     with combo_col3:
         sel_min_leg_prob = st.slider("Min Team Confidence", min_value=0.75, max_value=0.95, value=0.80, step=0.01, format="%.0f%%", key="cloud_combo_prob")
     with combo_col4:

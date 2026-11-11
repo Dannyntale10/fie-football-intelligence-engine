@@ -324,9 +324,32 @@ with tab_portfolio:
 with tab_fixtures:
     st.subheader("Match Fixtures & Quality Grades")
 
+    f_top1, f_top2 = st.columns([3, 1])
+    with f_top1:
+        view_mode = st.radio(
+            "Filter Fixtures:",
+            ["🟢 Upcoming Only (Tomorrow & Future)", "📜 All Fixtures (Including Past Played)"],
+            horizontal=True,
+            key="cloud_fx_view_mode"
+        )
+    with f_top2:
+        if st.button("🗑️ Purge Past Played Games", use_container_width=True, help="Permanently delete matches whose kickoff has already passed"):
+            db_p = _db()
+            now_p = datetime.now(timezone.utc)
+            del_n = db_p.execute(delete(Fixture).where(Fixture.kickoff_utc <= now_p)).rowcount
+            db_p.commit()
+            db_p.close()
+            st.toast(f"Purged {del_n} past matches!")
+            st.rerun()
+
+    only_upcoming = view_mode.startswith("🟢")
     db_fx = _db()
+    now_fx = datetime.now(timezone.utc)
+    fx_query = select(Fixture)
+    if only_upcoming:
+        fx_query = fx_query.where(Fixture.kickoff_utc >= now_fx)
     fixtures_raw = db_fx.scalars(
-        select(Fixture).order_by(Fixture.kickoff_utc).limit(500)
+        fx_query.order_by(Fixture.kickoff_utc).limit(500)
     ).all()
     db_fx.close()
 

@@ -75,6 +75,7 @@ def _build_fixture_out(f: Fixture, custom_signals: Optional[dict] = None) -> dic
         "home_odds": f.home_odds,
         "draw_odds": f.draw_odds,
         "away_odds": f.away_odds,
+        "status": f.status,
         "data_quality_score": quality["score"],
         "data_quality_grade": quality["grade"],
         "eligible_for_analysis": quality["eligible_for_analysis"],
@@ -119,13 +120,21 @@ def connector_status():
 @app.get("/fixtures", response_model=List[FixtureOut])
 def list_fixtures(
     limit: int = 100,
+    upcoming_only: bool = Query(False, description="Filter to only upcoming future matches"),
+    status: Optional[str] = Query(None, description="Filter by match status"),
     competition: Optional[str] = Query(None, description="Filter by competition name"),
     country: Optional[str] = Query(None, description="Filter by country"),
     source: Optional[str] = Query(None, description="Filter by source"),
     db: Session = Depends(get_db)
 ):
+    from datetime import datetime, timezone
     limit = max(1, min(limit, 500))
     query = select(Fixture)
+    if upcoming_only:
+        now = datetime.now(timezone.utc)
+        query = query.where(Fixture.kickoff_utc >= now)
+    if status:
+        query = query.where(Fixture.status == status)
     if competition:
         query = query.where(Fixture.competition.ilike(f"%{competition}%"))
     if country:
@@ -135,6 +144,15 @@ def list_fixtures(
 
     fixtures = db.scalars(query.order_by(Fixture.kickoff_utc).limit(limit)).all()
     return [_build_fixture_out(f) for f in fixtures]
+
+@app.delete("/fixtures/past")
+def delete_past_fixtures(db: Session = Depends(get_db)):
+    """Delete all past fixtures that have already been played, keeping only future upcoming matches."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    deleted = db.execute(delete(Fixture).where(Fixture.kickoff_utc <= now)).rowcount
+    db.commit()
+    return {"message": f"Purged {deleted} past matches. Only genuine upcoming matches remain in the database.", "deleted_count": deleted}
 
 @app.get("/fixtures/{fixture_id}", response_model=FixtureOut)
 def get_fixture(fixture_id: int, db: Session = Depends(get_db)):

@@ -189,8 +189,31 @@ with tab_fixtures:
     if not backend_online:
         st.warning("Start the FastAPI backend to inspect stored fixtures.")
     else:
+        f_top1, f_top2 = st.columns([3, 1])
+        with f_top1:
+            view_mode = st.radio(
+                "Filter View:",
+                ["🟢 Upcoming Only (Tomorrow & Future)", "📜 All Fixtures (Including Past Played)"],
+                horizontal=True,
+                key="fx_view_mode"
+            )
+        with f_top2:
+            if st.button("🗑️ Purge Past Played Games", use_container_width=True, help="Permanently delete matches whose kickoff has already passed"):
+                try:
+                    p_res = requests.delete(f"{API_BASE}/fixtures/past")
+                    if p_res.status_code == 200:
+                        st.toast(p_res.json().get("message", "Past fixtures purged!"))
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Purge error: {e}")
+
+        only_upcoming = view_mode.startswith("🟢")
         try:
-            f_res = requests.get(f"{API_BASE}/fixtures?limit=200", timeout=4)
+            f_res = requests.get(
+                f"{API_BASE}/fixtures",
+                params={"limit": 300, "upcoming_only": only_upcoming},
+                timeout=5
+            )
             fixtures = f_res.json() if f_res.status_code == 200 else []
         except Exception as e:
             fixtures = []

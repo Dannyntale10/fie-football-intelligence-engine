@@ -90,3 +90,79 @@ def test_text_and_pdf_slip_generation():
     assert pdf_bytes is not None
     assert len(pdf_bytes) > 100
     assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_ai_squad_and_injuries_checker():
+    """Verify pre-combo AI squad performance and injury checking."""
+    from app.services.ai_squad_checker import check_squad_and_injuries
+
+    res = check_squad_and_injuries(
+        home_team="Arsenal",
+        away_team="Chelsea",
+        competition="Premier League",
+        selection="Arsenal Win or Draw (1X)",
+    )
+    assert "verdict" in res
+    assert res["verdict"] in ["APPROVED", "CAUTION", "VETO"]
+    assert "badge" in res
+    assert "injuries" in res
+    assert "form_summary" in res
+
+
+def test_whatsapp_message_formatting():
+    """Verify WhatsApp message formatting includes all vital betting and squad info."""
+    from app.services.whatsapp import format_combo_whatsapp_message
+
+    mock_combo = {
+        "legs_count": 2,
+        "total_odds": 2.12,
+        "combined_probability": 0.582,
+        "avg_leg_probability": 0.884,
+        "expected_value_percent": 23.4,
+        "kelly_stake_amount": 50.0,
+        "kelly_stake_percent": 5.0,
+        "legs": [
+            {
+                "match": "Czechia vs Spain",
+                "competition": "UEFA Nations League",
+                "selection": "Spain to Score (Over 0.5 Goals)",
+                "odds": 1.18,
+                "probability": 0.905,
+                "kickoff_eat": "Thu 12 Nov, 22:45 EAT",
+                "ai_squad": {"injuries": "Regular starting XI fit and available."},
+            },
+            {
+                "match": "England vs Croatia",
+                "competition": "UEFA Nations League",
+                "selection": "England to Score (Over 0.5 Goals)",
+                "odds": 1.18,
+                "probability": 0.901,
+                "kickoff_eat": "Thu 12 Nov, 22:45 EAT",
+                "ai_squad": {"injuries": "Top goalscorers active."},
+            }
+        ]
+    }
+    msg = format_combo_whatsapp_message(mock_combo, "Thursday", currency="UGX")
+    assert "FIE BANKER MULTI-BET (2 TEAMS)" in msg
+    assert "2.12" in msg
+    assert "Spain to Score" in msg
+    assert "22:45 EAT" in msg
+    assert "UGX" in msg
+
+
+def test_sentinel_daemon_status_and_endpoints():
+    """Verify 24/7 background sentinel status functions and endpoints."""
+    from app.services.sentinel import get_sentinel_status
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    status = get_sentinel_status()
+    assert "is_running" in status
+    assert "alerts_dispatched_count" in status
+
+    client = TestClient(app)
+    res = client.get("/sentinel/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert "is_running" in data
+

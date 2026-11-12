@@ -288,8 +288,22 @@ def build_match_dossier(
     rho: float = -0.10,
 ) -> Dict[str, Any]:
     """Everything we can honestly say about one fixture."""
-    analysis = analyze_fixture(
-        fixture, home_lambda=home_lambda, away_lambda=away_lambda, rho=rho, db=db
+    baseline = analyze_fixture(fixture, rho=rho, db=db)
+    baseline_lambdas = baseline.get("estimated_lambdas") or {}
+
+    # The UI seeds its λ inputs with the model's own estimates. Treating those
+    # as manual overrides would hide the real λ source (ratings vs market), so
+    # only values the caller actually changed are treated as overrides.
+    if home_lambda is not None and abs(home_lambda - float(baseline_lambdas.get("home_lambda", home_lambda))) < 0.005:
+        home_lambda = None
+    if away_lambda is not None and abs(away_lambda - float(baseline_lambdas.get("away_lambda", away_lambda))) < 0.005:
+        away_lambda = None
+
+    analysis = (
+        baseline if home_lambda is None and away_lambda is None
+        else analyze_fixture(
+            fixture, home_lambda=home_lambda, away_lambda=away_lambda, rho=rho, db=db
+        )
     )
 
     learning_report = load_learning_report()

@@ -62,6 +62,7 @@ from app.services.ratings import (                     # noqa: E402
     calculate_ratings_from_fixtures,
     ratings_snapshot_hash,
     STALE_AFTER_DAYS,
+    IGNORED_COMPETITIONS,
 )
 from app.services.seeder import (                      # noqa: E402
     seed_sample_historical_data,
@@ -1697,6 +1698,12 @@ with tab_deep_dive:
         ).all()
     finally:
         db_dd.close()
+
+    real_pool = [
+        f for f in dd_pool
+        if (f.competition or "").strip().lower() not in IGNORED_COMPETITIONS
+    ]
+    dd_pool = real_pool or dd_pool
 
     if not dd_pool:
         st.info("No fixtures available. Load fixtures from **📥 Data Feeds & Sync** first.")

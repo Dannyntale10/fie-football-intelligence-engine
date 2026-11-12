@@ -246,3 +246,16 @@ def test_match_dossier_assembles_evidence_and_risks(db):
 
     assert dossier["verdict"]["confidence"] in {"low", "medium", "high"}
     assert dossier["team_news"]["advisory"] is True
+
+
+def test_dossier_does_not_treat_seeded_lambdas_as_manual_overrides(db):
+    fixture = _add_upcoming(db)
+    baseline = build_match_dossier(db, fixture)
+    lambdas = baseline["model"]["lambdas"]
+
+    seeded = build_match_dossier(
+        db, fixture,
+        home_lambda=lambdas["home_lambda"],
+        away_lambda=lambdas["away_lambda"],
+    )
+    assert seeded["model"]["lambda_source"] == baseline["model"]["lambda_source"]

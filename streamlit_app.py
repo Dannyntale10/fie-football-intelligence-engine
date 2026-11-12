@@ -162,66 +162,50 @@ st.caption("Local-first football research & prediction platform · Cloud Edition
 # Sidebar
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.header("🖥️ System Status")
-
-    db_status = _db()
-    total_fx = db_status.scalar(select(func.count(Fixture.id))) or 0
-    if total_fx == 0:
-        try:
-            fetch_live_upcoming_fixtures_espn(db_status)
-            total_fx = db_status.scalar(select(func.count(Fixture.id))) or 0
-        except Exception:
-            pass
-    total_tr = db_status.scalar(select(func.count(TeamRating.id))) or 0
-    scheduled = db_status.scalar(
-        select(func.count(Fixture.id)).where(Fixture.status == "scheduled")
-    ) or 0
-    finished = db_status.scalar(
-        select(func.count(Fixture.id)).where(Fixture.status == "finished")
-    ) or 0
-    db_status.close()
-
-    st.success("🟢 Engine Online (Standalone Mode)")
-    col_a, col_b = st.columns(2)
-    col_a.metric("Fixtures", total_fx)
-    col_b.metric("Team Ratings", total_tr)
-    col_c, col_d = st.columns(2)
-    col_c.metric("Upcoming", scheduled)
-    col_d.metric("Finished", finished)
-
-    st.caption(f"DB: `{os.environ.get('DATABASE_URL', 'sqlite')}`")
-
-    st.divider()
-    st.header("🤖 AI Insights (Gemini)")
-    _sidebar_key = st.text_input(
-        "Gemini API Key",
-        type="password",
-        placeholder="AIza… (optional)",
-        help="Paste your Google Gemini API key to unlock AI match previews & combo explanations. Leave blank to use rule-based analysis.",
-        key="sidebar_gemini_key",
-    )
-    if _sidebar_key:
-        os.environ["GEMINI_API_KEY"] = _sidebar_key
-    _ai_on = is_gemini_enabled()
-    if _ai_on:
-        st.success("🟢 Gemini AI Active")
+    st.header("🟢 24/7 Banker Sentinel")
+    s_status = get_sentinel_status()
+    is_active = s_status.get("is_running", False)
+    if is_active:
+        st.success("🟢 Sentinel: **ACTIVE & SCANNING**")
+        st.caption(f"Last scan: {s_status.get('last_scan_eat') or 'Starting up...'}")
+        st.caption(f"Alerts sent: {s_status.get('alerts_dispatched_count', 0)}")
+        if st.button("⏹️ Stop 24/7 Sentinel", use_container_width=True, key="app_btn_stop_sentinel"):
+            stop_sentinel()
+            st.rerun()
     else:
-        st.caption("⚪ AI off — rule-based mode")
-        st.caption("Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey)")
+        st.info("⚪ Sentinel: **STANDBY**")
+        st.caption("Autonomously monitors 35+ leagues, verifies injuries & sends WhatsApp alerts.")
+        if st.button("▶️ Start 24/7 Sentinel", type="primary", use_container_width=True, key="app_btn_start_sentinel"):
+            start_sentinel(interval_minutes=30)
+            st.rerun()
 
-    st.divider()
-    st.header("💱 Currency & Staking")
-    sel_currency = st.selectbox(
-        "Display Currency",
-        get_currency_options(),
-        index=1,  # Default to UGX (Ugandan Shilling)
-        help="Select display currency for Kelly stakes and ticket slips (UGX, USD, KES, TZS, EUR, GBP)",
-        key="app_currency"
-    )
+    c_s1, c_s2 = st.columns(2)
+    with c_s1:
+        if st.button("⚡ Scan Now", use_container_width=True, key="app_btn_scan_sentinel"):
+            with st.spinner("Scanning 35+ leagues..."):
+                scan_out = run_sentinel_scan_now()
+                if scan_out.get("success"):
+                    st.success(f"Scan complete ({scan_out.get('fixtures_scanned')} checked)")
+                    st.rerun()
+                else:
+                    st.error(f"Error: {scan_out.get('error')}")
+    with c_s2:
+        if st.button("⚖️ Settle Bets", use_container_width=True, key="app_btn_settle_bets"):
+            with st.spinner("Settling slips..."):
+                db_set = _db()
+                try:
+                    settled_res = settle_pending_bets(db_set, phone=os.getenv("WHATSAPP_PHONE", ""), apikey=os.getenv("WHATSAPP_APIKEY", ""))
+                    if settled_res:
+                        st.success(f"Settled {len(settled_res)} finished slip(s)!")
+                    else:
+                        st.info("All matches in play or pending.")
+                    st.rerun()
+                finally:
+                    db_set.close()
 
     st.divider()
     st.header("📱 WhatsApp Notifications")
-    st.caption("Receive 24/7 alerts on your phone whenever a qualifying Banker Slip is found.")
+    st.caption("Get automatic alerts on your phone whenever qualifying Banker Slips (Odds ≥ 2.00, Conf ≥ 85%) are found.")
     wa_phone_val = st.text_input(
         "WhatsApp Phone (with country code)",
         value=os.getenv("WHATSAPP_PHONE", ""),
@@ -259,115 +243,94 @@ with st.sidebar:
                     st.error(f"Failed: {wa_res.get('error')}")
 
     st.divider()
-    st.header("🟢 24/7 Autonomous Sentinel")
-    s_status = get_sentinel_status()
-    is_active = s_status.get("is_running", False)
-    if is_active:
-        st.success("🟢 24/7 Sentinel: **ACTIVE & SCANNING**")
-        st.caption(f"Last scan: {s_status.get('last_scan_eat') or 'Starting up...'}")
-        st.caption(f"Alerts sent: {s_status.get('alerts_dispatched_count', 0)}")
-        if st.button("⏹️ Stop 24/7 Sentinel", use_container_width=True, key="app_btn_stop_sentinel"):
-            stop_sentinel()
-            st.rerun()
-    else:
-        st.info("⚪ 24/7 Sentinel: **STANDBY**")
-        st.caption("Autonomously monitors 35+ leagues, verifies injuries & sends WhatsApp alerts.")
-        if st.button("▶️ Start 24/7 Sentinel", type="primary", use_container_width=True, key="app_btn_start_sentinel"):
-            start_sentinel(interval_minutes=30)
-            st.rerun()
+    st.header("💱 Currency & Staking")
+    sel_currency = st.selectbox(
+        "Display Currency",
+        get_currency_options(),
+        index=1,  # Default to UGX (Ugandan Shilling)
+        help="Select display currency for Kelly stakes and ticket slips (UGX, USD, KES, TZS, EUR, GBP)",
+        key="app_currency"
+    )
 
-    if st.button("⚡ Run Sentinel Scan Now", use_container_width=True, key="app_btn_scan_sentinel"):
-        with st.spinner("Running 24/7 autonomous odds & squad check scan..."):
-            scan_out = run_sentinel_scan_now()
-            if scan_out.get("success"):
-                st.success(f"Scan complete at {scan_out.get('scan_time')}. Fixtures checked: {scan_out.get('fixtures_scanned')}")
-                st.rerun()
-            else:
-                st.error(f"Scan error: {scan_out.get('error')}")
-
-    if st.button("⚖️ Settle Bets with Live Scores", use_container_width=True, key="app_btn_settle_bets"):
-        with st.spinner("Syncing latest match scores & settling finished slips..."):
-            db_set = _db()
+    with st.expander("⚙️ System Status & Advanced Settings", expanded=False):
+        db_status = _db()
+        total_fx = db_status.scalar(select(func.count(Fixture.id))) or 0
+        if total_fx == 0:
             try:
-                settled_res = settle_pending_bets(
-                    db_set,
-                    phone=wa_phone_val,
-                    apikey=wa_key_val,
-                    currency=sel_currency,
-                )
-                if settled_res:
-                    st.success(f"Settled {len(settled_res)} finished slip(s)! Outcomes dispatched to WhatsApp.")
-                else:
-                    st.info("All pending matches are still in play or scheduled.")
-                st.rerun()
-            finally:
-                db_set.close()
+                fetch_live_upcoming_fixtures_espn(db_status)
+                total_fx = db_status.scalar(select(func.count(Fixture.id))) or 0
+            except Exception:
+                pass
+        total_tr = db_status.scalar(select(func.count(TeamRating.id))) or 0
+        scheduled = db_status.scalar(select(func.count(Fixture.id)).where(Fixture.status == "scheduled")) or 0
+        finished = db_status.scalar(select(func.count(Fixture.id)).where(Fixture.status == "finished")) or 0
+        db_status.close()
 
-    st.divider()
-    st.header("⚙️ Engine Defaults")
-    st.metric("Qualification Threshold", "85%",
-              help="Markets ≥ 85% probability qualify for shortlisting.")
-    st.metric("Data-Quality Minimum", "70 / 100",
-              help="Fixtures scoring ≥ 70 (Grade A/B) are eligible for model analysis.")
-    st.metric("Kelly Fraction", "¼ Quarter Kelly",
-              help="Conservative anti-ruin staking.")
+        st.caption("Engine Database Status")
+        c1, c2 = st.columns(2)
+        c1.metric("Fixtures", total_fx)
+        c2.metric("Ratings", total_tr)
+        c3, c4 = st.columns(2)
+        c3.metric("Upcoming", scheduled)
+        c4.metric("Finished", finished)
 
-    st.divider()
-    if st.button("🧹 Mark Stale Fixtures", use_container_width=True,
-                 help="Set past scheduled fixtures with no score → 'pending_result'"):
-        db_stale = _db()
-        now = datetime.now(timezone.utc)
-        stale = db_stale.scalars(
-            select(Fixture)
-            .where(Fixture.status == "scheduled")
-            .where(Fixture.kickoff_utc < now)
-            .where(Fixture.home_score.is_(None))
-        ).all()
-        for s in stale:
-            s.status = "pending_result"
-        db_stale.commit()
-        db_stale.close()
-        st.toast(f"✅ Marked {len(stale)} fixtures as 'pending_result'.")
-        st.rerun()
+        st.divider()
+        st.caption("🤖 AI Insights (Gemini)")
+        _sidebar_key = st.text_input(
+            "Gemini API Key",
+            type="password",
+            placeholder="AIza… (optional)",
+            key="sidebar_gemini_key",
+        )
+        if _sidebar_key:
+            os.environ["GEMINI_API_KEY"] = _sidebar_key
+        if is_gemini_enabled():
+            st.success("🟢 Gemini AI Active")
+        else:
+            st.caption("⚪ Rule-based mode")
 
-    if st.button("🗑️ Clear All Fixtures", use_container_width=True):
-        db_cl = _db()
-        count = db_cl.scalar(select(func.count(Fixture.id))) or 0
-        db_cl.execute(delete(Fixture))
-        db_cl.commit()
-        db_cl.close()
-        st.toast(f"🗑️ Cleared {count} fixtures.")
-        st.rerun()
+        st.divider()
+        if st.button("🧹 Mark Past Fixtures as Finished", use_container_width=True):
+            db_stale = _db()
+            now = datetime.now(timezone.utc)
+            stale = db_stale.scalars(select(Fixture).where(Fixture.status == "scheduled").where(Fixture.kickoff_utc < now)).all()
+            for s in stale:
+                s.status = "pending_result"
+            db_stale.commit()
+            db_stale.close()
+            st.toast(f"✅ Updated {len(stale)} fixtures.")
+            st.rerun()
+
+        if st.button("🗑️ Clear Fixture Cache", use_container_width=True):
+            db_cl = _db()
+            db_cl.execute(delete(Fixture))
+            db_cl.commit()
+            db_cl.close()
+            st.toast("🗑️ Cleared fixture cache.")
+            st.rerun()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Tabs
+# Primary Navigation Tabs
 # ═════════════════════════════════════════════════════════════════════════════
 (
-    tab_portfolio, tab_fixtures, tab_live, tab_odds_movement,
-    tab_import, tab_backtest, tab_markets, tab_ratings, tab_connectors, tab_agent_rating,
+    tab_portfolio, tab_fixtures, tab_live, tab_tools,
 ) = st.tabs([
-    "📋 Daily Portfolio",
-    "📅 Fixtures & Odds",
-    "⚡ Live Scores",
-    "📉 Line Movement",
-    "📥 Ingestion & Import",
-    "🧪 Strategy Backtester",
-    "📊 Market Probabilities",
-    "🛡️ Team Ratings",
-    "🔌 Bookmaker Connectors",
-    "🏆 Agent Rating",
+    "🏆 Banker Slips & Ledger",
+    "📅 Fixtures & Odds (EAT)",
+    "⚡ Live Scores & Line Movement",
+    "🛠️ Analytics & Research Tools",
 ])
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TAB 0 — DAILY VALUE PORTFOLIO
+# TAB 0 — DAILY BANKER SLIPS & PERFORMANCE LEDGER
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_portfolio:
-    st.subheader("📋 Daily Value Portfolio & High-Confidence Combos")
+    st.subheader("🏆 Daily High-Confidence Banker Slips & Portfolio")
     st.caption(
-        "Quantitative selection engine: generate optimal 2-team or 3-team accumulators (Odds ≥ 2.00+) "
-        "and scan individual +EV value bets with fractional Kelly stake sizing."
+        "Quantitative selection engine: generate optimal 2-team or 3-team accumulators (Odds ≥ 2.00+, Confidence ≥ 85%) "
+        "with quarter-Kelly stake sizing, pre-match injury check, and automated settlement."
     )
 
     # ══════════════════════════════════════════════════════════════════════
@@ -1066,66 +1029,72 @@ with tab_fixtures:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TAB — LIVE IN-PLAY SCORES
+# TAB 2 — LIVE IN-PLAY SCORES & ODDS MOVEMENT
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_live:
-    st.subheader("⚡ Real-Time Live In-Play & Today's Matches")
-    st.caption("Live score tracker across 17+ leagues directly from real-time ESPN scoreboard.")
+    tab_inplay, tab_odds_movement = st.tabs([
+        "⚡ Real-Time In-Play Scores",
+        "📉 Odds Line Movement & Sharp Action",
+    ])
 
-    c_live_btn, c_live_space = st.columns([2, 5])
-    with c_live_btn:
-        if st.button("🔄 Refresh Live Scores", use_container_width=True, key="btn_refresh_live"):
-            st.rerun()
+    with tab_inplay:
+        st.subheader("⚡ Real-Time Live In-Play & Today's Matches")
+        st.caption("Live score tracker across 17+ leagues directly from real-time ESPN scoreboard.")
 
-    db_live = _db()
-    try:
-        with st.spinner("Fetching live in-play scoreboard…"):
-            live_matches = fetch_live_scores(db_live)
-    except Exception as e:
-        live_matches = []
-        st.error(f"Error fetching live scores: {e}")
-    finally:
-        db_live.close()
+        c_live_btn, c_live_space = st.columns([2, 5])
+        with c_live_btn:
+            if st.button("🔄 Refresh Live Scores", use_container_width=True, key="btn_refresh_live"):
+                st.rerun()
 
-    if not live_matches:
-        st.info("No matches in play right now. Games scheduled for today will automatically show live minute-by-minute scores here once kicked off.")
-    else:
-        in_play = [m for m in live_matches if m["is_live"]]
-        finished_today = [m for m in live_matches if m["is_finished"]]
-        pre_match = [m for m in live_matches if not m["is_live"] and not m["is_finished"]]
+        db_live = _db()
+        try:
+            with st.spinner("Fetching live in-play scoreboard…"):
+                live_matches = fetch_live_scores(db_live)
+        except Exception as e:
+            live_matches = []
+            st.error(f"Error fetching live scores: {e}")
+        finally:
+            db_live.close()
 
-        if in_play:
-            st.markdown(f"#### 🔴 In-Play Right Now ({len(in_play)} matches)")
-            for m in in_play:
-                st.markdown(f"""
-                <div style="background: rgba(255, 68, 68, 0.12); border: 1px solid #FF4444; border-radius: 8px; padding: 12px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <span style="font-size: 16px; font-weight: bold; color: #FFF;">{m['home_team']} &nbsp;<span style="color: #FF4444;">{m['home_score']} – {m['away_score']}</span>&nbsp; {m['away_team']}</span>
-                        <div style="font-size: 12px; color: #AAA;">{m['competition']} · {m['status_desc']}</div>
+        if not live_matches:
+            st.info("No matches in play right now. Games scheduled for today will automatically show live minute-by-minute scores here once kicked off.")
+        else:
+            in_play = [m for m in live_matches if m["is_live"]]
+            finished_today = [m for m in live_matches if m["is_finished"]]
+            pre_match = [m for m in live_matches if not m["is_live"] and not m["is_finished"]]
+
+            if in_play:
+                st.markdown(f"#### 🔴 In-Play Right Now ({len(in_play)} matches)")
+                for m in in_play:
+                    st.markdown(f"""
+                    <div style="background: rgba(255, 68, 68, 0.12); border: 1px solid #FF4444; border-radius: 8px; padding: 12px 18px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-size: 16px; font-weight: bold; color: #FFF;">{m['home_team']} &nbsp;<span style="color: #FF4444;">{m['home_score']} – {m['away_score']}</span>&nbsp; {m['away_team']}</span>
+                            <div style="font-size: 12px; color: #AAA;">{m['competition']} · {m['status_desc']}</div>
+                        </div>
+                        <span style="background: #FF4444; color: #FFF; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;">⏱️ {m['clock']}</span>
                     </div>
-                    <span style="background: #FF4444; color: #FFF; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;">⏱️ {m['clock']}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
 
-        if pre_match:
-            st.markdown(f"#### 🕐 Scheduled Today ({len(pre_match)} matches)")
-            pre_df = pd.DataFrame([{
-                "Match": f"{m['home_team']} vs {m['away_team']}",
-                "League": m["competition"],
-                "Kickoff (EAT)": m["kickoff_eat"] or m["status_desc"],
-                "Status": m["status_desc"],
-            } for m in pre_match])
-            st.dataframe(pre_df, use_container_width=True, hide_index=True)
+            if pre_match:
+                st.markdown(f"#### 🕐 Scheduled Today ({len(pre_match)} matches)")
+                pre_df = pd.DataFrame([{
+                    "Match": f"{m['home_team']} vs {m['away_team']}",
+                    "League": m["competition"],
+                    "Kickoff (EAT)": m["kickoff_eat"] or m["status_desc"],
+                    "Status": m["status_desc"],
+                } for m in pre_match])
+                st.dataframe(pre_df, use_container_width=True, hide_index=True)
 
-        if finished_today:
-            st.markdown(f"#### ✅ Today's Results ({len(finished_today)} matches)")
-            fin_df = pd.DataFrame([{
-                "Match": f"{m['home_team']} {m['home_score']} – {m['away_score']} {m['away_team']}",
-                "League": m["competition"],
-                "Final Score": f"{m['home_score']} - {m['away_score']}",
-                "Status": m["status_desc"],
-            } for m in finished_today])
-            st.dataframe(fin_df, use_container_width=True, hide_index=True)
+            if finished_today:
+                st.markdown(f"#### ✅ Today's Results ({len(finished_today)} matches)")
+                fin_df = pd.DataFrame([{
+                    "Match": f"{m['home_team']} {m['home_score']} – {m['away_score']} {m['away_team']}",
+                    "League": m["competition"],
+                    "Final Score": f"{m['home_score']} - {m['away_score']}",
+                    "Status": m["status_desc"],
+                } for m in finished_today])
+                st.dataframe(fin_df, use_container_width=True, hide_index=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1168,8 +1137,22 @@ with tab_odds_movement:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TAB 2 — INGESTION & IMPORT
+# TAB 3 — ANALYTICS & RESEARCH TOOLS
 # ═════════════════════════════════════════════════════════════════════════════
+with tab_tools:
+    st.subheader("🛠️ Quantitative Analytics & Research Suite")
+    st.caption("Historical backtesting, Dixon-Coles team ratings, Poisson probability distributions, and data ingestion feeds.")
+
+    (
+        tab_backtest, tab_ratings, tab_markets, tab_import, tab_connectors, tab_agent_rating,
+    ) = st.tabs([
+        "🧪 Strategy Backtester",
+        "🛡️ Team Ratings",
+        "📊 Poisson Probabilities",
+        "📥 Data Feeds & Sync",
+        "🔌 Bookmaker Connectors",
+        "🏆 Engine Scorecard",
+    ])
 with tab_import:
     st.subheader("Data Ingestion & Real-Time League Feeds")
     st.write(

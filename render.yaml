@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fie-football-intelligence-engine
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run streamlit_app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: WHATSAPP_PHONE
+        sync: false
+      - key: WHATSAPP_APIKEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

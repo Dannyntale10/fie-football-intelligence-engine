@@ -74,6 +74,12 @@ from app.services.backtest import run_backtest          # noqa: E402
 from app.services.portfolio import build_daily_portfolio  # noqa: E402
 from app.services.combo import generate_high_confidence_combos  # noqa: E402
 from app.services.calibration import load_report as load_calibration_report  # noqa: E402
+from app.services.match_analysis import build_match_dossier  # noqa: E402
+from app.services.learning import (  # noqa: E402
+    summary as learning_summary,
+    build_report as build_learning_report,
+    save_report as save_learning_report,
+)
 from app.connectors.bookmakers import BOOKMAKERS       # noqa: E402
 from app.services.ai_insights import (                 # noqa: E402
     gemini_match_preview,
@@ -1661,15 +1667,271 @@ with tab_tools:
     st.caption("Historical backtesting, Dixon-Coles team ratings, Poisson probability distributions, and data ingestion feeds.")
 
     (
-        tab_backtest, tab_ratings, tab_markets, tab_import, tab_connectors, tab_agent_rating,
+        tab_backtest, tab_ratings, tab_markets, tab_deep_dive, tab_import, tab_connectors, tab_agent_rating,
     ) = st.tabs([
         "🧪 Strategy Backtester",
         "🛡️ Team Ratings",
         "📊 Poisson Probabilities",
+        "🧠 Match Deep Dive",
         "📥 Data Feeds & Sync",
         "🔌 Bookmaker Connectors",
         "🏆 Engine Scorecard",
     ])
+
+with tab_deep_dive:
+    st.subheader("🧠 Single-Match Deep Dive")
+    st.caption(
+        "One fixture at a time, independent of the accumulator builder: model probabilities "
+        "against the de-vigged price, recent form with home/away splits, head-to-head, "
+        "advisory team news, and every reason the read might be wrong."
+    )
+
+    now_dd = datetime.now(timezone.utc)
+    db_dd = _db()
+    try:
+        dd_pool = db_dd.scalars(
+            select(Fixture)
+            .where(Fixture.kickoff_utc >= now_dd - timedelta(hours=6))
+            .order_by(Fixture.kickoff_utc)
+            .limit(400)
+        ).all()
+    finally:
+        db_dd.close()
+
+    if not dd_pool:
+        st.info("No fixtures available. Load fixtures from **📥 Data Feeds & Sync** first.")
+    else:
+        dd_f1, dd_f2 = st.columns([3, 2])
+        with dd_f1:
+            dd_search = st.text_input(
+                "🔍 Filter by team", placeholder="Arsenal, Barcelona…", key="dd_search"
+            )
+        with dd_f2:
+            dd_comps = sorted({f.competition for f in dd_pool if f.competition})
+            dd_comp = st.selectbox("Competition", ["All"] + dd_comps, key="dd_comp")
+
+        dd_view = dd_pool
+        if dd_comp != "All":
+            dd_view = [f for f in dd_view if f.competition == dd_comp]
+        if dd_search:
+            needle = dd_search.strip().lower()
+            dd_view = [
+                f for f in dd_view
+                if needle in f.home_team.lower() or needle in f.away_team.lower()
+            ]
+
+        if not dd_view:
+            st.warning("No match matches that filter.")
+        else:
+            dd_lookup = {f.id: f for f in dd_view}
+            dd_id = st.selectbox(
+                "Select a match to analyse",
+                list(dd_lookup.keys()),
+                format_func=lambda x: (
+                    f"{dd_lookup[x].home_team} vs {dd_lookup[x].away_team} · "
+                    f"{dd_lookup[x].competition} · "
+                    f"{dd_lookup[x].kickoff_utc.astimezone(timezone(timedelta(hours=3))).strftime('%a %d %b %H:%M')}"
+                ),
+                key="dd_match",
+            )
+            dd_fixture = dd_lookup[dd_id]
+
+            db_dd_pre = _db()
+            try:
+                dd_pre = analyze_fixture(dd_fixture, db=db_dd_pre)
+            finally:
+                db_dd_pre.close()
+            dd_est = dd_pre.get("estimated_lambdas") or {}
+
+            dd_c1, dd_c2, dd_c3, dd_c4 = st.columns([1, 1, 1.4, 1.2])
+            with dd_c1:
+                dd_h = st.number_input(
+                    f"Home λ ({dd_fixture.home_team})", 0.1, 8.0,
+                    float(dd_est.get("home_lambda", 1.5)), 0.05, key=f"ddh{dd_id}",
+                )
+            with dd_c2:
+                dd_a = st.number_input(
+                    f"Away λ ({dd_fixture.away_team})", 0.1, 8.0,
+                    float(dd_est.get("away_lambda", 1.1)), 0.05, key=f"dda{dd_id}",
+                )
+            with dd_c3:
+                dd_rho = st.slider(
+                    "Dixon-Coles ρ", -0.30, 0.10, -0.10, 0.01, key=f"ddrho{dd_id}",
+                )
+            with dd_c4:
+                st.write("")
+                dd_run = st.button(
+                    "🔎 Analyse this match", type="primary", use_container_width=True,
+                    key=f"ddrun{dd_id}",
+                )
+
+            dd_key = f"{dd_id}:{round(dd_h, 2)}:{round(dd_a, 2)}:{round(dd_rho, 2)}"
+            if dd_run:
+                db_dd_run = _db()
+                try:
+                    st.session_state["dd_dossier"] = build_match_dossier(
+                        db_dd_run,
+                        db_dd_run.get(Fixture, dd_id),
+                        home_lambda=dd_h,
+                        away_lambda=dd_a,
+                        rho=dd_rho,
+                    )
+                    st.session_state["dd_dossier_key"] = dd_key
+                finally:
+                    db_dd_run.close()
+
+            dossier = (
+                st.session_state.get("dd_dossier")
+                if st.session_state.get("dd_dossier_key") == dd_key else None
+            )
+
+            if not dossier:
+                st.info("Press **Analyse this match** to build the dossier.")
+            else:
+                verdict = dossier["verdict"]
+                conf = verdict["confidence"]
+                conf_color = {"high": "#00C851", "medium": "#FFBB33", "low": "#FF8800"}[conf]
+                st.markdown(f"""
+                <div style="background: rgba(255,255,255,0.04); border-left: 4px solid {conf_color};
+                            border-radius: 8px; padding: 14px 18px; margin: 14px 0;">
+                    <div style="font-size: 16px; font-weight: 700; color: #FFF;">{verdict['headline']}</div>
+                    <div style="font-size: 12px; color: #AAA; margin-top: 4px;">
+                        Confidence: <b style="color:{conf_color};">{conf.upper()}</b> ·
+                        Model validated: {'yes' if verdict['model_validated'] else 'no'} ·
+                        Ratings fresh: {'yes' if verdict['ratings_fresh'] else 'no'} ·
+                        λ source: {(dossier['model'].get('lambda_source') or 'unknown').replace('_', ' ')}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                best = verdict.get("best_bet")
+                dd_m1, dd_m2, dd_m3, dd_m4 = st.columns(4)
+                dd_m1.metric("Best edge", f"{best['edge_percent']:+.1f}%" if best else "—")
+                dd_m2.metric("Best EV", f"{best['expected_value_percent']:+.1f}%" if best else "—")
+                dd_m3.metric("Priced markets", len(dossier["markets"]))
+                lambdas = dossier["model"].get("lambdas") or {}
+                dd_m4.metric(
+                    "Expected goals",
+                    f"{lambdas.get('home_lambda', 0):.2f} – {lambdas.get('away_lambda', 0):.2f}",
+                )
+
+                dd_t_market, dd_t_form, dd_t_h2h, dd_t_news, dd_t_risk = st.tabs([
+                    "💰 Market edges", "📈 Form", "🤝 H2H", "📰 Team news", "⚠️ Risks",
+                ])
+
+                with dd_t_market:
+                    if not dossier["markets"]:
+                        st.warning("No ingested prices for this fixture — no edge can be measured.")
+                    else:
+                        mdf = pd.DataFrame([
+                            {
+                                "Market": r["market_type"],
+                                "Selection": r["selection"],
+                                "Price": r["price"],
+                                "Model %": r["model_probability"] * 100,
+                                "Calibrated %": r["calibrated_probability"] * 100,
+                                "Fair %": r["fair_probability"] * 100,
+                                "Edge %": r["edge_percent"],
+                                "EV %": r["expected_value_percent"],
+                                "+EV": "✅" if r["is_value"] else "",
+                                "Learned": "🔁" if r["calibration_applied"] else "",
+                            }
+                            for r in dossier["markets"]
+                        ])
+                        st.dataframe(
+                            mdf, use_container_width=True, hide_index=True,
+                            column_config={
+                                "Price": st.column_config.NumberColumn(format="%.2f"),
+                                "Model %": st.column_config.NumberColumn(format="%.1f%%"),
+                                "Calibrated %": st.column_config.NumberColumn(format="%.1f%%"),
+                                "Fair %": st.column_config.NumberColumn(format="%.1f%%"),
+                                "Edge %": st.column_config.NumberColumn(format="%+.1f%%"),
+                                "EV %": st.column_config.NumberColumn(format="%+.1f%%"),
+                            },
+                        )
+                        st.caption(
+                            "Edge = calibrated model probability − de-vigged market probability. "
+                            "Only real ingested prices are shown; 🔁 marks markets corrected by the learned calibration."
+                        )
+
+                with dd_t_form:
+                    fdf = pd.DataFrame([
+                        {
+                            "Team": dossier["form"][side]["team"],
+                            "Last 5": dossier["form"][side]["form"] or "—",
+                            "Record": dossier["form"][side]["record"],
+                            "PPG": dossier["form"][side]["points_per_game"],
+                            "GF/m": dossier["form"][side]["goals_for_per_match"],
+                            "GA/m": dossier["form"][side]["goals_against_per_match"],
+                            "Clean sheet": dossier["form"][side]["clean_sheet_rate"],
+                            "Failed to score": dossier["form"][side]["failed_to_score_rate"],
+                            "BTTS": dossier["form"][side]["btts_rate"],
+                            "Over 2.5": dossier["form"][side]["over_2_5_rate"],
+                        }
+                        for side in ("home", "away")
+                    ])
+                    st.dataframe(fdf, use_container_width=True, hide_index=True)
+                    vc1, vc2 = st.columns(2)
+                    for col, side in ((vc1, "home"), (vc2, "away")):
+                        form = dossier["form"][side]
+                        with col:
+                            st.markdown(f"**{form['team']}**")
+                            st.caption(
+                                f"Home: {form['home']['record'] or 'no data'} · "
+                                f"Away: {form['away']['record'] or 'no data'}"
+                            )
+                            if form["matches"]:
+                                st.dataframe(
+                                    pd.DataFrame(form["matches"])[
+                                        ["kickoff_eat", "opponent", "venue", "score", "result"]
+                                    ],
+                                    use_container_width=True, hide_index=True,
+                                )
+                            else:
+                                st.caption("No finished matches in the database.")
+
+                with dd_t_h2h:
+                    h2h = dossier["h2h"]
+                    if h2h["total"]:
+                        hc1, hc2, hc3, hc4 = st.columns(4)
+                        hc1.metric(f"{dd_fixture.home_team} wins", h2h["home_wins"])
+                        hc2.metric("Draws", h2h["draws"])
+                        hc3.metric(f"{dd_fixture.away_team} wins", h2h["away_wins"])
+                        hc4.metric("Avg goals", f"{h2h['avg_total_goals']:.2f}")
+                        if h2h.get("form_string"):
+                            st.caption(f"Recent meetings (home perspective): **{h2h['form_string']}**")
+                    else:
+                        st.info("No head-to-head matches in the database.")
+
+                with dd_t_news:
+                    news = dossier["team_news"]
+                    severity = "success" if news.get("verdict") == "APPROVED" else "warning"
+                    getattr(st, severity)(f"{news.get('badge', '')} **{news.get('verdict', '')}**")
+                    st.markdown(f"**Injuries & availability:** {news.get('injuries', '—')}")
+                    st.markdown(f"**Form:** {news.get('form_summary', '—')}")
+                    st.markdown(f"**H2H:** {news.get('h2h_summary', '—')}")
+                    st.markdown(f"**Risk note:** {news.get('risk_note', '—')}")
+                    if news.get("advisory"):
+                        st.caption(
+                            f"⚠️ Advisory only (source: {news.get('source', 'unknown')}). "
+                            "No verified lineup feed is configured, so this is never used as a hard filter."
+                        )
+                    st.warning(f"🧑‍🎓 Player-level form: {dossier['player_form']['reason']}")
+
+                with dd_t_risk:
+                    if dossier["risks"]:
+                        st.dataframe(
+                            pd.DataFrame(dossier["risks"]).rename(
+                                columns={"code": "Code", "severity": "Severity", "detail": "Detail"}
+                            )[["Severity", "Code", "Detail"]],
+                            use_container_width=True, hide_index=True,
+                        )
+                    else:
+                        st.success("No material data risks were detected for this fixture.")
+                    st.caption(
+                        f"Dossier {dossier['version']} · generated {dossier['generated_at']}"
+                    )
+
 with tab_import:
     st.subheader("Data Ingestion & Real-Time League Feeds")
     st.write(
@@ -2485,4 +2747,79 @@ A correlation factor **ρ = -0.10** adjusts the probability of low-scoring outco
 
 > ⚠️ Backtest results are illustrative. Past performance on historical data does not guarantee future results. Always use responsible bankroll management.
         """)
+
+    st.markdown("---")
+
+    # ── Self-improvement loop ─────────────────────────────────────────────────
+    st.markdown("### 🔁 Self-Improvement Loop")
+    st.caption(
+        "The engine learns from its own out-of-sample mistakes: it fits a per-market "
+        "calibration on walk-forward predictions plus settled legs, keeps an adjustment only "
+        "when it improves held-out log loss, and raises the required edge on markets that have "
+        "not delivered. Synthetic/demo slips are never used as evidence."
+    )
+
+    learn = learning_summary()
+    if not learn.get("trained"):
+        st.info(learn.get("note", "No learned parameters yet."))
+    else:
+        sources = learn.get("sources") or {}
+        st.success(
+            f"Learned parameters **v{learn.get('version')}** trained at "
+            f"`{learn.get('trained_at')}` from {sources.get('walkforward_matches', 0):,} "
+            f"out-of-sample matches and {sources.get('settled_legs', 0)} settled legs."
+        )
+        applied = learn.get("applied_markets") or []
+        if applied:
+            st.write("**Active calibrations:** " + ", ".join(f"`{m}`" for m in applied))
+        else:
+            st.write(
+                "**Active calibrations:** none — no market's held-out log loss improved enough "
+                "to justify changing probabilities."
+            )
+
+        premiums = learn.get("edge_premiums") or {}
+        if premiums:
+            st.write("**Edge premiums (raised required edge after poor realised results):**")
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Market": k,
+                        "Premium": v["premium"],
+                        "Legs": v["n"],
+                        "Claimed %": v["claimed_probability"] * 100,
+                        "Observed %": v["observed_win_rate"] * 100,
+                    }
+                    for k, v in premiums.items()
+                ]),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.caption(
+                "No market has enough settled real legs yet for an edge premium. "
+                "This stays empty until the ledger has real results."
+            )
+
+        for note_txt in learn.get("notes") or []:
+            st.caption(f"• {note_txt}")
+
+    if st.button("🧠 Retrain from results", key="btn_retrain_learning", use_container_width=False):
+        db_learn = _db()
+        with st.spinner("Replaying history out-of-sample and refitting calibration…"):
+            try:
+                new_report = build_learning_report(db_learn)
+                save_learning_report(new_report)
+                st.success(
+                    f"Retrained. {len(new_report.get('applied_markets', []))} market(s) now calibrated; "
+                    f"{len(new_report.get('edge_premiums', {}))} edge premium(s) active."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Retrain failed: {exc}")
+        db_learn.close()
+
+    st.caption(
+        "Training is explicit and slow by design: it reruns the walk-forward predictions so a "
+        "learning update can never be fit on data the model already saw."
+    )
 

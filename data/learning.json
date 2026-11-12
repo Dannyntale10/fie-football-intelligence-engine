@@ -1,0 +1,60 @@
+{
+  "applied_markets": [
+    "away_win",
+    "home_win"
+  ],
+  "edge_premiums": {},
+  "markets": {
+    "away_win": {
+      "a": 1.0653,
+      "applied": true,
+      "b": 0.1476,
+      "improvement": 0.00341,
+      "logloss_after": 0.54106,
+      "logloss_before": 0.54447,
+      "n": 3576,
+      "n_train": 2503,
+      "n_validation": 1073,
+      "raw_a": 1.0708,
+      "raw_b": 0.16,
+      "reason": "validated on held-out recent matches"
+    },
+    "draw": {
+      "a": 0.7731,
+      "applied": false,
+      "b": -0.2378,
+      "improvement": -0.00052,
+      "logloss_after": 0.57329,
+      "logloss_before": 0.57277,
+      "n": 3576,
+      "n_train": 2503,
+      "n_validation": 1073,
+      "raw_a": 0.7541,
+      "raw_b": -0.2578,
+      "reason": "held-out log loss did not improve enough to justify a change"
+    },
+    "home_win": {
+      "a": 1.0605,
+      "applied": true,
+      "b": -0.0756,
+      "improvement": 0.00415,
+      "logloss_after": 0.62081,
+      "logloss_before": 0.62496,
+      "n": 3576,
+      "n_train": 2503,
+      "n_validation": 1073,
+      "raw_a": 1.0656,
+      "raw_b": -0.0819,
+      "reason": "validated on held-out recent matches"
+    }
+  },
+  "notes": [
+    "No settled real slips yet: secondary-market calibration is waiting for evidence, and only the 1X2 markets have enough history."
+  ],
+  "sources": {
+    "settled_legs": 0,
+    "walkforward_matches": 3576
+  },
+  "trained_at": "2026-11-12T15:09:21.949355+00:00",
+  "version": "learn-1"
+}

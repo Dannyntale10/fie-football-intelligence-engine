@@ -274,7 +274,7 @@ def test_automated_bet_settlement_and_ledger():
             kickoff_utc=datetime.now(timezone.utc),
             home_team=f"HomeTeam_{u}",
             away_team=f"AwayTeam_{u}",
-            competition="Test League",
+            competition="Premier League",
             source="Test",
             home_odds=1.45,
             draw_odds=3.50,
@@ -286,7 +286,7 @@ def test_automated_bet_settlement_and_ledger():
             kickoff_utc=datetime.now(timezone.utc),
             home_team=f"Alpha_{u}",
             away_team=f"Beta_{u}",
-            competition="Test League",
+            competition="Premier League",
             source="Test",
             home_odds=1.50,
             draw_odds=3.60,
@@ -314,7 +314,7 @@ def test_automated_bet_settlement_and_ledger():
                     "odds": 1.45,
                     "probability": 0.90,
                     "kickoff_eat": "Today, 21:00 EAT",
-                    "competition": "Test League",
+                    "competition": "Premier League",
                 },
                 {
                     "fixture_id": f2.id,
@@ -324,13 +324,13 @@ def test_automated_bet_settlement_and_ledger():
                     "odds": 1.48,
                     "probability": 0.91,
                     "kickoff_eat": "Today, 21:00 EAT",
-                    "competition": "Test League",
+                    "competition": "Premier League",
                 },
             ]
         }
 
         # 1. Record bet into ledger
-        tracked = record_tracked_bet(combo, "Test Matchday", db, currency="UGX")
+        tracked = record_tracked_bet(combo, "Sat 14 Nov 2026", db, currency="UGX")
         assert tracked.id is not None
         assert tracked.status == "PENDING"
         assert tracked.total_odds == 2.15

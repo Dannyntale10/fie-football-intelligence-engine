@@ -132,3 +132,25 @@ def test_seed_and_backtest_api():
     bt_data = bt_res.json()
     assert "win_rate_percent" in bt_data
     assert "net_profit" in bt_data
+
+
+def test_evaluation_endpoints():
+    clv = client.get("/evaluation/clv")
+    assert clv.status_code == 200
+    clv_data = clv.json()
+    assert "n_selections" in clv_data
+    assert "beat_close_percent" in clv_data
+
+    calibration = client.get("/evaluation/calibration")
+    assert calibration.status_code in (200, 404)
+    if calibration.status_code == 200:
+        assert "verdict" in calibration.json()
+
+
+def test_ratings_freshness_endpoint():
+    response = client.get("/ratings/freshness")
+    assert response.status_code == 200
+    data = response.json()
+    assert "snapshot_hash" in data
+    assert data["stale_after_days"] > 0
+    assert isinstance(data["competitions"], list)

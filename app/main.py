@@ -550,6 +550,44 @@ def ratings_freshness(db: Session = Depends(get_db)):
         "competitions": sorted(competitions, key=lambda c: -(c["teams"] or 0)),
     }
 
+@app.get("/fixtures/{fixture_id}/deep-analysis")
+def fixture_deep_analysis(
+    fixture_id: int,
+    home_lambda: Optional[float] = Query(None, ge=0.0, le=10.0),
+    away_lambda: Optional[float] = Query(None, ge=0.0, le=10.0),
+    rho: float = Query(-0.10, ge=-0.5, le=0.5),
+    db: Session = Depends(get_db),
+):
+    """One-fixture dossier: model vs market, form splits, H2H, advisory team news and risks."""
+    from app.services.match_analysis import build_match_dossier
+
+    fixture = db.get(Fixture, fixture_id)
+    if not fixture:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+    return build_match_dossier(
+        db, fixture, home_lambda=home_lambda, away_lambda=away_lambda, rho=rho
+    )
+
+@app.get("/learning/summary")
+def learning_summary():
+    """Learned calibration parameters and edge premiums from settled results."""
+    from app.services.learning import summary
+    return summary()
+
+@app.post("/learning/train")
+def learning_train(db: Session = Depends(get_db)):
+    """Refit the self-correction layer from out-of-sample history and settled legs.
+
+    Explicit action: it reruns the walk-forward predictions, so it is slow.
+    """
+    from app.services.learning import build_report, save_report
+    try:
+        report = build_report(db)
+        save_report(report)
+        return report
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Learning error: {exc}") from exc
+
 @app.get("/fixtures/{fixture_id}/best-odds")
 def fixture_best_odds(fixture_id: int, db: Session = Depends(get_db)):
     """Return best available odds across all stored bookmakers for a fixture, with arbitrage detection."""

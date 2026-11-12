@@ -34,7 +34,7 @@ EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 
 # Bumped whenever the selection/scoring pipeline changes materially, so a
 # recorded slip can be attributed to the model that produced it.
-MODEL_VERSION = "fie-ev-3"
+MODEL_VERSION = "fie-ev-4"
 
 # Markets whose prices sum to one outcome set and can therefore be de-vigged
 # together. Asian handicap pairs are complementary for the listed half lines.
@@ -156,8 +156,11 @@ def _collect_ev_candidates(
     require_ratings: bool = True,
     max_edge_percent: float = 20.0,
     edge_multiplier: float = 1.0,
+    learning_report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Value path: keep legs where the model beats the de-vigged market price."""
+    from app.services.learning import calibrate_markets, edge_premium
+
     candidates: List[Dict[str, Any]] = []
     fixtures_with_priced_markets = 0
     fixtures_with_market_odds = 0
@@ -166,7 +169,8 @@ def _collect_ev_candidates(
     unrated_skipped = 0
     implausible_skipped = 0
     stale_rated_fixtures = 0
-    required_edge = min_edge_percent * max(1.0, edge_multiplier)
+    calibrated_legs = 0
+    base_required_edge = min_edge_percent * max(1.0, edge_multiplier)
 
     for f in fixtures:
         market_odds = _fixture_market_odds(f)
@@ -193,14 +197,23 @@ def _collect_ev_candidates(
             unrated_skipped += 1
             continue
         _, fair = _devigged_probabilities(market_odds)
+        calibrated = calibrate_markets(
+            {key: probs.get(key) for key in market_odds}, learning_report
+        )
 
         fixture_cands: List[Dict[str, Any]] = []
         for key, price in market_odds.items():
-            prob = probs.get(key)
-            if prob is None or prob < min_leg_prob:
+            raw_prob = probs.get(key)
+            if raw_prob is None:
+                continue
+            prob, was_calibrated = calibrated.get(key, (raw_prob, False))
+            if was_calibrated:
+                calibrated_legs += 1
+            if prob < min_leg_prob:
                 continue
             priced_legs += 1
 
+            required_edge = base_required_edge * edge_premium(key, learning_report)
             fair_implied = fair.get(key, 1.0 / price)
             edge_pct = (prob - fair_implied) * 100.0
             ev_pct = (prob * price - 1.0) * 100.0
@@ -233,6 +246,9 @@ def _collect_ev_candidates(
                 "market_type": market_type,
                 "odds": round(price, 2),
                 "probability": round(prob, 4),
+                "probability_raw": round(raw_prob, 4),
+                "calibrated": was_calibrated,
+                "required_edge_percent": round(required_edge, 2),
                 "implied_probability": round(fair_implied, 4),
                 "edge_percent": round(edge_pct, 2),
                 "expected_value_percent": round(ev_pct, 2),
@@ -255,7 +271,8 @@ def _collect_ev_candidates(
         "stale_rated_fixtures": stale_rated_fixtures,
         "unrated_skipped": unrated_skipped,
         "implausible_skipped": implausible_skipped,
-        "required_edge_percent": round(required_edge, 2),
+        "calibrated_legs": calibrated_legs,
+        "required_edge_percent": round(base_required_edge, 2),
     }
 
 
@@ -409,6 +426,7 @@ def generate_high_confidence_combos(
         diagnostics and available_matchdays.
     """
     from app.services.calibration import load_report
+    from app.services.learning import load_report as load_learning_report
     from app.services.ratings import ratings_snapshot_hash
 
     mode = "ev" if str(selection_mode).lower() == "ev" else "certainty"
@@ -452,12 +470,14 @@ def generate_high_confidence_combos(
         mode = "certainty"
 
     calibration_report = load_report() if mode == "ev" else None
+    learning_report = load_learning_report() if mode == "ev" else None
     edge_multiplier = (
         float(calibration_report.get("edge_threshold_multiplier", 1.0))
         if calibration_report else 1.0
     )
     stale_rated_fixtures = 0
     required_edge_percent = round(min_edge_percent * max(1.0, edge_multiplier), 2)
+    calibrated_legs = 0
 
     candidates: List[Dict[str, Any]] = []
 
@@ -480,8 +500,10 @@ def generate_high_confidence_combos(
             require_ratings=require_ratings,
             max_edge_percent=max_edge_percent,
             edge_multiplier=edge_multiplier,
+            learning_report=learning_report,
         )
         candidates = ev_collected["candidates"]
+        calibrated_legs = ev_collected.get("calibrated_legs", 0)
         fixtures_with_market_odds = ev_collected["fixtures_with_market_odds"]
         fixtures_with_priced_markets = ev_collected["fixtures_with_priced_markets"]
         priced_legs = ev_collected["priced_legs"]
@@ -794,6 +816,15 @@ def generate_high_confidence_combos(
             "allow_unvalidated_ev": allow_unvalidated_ev,
         },
         "calibration": calibration,
+        "learning": {
+            "active": bool(learning_report),
+            "version": (learning_report or {}).get("version"),
+            "trained_at": (learning_report or {}).get("trained_at"),
+            "sources": (learning_report or {}).get("sources"),
+            "applied_markets": (learning_report or {}).get("applied_markets", []),
+            "edge_premiums": (learning_report or {}).get("edge_premiums", {}),
+            "calibrated_legs": calibrated_legs,
+        },
         "blocked_reason": blocked_reason,
         "provenance": provenance,
         "odds_policy": {
@@ -823,6 +854,7 @@ def generate_high_confidence_combos(
             "implausible_edges_skipped": implausible_skipped,
             "required_edge_percent": required_edge_percent,
             "edge_threshold_multiplier": edge_multiplier,
+            "calibrated_legs": calibrated_legs,
             "candidate_legs": len(candidates),
             "synthetic_legs_excluded": synthetic_legs_excluded,
             "combos_generated": len(combos),

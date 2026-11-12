@@ -9,14 +9,16 @@ import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+BACKEND = ROOT / "backend"
+for _path in (BACKEND, ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from app.services.currency import format_stake_dual
-from app.services.pdf_slip import generate_combo_pdf, generate_text_slip
-from app.services.ai_insights import gemini_combo_explanation
-from app.services.whatsapp import send_whatsapp_message, send_combo_whatsapp_alert
-from app.services.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now
+from app.core.currency import format_stake_dual
+from app.betting.pdf_slip import generate_combo_pdf, generate_text_slip
+from app.ai.ai_insights import gemini_combo_explanation
+from app.notifications.whatsapp import send_whatsapp_message, send_combo_whatsapp_alert
+from app.tasks.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now
 
 API_BASE = os.getenv("FIE_API_URL", "http://127.0.0.1:8000")
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
@@ -815,7 +817,7 @@ with tab_live:
 
     try:
         from app.database import get_db
-        from app.services.inplay import fetch_live_scores
+        from app.data_sources.inplay import fetch_live_scores
         db_l = next(get_db())
         l_matches = fetch_live_scores(db_l)
         db_l.close()
@@ -847,7 +849,7 @@ with tab_odds_movement:
     st.caption("Tracks line movement between opening lines and current market odds. Big drops indicate sharp money action.")
     try:
         from app.database import get_db
-        from app.services.odds_movement import get_odds_movement
+        from app.betting.odds_movement import get_odds_movement
         db_om = next(get_db())
         moves = get_odds_movement(db_om, upcoming_only=True)
         db_om.close()

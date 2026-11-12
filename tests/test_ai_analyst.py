@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services import ai_analyst, ai_insights
+from app.ai import ai_analyst, ai_insights
 
 client = TestClient(app)
 

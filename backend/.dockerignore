@@ -1,0 +1,8 @@
+__pycache__
+*.pyc
+.venv
+fie.db
+data
+tests
+.env
+Dockerfile

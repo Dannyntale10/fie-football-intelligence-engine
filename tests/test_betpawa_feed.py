@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.models.fixture import Fixture
-from app.services import betpawa_feed as bp
+from app.data_sources import betpawa_feed as bp
 
 
 @pytest.fixture()

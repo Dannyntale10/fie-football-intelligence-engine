@@ -1,4 +1,4 @@
-from app.services import seeder
+from app.data_sources import seeder
 
 
 def test_seed_backtest_history_sums_loaded_seasons(monkeypatch):

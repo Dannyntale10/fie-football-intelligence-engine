@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.models.fixture import Fixture
-from app.services import combo as combo_mod
+from app.betting import combo as combo_mod
 
 
 @pytest.fixture()
@@ -41,7 +41,7 @@ def _validated_calibration(monkeypatch):
 
     The gate tests below override this stub with an unvalidated report.
     """
-    from app.services import calibration, learning
+    from app.analytics import calibration, learning
     monkeypatch.setattr(calibration, "load_report", lambda: _VALIDATED_REPORT)
     # Learning parameters are persisted in data/learning.json; stub them out so
     # these assertions describe selection policy, not whatever was trained last.
@@ -410,7 +410,7 @@ def _ev_kwargs(**extra):
 
 
 def _stub_report(monkeypatch, report):
-    from app.services import calibration
+    from app.analytics import calibration
     monkeypatch.setattr(calibration, "load_report", lambda: report)
 
 

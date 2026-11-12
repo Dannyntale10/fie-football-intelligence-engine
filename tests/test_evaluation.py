@@ -10,25 +10,25 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.fixture import Fixture
 from app.models.price_snapshot import PriceSnapshot  # noqa: F401  (registers the table)
-from app.services.ratings import (
+from app.analytics.ratings import (
     MIN_MATCH_WEIGHT,
     RATING_HALF_LIFE_DAYS,
     data_age_days,
     decay_weight,
     rating_key,
 )
-from app.services.probabilities import (
+from app.analytics.probabilities import (
     estimate_lambdas_from_market,
     poisson_market_probabilities,
 )
-from app.services.calibration import (
+from app.analytics.calibration import (
     _fair_1x2,
     brier_score,
     expected_calibration_error,
     iter_walkforward_predictions,
     log_loss,
 )
-from app.services.clv import clv_summary, record_selection_prices
+from app.betting.clv import clv_summary, record_selection_prices
 
 
 @pytest.fixture()
@@ -279,7 +279,7 @@ def _bet(matchday_label, competition, status="WON"):
 
 def test_ledger_excludes_test_league_slips(mem_db):
     from app.models.bet import TrackedBet
-    from app.services.settlement import get_performance_ledger_summary
+    from app.betting.settlement import get_performance_ledger_summary
 
     mem_db.add_all([
         _bet("Test Matchday", "Test League"),

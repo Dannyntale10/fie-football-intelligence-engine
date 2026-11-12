@@ -1,10 +1,10 @@
 from __future__ import annotations
 import pytest
-from app.services.probabilities import poisson_market_probabilities
-from app.services.value_score import compute_value_score
-from app.services.currency import format_stake, format_stake_dual, get_currency_options
-from app.services.pdf_slip import generate_text_slip, generate_combo_pdf
-from app.services.ml_ensemble import is_model_trained, ensemble_predict
+from app.analytics.probabilities import poisson_market_probabilities
+from app.analytics.value_score import compute_value_score
+from app.core.currency import format_stake, format_stake_dual, get_currency_options
+from app.betting.pdf_slip import generate_text_slip, generate_combo_pdf
+from app.analytics.ml_ensemble import is_model_trained, ensemble_predict
 
 def test_correct_score_and_asian_handicap():
     res = poisson_market_probabilities(home_lambda=1.8, away_lambda=0.9)
@@ -94,7 +94,7 @@ def test_text_and_pdf_slip_generation():
 
 def test_ai_squad_and_injuries_checker():
     """Verify pre-combo AI squad performance and injury checking."""
-    from app.services.ai_squad_checker import check_squad_and_injuries
+    from app.ai.ai_squad_checker import check_squad_and_injuries
 
     res = check_squad_and_injuries(
         home_team="Arsenal",
@@ -111,7 +111,7 @@ def test_ai_squad_and_injuries_checker():
 
 def test_whatsapp_message_formatting():
     """Verify WhatsApp message formatting includes all vital betting and squad info."""
-    from app.services.whatsapp import format_combo_whatsapp_message
+    from app.notifications.whatsapp import format_combo_whatsapp_message
 
     mock_combo = {
         "legs_count": 2,
@@ -152,7 +152,7 @@ def test_whatsapp_message_formatting():
 
 def test_sentinel_daemon_status_and_endpoints():
     """Verify 24/7 background sentinel status functions and endpoints."""
-    from app.services.sentinel import get_sentinel_status
+    from app.tasks.sentinel import get_sentinel_status
     from fastapi.testclient import TestClient
     from app.main import app
 
@@ -171,7 +171,7 @@ def test_accumulator_win_prob_85_to_100_percent():
     """STRICT: Both AVG TEAM CONFIDENCE and ACCUMULATOR WIN PROB must be >= 85%.
     Any combo below 85% on EITHER metric must be REJECTED. Odds must also be >= 2.00."""
     from app.database import get_db
-    from app.services.combo import generate_high_confidence_combos
+    from app.betting.combo import generate_high_confidence_combos
 
     db = next(get_db())
     try:
@@ -213,7 +213,7 @@ def test_accumulator_win_prob_85_to_100_percent():
 
 def test_evaluate_leg_outcomes():
     """Verify that evaluate_leg_outcome correctly grades every market structure."""
-    from app.services.settlement import evaluate_leg_outcome
+    from app.betting.settlement import evaluate_leg_outcome
 
     # 1X2
     assert evaluate_leg_outcome("home_win", 2, 0) == "WON"
@@ -257,7 +257,7 @@ def test_automated_bet_settlement_and_ledger():
     from app.database import get_db
     from app.models.fixture import Fixture
     from app.models.bet import TrackedBet
-    from app.services.settlement import (
+    from app.betting.settlement import (
         record_tracked_bet,
         settle_pending_bets,
         get_performance_ledger_summary,

@@ -12,8 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.bet import TrackedBet
 from app.models.fixture import Fixture
-from app.services import learning
-from app.services.match_analysis import build_match_dossier
+from app.analytics import learning
+from app.analytics.match_analysis import build_match_dossier
 
 
 @pytest.fixture()
@@ -158,7 +158,7 @@ def test_settled_legs_exclude_synthetic_slips(db):
 
 
 def test_build_report_uses_out_of_sample_predictions(db, monkeypatch):
-    from app.services import calibration as calibration_mod
+    from app.analytics import calibration as calibration_mod
 
     def fake_walkforward(_db, **_kwargs):
         rng = random.Random(11)

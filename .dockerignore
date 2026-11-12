@@ -1,0 +1,14 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+node_modules
+frontend
+tests
+fie.db
+*.db
+.env
+.env.*
+sentinel_state.json
+.DS_Store

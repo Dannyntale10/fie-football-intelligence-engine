@@ -9,8 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.models.fixture import Fixture
-from app.services import combo as combo_mod
-from app.services import ranking
+from app.betting import combo as combo_mod
+from app.betting import ranking
 
 
 def _leg(**overrides):
@@ -140,7 +140,7 @@ def db():
 
 @pytest.fixture(autouse=True)
 def _stub_reports(monkeypatch):
-    from app.services import calibration, learning
+    from app.analytics import calibration, learning
 
     monkeypatch.setattr(calibration, "load_report", lambda: _VALIDATED_REPORT)
     monkeypatch.setattr(learning, "load_report", lambda: None)
@@ -220,7 +220,7 @@ def test_combo_response_ranks_slips_and_matches(db, stub_engine):
 
 
 def test_blocked_slip_reports_empty_ranking(db, stub_engine, monkeypatch):
-    from app.services import calibration
+    from app.analytics import calibration
 
     monkeypatch.setattr(
         calibration,

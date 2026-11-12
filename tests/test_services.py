@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import pytest
-from app.services.quality import grade_data_quality, baseline_signals, evaluate_fixture_signals
-from app.services.probabilities import (
+from app.analytics.quality import grade_data_quality, baseline_signals, evaluate_fixture_signals
+from app.analytics.probabilities import (
     poisson_market_probabilities,
     _poisson_pmf,
     _dixon_coles_tau,
@@ -11,10 +11,10 @@ from app.services.probabilities import (
     estimate_lambdas_from_odds,
     analyze_fixture,
 )
-from app.services.fixtures import make_dedupe_key, clean_team_name, _float_or_none
-from app.services.ratings import upsert_team_rating, estimate_lambdas_from_ratings
-from app.services.seeder import seed_sample_historical_data
-from app.services.backtest import run_backtest
+from app.data_sources.fixtures import make_dedupe_key, clean_team_name, _float_or_none
+from app.analytics.ratings import upsert_team_rating, estimate_lambdas_from_ratings
+from app.data_sources.seeder import seed_sample_historical_data
+from app.analytics.backtest import run_backtest
 from app.database import SessionLocal
 
 def test_quality_missing_data_does_not_qualify():

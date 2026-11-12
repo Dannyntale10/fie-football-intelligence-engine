@@ -19,8 +19,10 @@ from pathlib import Path
 
 # ── Path setup (must happen before any app imports) ──────────────────────────
 ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+BACKEND = ROOT / "backend"
+for _path in (BACKEND, ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 # ── Database: /tmp on Streamlit Cloud (no persistent disk), local fie.db elsewhere ──
 _is_hosted = Path("/mount/src").exists() or os.getenv("STREAMLIT_SHARING_MODE") is not None
@@ -29,6 +31,7 @@ os.environ.setdefault("DATABASE_URL", _default_db)
 
 # ── Bootstrap the ORM (import order matters: config → engine → models) ────────
 from app.database import Base, engine, get_db          # noqa: E402
+import app.models  # noqa: E402, F401  (registers every platform table)
 from app.models.fixture import Fixture                 # noqa: E402, F401
 from app.models.team_rating import TeamRating          # noqa: E402, F401
 from app.models.bet import TrackedBet                  # noqa: E402, F401
@@ -48,70 +51,70 @@ except Exception:
     pass  # no secrets.toml locally — env vars / sidebar inputs are used instead
 
 from sqlalchemy import select, func, delete            # noqa: E402
-from app.services.fixtures import import_fixtures_from_dataframe        # noqa: E402
-from app.services.probabilities import (               # noqa: E402
+from app.data_sources.fixtures import import_fixtures_from_dataframe        # noqa: E402
+from app.analytics.probabilities import (               # noqa: E402
     poisson_market_probabilities,
     analyze_fixture,
 )
-from app.services.quality import (                     # noqa: E402
+from app.analytics.quality import (                     # noqa: E402
     evaluate_fixture_signals,
     grade_data_quality,
 )
-from app.services.ratings import (                     # noqa: E402
+from app.analytics.ratings import (                     # noqa: E402
     upsert_team_rating,
     calculate_ratings_from_fixtures,
     ratings_snapshot_hash,
     STALE_AFTER_DAYS,
     IGNORED_COMPETITIONS,
 )
-from app.services.seeder import (                      # noqa: E402
+from app.data_sources.seeder import (                      # noqa: E402
     seed_sample_historical_data,
     seed_backtest_history,
     fetch_live_upcoming_fixtures,
     fetch_historical_league_season,
     fetch_all_major_leagues,
 )
-from app.services.live_feed import fetch_live_upcoming_fixtures_espn  # noqa: E402
-from app.services.backtest import run_backtest          # noqa: E402
-from app.services.portfolio import build_daily_portfolio  # noqa: E402
-from app.services.combo import generate_high_confidence_combos  # noqa: E402
-from app.services.calibration import load_report as load_calibration_report  # noqa: E402
-from app.services.match_analysis import build_match_dossier  # noqa: E402
-from app.services.learning import (  # noqa: E402
+from app.data_sources.live_feed import fetch_live_upcoming_fixtures_espn  # noqa: E402
+from app.analytics.backtest import run_backtest          # noqa: E402
+from app.betting.portfolio import build_daily_portfolio  # noqa: E402
+from app.betting.combo import generate_high_confidence_combos  # noqa: E402
+from app.analytics.calibration import load_report as load_calibration_report  # noqa: E402
+from app.analytics.match_analysis import build_match_dossier  # noqa: E402
+from app.analytics.learning import (  # noqa: E402
     summary as learning_summary,
     build_report as build_learning_report,
     save_report as save_learning_report,
 )
-from app.connectors.bookmakers import BOOKMAKERS       # noqa: E402
-from app.services.ai_insights import (                 # noqa: E402
+from app.data_sources.connectors.bookmakers import BOOKMAKERS  # noqa: E402
+from app.ai.ai_insights import (                 # noqa: E402
     gemini_match_preview,
     gemini_combo_explanation,
     gemini_agent_rating_narrative,
     is_gemini_enabled,
 )
-from app.services import ai_analyst                    # noqa: E402
-from app.services.value_score import compute_value_score   # noqa: E402
-from app.services.currency import format_stake, format_stake_dual, get_currency_options  # noqa: E402
-from app.services.pdf_slip import generate_combo_pdf, generate_text_slip  # noqa: E402
-from app.services.h2h import get_h2h_stats                 # noqa: E402
-from app.services.inplay import fetch_live_scores           # noqa: E402
-from app.services.result_tracker import (                  # noqa: E402
+from app.ai import ai_analyst                          # noqa: E402
+from app.analytics.value_score import compute_value_score   # noqa: E402
+from app.core.currency import format_stake, format_stake_dual, get_currency_options  # noqa: E402
+from app.betting.pdf_slip import generate_combo_pdf, generate_text_slip  # noqa: E402
+from app.analytics.h2h import get_h2h_stats                 # noqa: E402
+from app.data_sources.inplay import fetch_live_scores           # noqa: E402
+from app.betting.result_tracker import (                  # noqa: E402
     fetch_and_update_results,
     calculate_prediction_accuracy,
 )
-from app.services.odds_movement import get_odds_movement    # noqa: E402
-from app.services.ml_ensemble import (                     # noqa: E402
+from app.betting.odds_movement import get_odds_movement    # noqa: E402
+from app.analytics.ml_ensemble import (                     # noqa: E402
     ensemble_predict,
     train_ensemble,
     is_model_trained,
 )
-from app.services.whatsapp import send_whatsapp_message, send_combo_whatsapp_alert  # noqa: E402
-from app.services.settlement import (                  # noqa: E402
+from app.notifications.whatsapp import send_whatsapp_message, send_combo_whatsapp_alert  # noqa: E402
+from app.betting.settlement import (                  # noqa: E402
     settle_pending_bets,
     get_performance_ledger_summary,
 )
-from app.services.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now  # noqa: E402
-from app.services.betpawa_feed import (  # noqa: E402
+from app.tasks.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now  # noqa: E402
+from app.data_sources.betpawa_feed import (  # noqa: E402
     start_auto_ingest,
     stop_auto_ingest,
     get_auto_ingest_status,
@@ -475,7 +478,7 @@ with st.sidebar:
     with f_col1:
         if st.button("🔄 Refresh now", use_container_width=True, key="app_btn_feed_now"):
             with st.spinner("Pulling betPawa prices..."):
-                from app.services.betpawa_feed import _run_ingest_once
+                from app.data_sources.betpawa_feed import _run_ingest_once
                 try:
                     _run_ingest_once()
                     st.toast("✅ betPawa odds refreshed.")
@@ -640,7 +643,7 @@ with tab_portfolio:
 
     # Matchday selector from DB
     db_md = _db()
-    from app.services.combo import get_available_matchdays
+    from app.betting.combo import get_available_matchdays
     avail_days = get_available_matchdays(db_md)
     db_md.close()
 
@@ -2448,7 +2451,7 @@ with tab_backtest:
     if run_cal:
         db_cal = _db()
         try:
-            from app.services.calibration import run_walk_forward, save_report
+            from app.analytics.calibration import run_walk_forward, save_report
             with st.spinner("Refitting the rating model across history…"):
                 rep = run_walk_forward(db_cal)
                 if rep.get("n_matches"):
@@ -2462,7 +2465,7 @@ with tab_backtest:
     if run_wf:
         db_wf = _db()
         try:
-            from app.services.backtest import run_walkforward_backtest
+            from app.analytics.backtest import run_walkforward_backtest
             with st.spinner("Replaying value bets out of sample…"):
                 st.session_state["wf_report"] = run_walkforward_backtest(
                     db_wf, min_edge_percent=float(bt_min_ev)
@@ -2580,7 +2583,7 @@ with tab_ratings:
 
     db_fresh = _db()
     try:
-        from app.services.ratings import data_age_days
+        from app.analytics.ratings import data_age_days
         fresh_rows = db_fresh.execute(
             select(TeamRating.competition, func.count(TeamRating.id), func.max(TeamRating.last_match_at))
             .group_by(TeamRating.competition)

@@ -384,9 +384,10 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
         db.close()
 
 
-def _sentinel_loop(interval_seconds: int = 1800):
-    """Continuous background loop running 24 hours a day."""
-    _log_event(f"🚀 24/7 Autonomous Banker Sentinel started — scanning ALL leagues every {interval_seconds//60} mins.")
+def _sentinel_loop(interval_seconds: int = 30):
+    """Continuous background loop running 24 hours a day with real-time 30-second bookmaker feeds."""
+    unit_str = f"{interval_seconds}s" if interval_seconds < 60 else f"{interval_seconds//60} min(s)"
+    _log_event(f"🚀 24/7 Autonomous Banker Sentinel active — auto-updating ALL 35+ leagues every {unit_str}.")
     _log_event("📋 Strict rules: AVG CONF >= 85% AND ACCUM WIN PROB >= 85% AND Odds >= 2.00 — no fallbacks.")
     while not _sentinel_stop_event.is_set():
         try:
@@ -404,18 +405,21 @@ def _sentinel_loop(interval_seconds: int = 1800):
     _log_event("🛑 24/7 Autonomous Banker Sentinel stopped.")
 
 
-def start_sentinel(interval_minutes: int = 30) -> bool:
-    """Start 24/7 background sentinel daemon."""
+def start_sentinel(interval_seconds: int = 30, interval_minutes: Optional[int] = None) -> bool:
+    """Start 24/7 background sentinel daemon with automatic 30s bookmaker updates."""
     global _sentinel_thread
     if _sentinel_state.get("is_running") and _sentinel_thread and _sentinel_thread.is_alive():
         return True
+
+    eff_seconds = (interval_minutes * 60) if interval_minutes is not None else interval_seconds
+    eff_seconds = max(10, eff_seconds)  # floor at 10s
 
     _sentinel_stop_event.clear()
     _sentinel_state["is_running"] = True
     _sentinel_state["started_at"] = datetime.now(timezone.utc).astimezone(EAT_TZ).strftime("%a %d %b, %H:%M:%S EAT")
     _sentinel_thread = threading.Thread(
         target=_sentinel_loop,
-        args=(max(60, interval_minutes * 60),),
+        args=(eff_seconds,),
         daemon=True,
         name="FIE_24_7_Sentinel"
     )

@@ -159,24 +159,34 @@ st.title("⚽ Football Intelligence Engine")
 st.caption("Local-first football research & prediction platform · Cloud Edition v0.3")
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Auto-Boot 24/7 Background Sentinel (30s Real-Time Bookmaker Sync)
+# ═════════════════════════════════════════════════════════════════════════════
+s_status = get_sentinel_status()
+if not s_status.get("is_running", False):
+    try:
+        start_sentinel(interval_seconds=30)
+        s_status = get_sentinel_status()
+    except Exception:
+        pass
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Sidebar
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.header("🟢 24/7 Banker Sentinel")
-    s_status = get_sentinel_status()
     is_active = s_status.get("is_running", False)
     if is_active:
-        st.success("🟢 Sentinel: **ACTIVE & SCANNING**")
-        st.caption(f"Last scan: {s_status.get('last_scan_eat') or 'Starting up...'}")
+        st.success("🟢 Sentinel: **ACTIVE & AUTO-SYNCING (30s)**")
+        st.caption(f"Last scan: {s_status.get('last_scan_eat') or 'Ingesting live bookmaker feeds...'}")
         st.caption(f"Alerts sent: {s_status.get('alerts_dispatched_count', 0)}")
-        if st.button("⏹️ Stop 24/7 Sentinel", use_container_width=True, key="app_btn_stop_sentinel"):
+        if st.button("⏹️ Pause Sentinel", use_container_width=True, key="app_btn_stop_sentinel"):
             stop_sentinel()
             st.rerun()
     else:
         st.info("⚪ Sentinel: **STANDBY**")
-        st.caption("Autonomously monitors 35+ leagues, verifies injuries & sends WhatsApp alerts.")
-        if st.button("▶️ Start 24/7 Sentinel", type="primary", use_container_width=True, key="app_btn_start_sentinel"):
-            start_sentinel(interval_minutes=30)
+        st.caption("Autonomously monitors 35+ leagues, syncs DraftKings odds every 30s & sends WhatsApp alerts.")
+        if st.button("▶️ Start 24/7 Sentinel (30s)", type="primary", use_container_width=True, key="app_btn_start_sentinel"):
+            start_sentinel(interval_seconds=30)
             st.rerun()
 
     c_s1, c_s2 = st.columns(2)

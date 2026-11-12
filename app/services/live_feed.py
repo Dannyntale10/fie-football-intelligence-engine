@@ -93,115 +93,136 @@ def american_to_decimal(odd_val: Any) -> Optional[float]:
     return None
 
 
-def fetch_live_upcoming_fixtures_espn(db: Session) -> Dict[str, Any]:
-    """Fetch all real upcoming matches playing today, tomorrow, and upcoming days with live DraftKings odds."""
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> Dict[str, Any]:
+    """Fetch real upcoming matches across all 35+ leagues with live DraftKings odds.
+    Uses concurrent ThreadPoolExecutor for sub-second, non-blocking execution.
+    """
     now = datetime.now(timezone.utc)
     inserted = 0
     updated = 0
     total_found = 0
     headers = {"User-Agent": "Mozilla/5.0"}
-    session = requests.Session()
+
+    # Build work items (URL tasks)
+    tasks = []
+    for comp_code, comp_name, country, date_params in COMPETITION_TARGETS:
+        # For rapid 30s background sync, check today + next 2 days; full scan checks all 8 days
+        active_params = date_params[:3] if quick_sync else date_params
+        for d_param in active_params:
+            url = f"http://site.api.espn.com/apis/site/v2/sports/soccer/{comp_code}/scoreboard{d_param}"
+            tasks.append((url, comp_name, country))
+
+    def _fetch_url(item):
+        target_url, c_name, c_country = item
+        try:
+            r = requests.get(target_url, headers=headers, timeout=3.5)
+            if r.status_code == 200:
+                return r.json(), c_name, c_country
+        except Exception:
+            pass
+        return None, c_name, c_country
 
     seen_event_ids = set()
+    raw_events = []
 
-    for comp_code, comp_name, country, date_params in COMPETITION_TARGETS:
-        for d_param in date_params:
-            url = f"http://site.api.espn.com/apis/site/v2/sports/soccer/{comp_code}/scoreboard{d_param}"
-            try:
-                res = session.get(url, headers=headers, timeout=4)
-                if res.status_code != 200:
-                    continue
-                data = res.json()
-            except Exception:
+    # Concurrently fetch in parallel (12 workers)
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [executor.submit(_fetch_url, t) for t in tasks]
+        for fut in as_completed(futures):
+            data, c_name, c_country = fut.result()
+            if not data:
                 continue
-
-            events = data.get("events", [])
-            for event in events:
-                event_id = event.get("id")
-                if event_id and event_id in seen_event_ids:
+            for event in data.get("events", []):
+                e_id = event.get("id")
+                if e_id and e_id in seen_event_ids:
                     continue
-                if event_id:
-                    seen_event_ids.add(event_id)
+                if e_id:
+                    seen_event_ids.add(e_id)
+                raw_events.append((event, c_name, c_country))
 
-                comp_data = event.get("competitions", [{}])[0]
-                status_state = comp_data.get("status", {}).get("type", {}).get("state", "pre")
+    for event, comp_name, country in raw_events:
+        comp_data = event.get("competitions", [{}])[0]
+        status_state = comp_data.get("status", {}).get("type", {}).get("state", "pre")
 
-                raw_date = event.get("date")
-                if not raw_date:
-                    continue
-                try:
-                    kickoff = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-                except Exception:
-                    continue
+        raw_date = event.get("date")
+        if not raw_date:
+            continue
+        try:
+            kickoff = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+        except Exception:
+            continue
 
-                # STRICT RULE: Must be strictly in the future!
-                if kickoff <= now:
-                    continue
+        # STRICT RULE: Must be strictly in the future!
+        if kickoff <= now:
+            continue
 
-                competitors = comp_data.get("competitors", [])
-                if len(competitors) < 2:
-                    continue
+        competitors = comp_data.get("competitors", [])
+        if len(competitors) < 2:
+            continue
 
-                home_team = next(
-                    (c["team"].get("displayName") or c["team"].get("name")
-                     for c in competitors if c.get("homeAway") == "home"),
-                    None
-                )
-                away_team = next(
-                    (c["team"].get("displayName") or c["team"].get("name")
-                     for c in competitors if c.get("homeAway") == "away"),
-                    None
-                )
-                if not home_team or not away_team:
-                    continue
+        home_team = next(
+            (c["team"].get("displayName") or c["team"].get("name")
+             for c in competitors if c.get("homeAway") == "home"),
+            None
+        )
+        away_team = next(
+            (c["team"].get("displayName") or c["team"].get("name")
+             for c in competitors if c.get("homeAway") == "away"),
+            None
+        )
+        if not home_team or not away_team:
+            continue
 
-                # Extract DraftKings odds
-                h_odds, d_odds, a_odds = None, None, None
-                odds_list = comp_data.get("odds", [])
-                if odds_list and isinstance(odds_list[0], dict):
-                    od = odds_list[0]
-                    ml = od.get("moneyline", {})
-                    h_odds = american_to_decimal(ml.get("home", {}).get("close", {}).get("odds"))
-                    d_odds = american_to_decimal(ml.get("draw", {}).get("close", {}).get("odds"))
-                    a_odds = american_to_decimal(ml.get("away", {}).get("close", {}).get("odds"))
+        # Extract DraftKings odds
+        h_odds, d_odds, a_odds = None, None, None
+        odds_list = comp_data.get("odds", [])
+        if odds_list and isinstance(odds_list[0], dict):
+            od = odds_list[0]
+            ml = od.get("moneyline", {})
+            h_odds = american_to_decimal(ml.get("home", {}).get("close", {}).get("odds"))
+            d_odds = american_to_decimal(ml.get("draw", {}).get("close", {}).get("odds"))
+            a_odds = american_to_decimal(ml.get("away", {}).get("close", {}).get("odds"))
 
-                    if not h_odds:
-                        h_odds = american_to_decimal(ml.get("home", {}).get("open", {}).get("odds"))
-                    if not d_odds:
-                        d_odds = american_to_decimal(ml.get("draw", {}).get("open", {}).get("odds"))
-                    if not a_odds:
-                        a_odds = american_to_decimal(ml.get("away", {}).get("open", {}).get("odds"))
+            if not h_odds:
+                h_odds = american_to_decimal(ml.get("home", {}).get("open", {}).get("odds"))
+            if not d_odds:
+                d_odds = american_to_decimal(ml.get("draw", {}).get("open", {}).get("odds"))
+            if not a_odds:
+                a_odds = american_to_decimal(ml.get("away", {}).get("open", {}).get("odds"))
 
-                total_found += 1
-                dedupe = make_dedupe_key(kickoff, home_team, away_team, comp_name)
+        total_found += 1
+        dedupe = make_dedupe_key(kickoff, home_team, away_team, comp_name)
 
-                existing = db.scalar(select(Fixture).where(Fixture.dedupe_key == dedupe))
-                if existing:
-                    if h_odds and existing.home_odds is None:
-                        existing.home_odds = h_odds
-                        existing.draw_odds = d_odds
-                        existing.away_odds = a_odds
-                        existing.source = "ESPN_DraftKings"
-                        db.commit()
-                        updated += 1
-                else:
-                    new_fix = Fixture(
-                        dedupe_key=dedupe,
-                        kickoff_utc=kickoff,
-                        home_team=home_team,
-                        away_team=away_team,
-                        competition=comp_name,
-                        country=country,
-                        source="ESPN_DraftKings",
-                        external_fixture_id=str(event_id) if event_id else None,
-                        home_odds=h_odds,
-                        draw_odds=d_odds,
-                        away_odds=a_odds,
-                        status="scheduled",
-                    )
-                    db.add(new_fix)
-                    db.commit()
-                    inserted += 1
+        existing = db.scalar(select(Fixture).where(Fixture.dedupe_key == dedupe))
+        if existing:
+            if h_odds and existing.home_odds is None:
+                existing.home_odds = h_odds
+                existing.draw_odds = d_odds
+                existing.away_odds = a_odds
+                existing.source = "ESPN_DraftKings"
+                db.commit()
+                updated += 1
+        else:
+            event_id = event.get("id")
+            new_fix = Fixture(
+                dedupe_key=dedupe,
+                kickoff_utc=kickoff,
+                home_team=home_team,
+                away_team=away_team,
+                competition=comp_name,
+                country=country,
+                source="ESPN_DraftKings",
+                external_fixture_id=str(event_id) if event_id else None,
+                home_odds=h_odds,
+                draw_odds=d_odds,
+                away_odds=a_odds,
+                status="scheduled",
+            )
+            db.add(new_fix)
+            db.commit()
+            inserted += 1
 
     return {
         "inserted": inserted,

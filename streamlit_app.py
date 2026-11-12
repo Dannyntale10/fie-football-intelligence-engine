@@ -29,6 +29,7 @@ os.environ.setdefault("DATABASE_URL", _default_db)
 from app.database import Base, engine, get_db          # noqa: E402
 from app.models.fixture import Fixture                 # noqa: E402, F401
 from app.models.team_rating import TeamRating          # noqa: E402, F401
+from app.models.bet import TrackedBet                  # noqa: E402, F401
 Base.metadata.create_all(bind=engine)
 
 # ── Core service imports ──────────────────────────────────────────────────────
@@ -81,6 +82,10 @@ from app.services.ml_ensemble import (                     # noqa: E402
     is_model_trained,
 )
 from app.services.whatsapp import send_whatsapp_message, send_combo_whatsapp_alert  # noqa: E402
+from app.services.settlement import (                  # noqa: E402
+    settle_pending_bets,
+    get_performance_ledger_summary,
+)
 from app.services.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now  # noqa: E402
 
 
@@ -279,6 +284,24 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error(f"Scan error: {scan_out.get('error')}")
+
+    if st.button("⚖️ Settle Bets with Live Scores", use_container_width=True, key="app_btn_settle_bets"):
+        with st.spinner("Syncing latest match scores & settling finished slips..."):
+            db_set = _db()
+            try:
+                settled_res = settle_pending_bets(
+                    db_set,
+                    phone=wa_phone_val,
+                    apikey=wa_key_val,
+                    currency=sel_currency,
+                )
+                if settled_res:
+                    st.success(f"Settled {len(settled_res)} finished slip(s)! Outcomes dispatched to WhatsApp.")
+                else:
+                    st.info("All pending matches are still in play or scheduled.")
+                st.rerun()
+            finally:
+                db_set.close()
 
     st.divider()
     st.header("⚙️ Engine Defaults")
@@ -569,6 +592,64 @@ with tab_portfolio:
                         for idx, alt in enumerate(alts, 2):
                             with st.expander(f"📋 Full Detail — Combo Option #{idx} (Odds {alt['total_odds']:.2f})", expanded=False):
                                 _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"alt_combo_{idx}")
+
+    # ── TRANSPARENT PERFORMANCE LEDGER & AUTOMATED BET SETTLEMENT ─────────────
+    st.markdown("---")
+    st.subheader("📊 Transparent Performance Ledger & Automated Bet Settlement")
+    st.caption("Every multi-bet slip sent by the 24/7 Sentinel is recorded here and automatically settled with live final scores.")
+
+    db_ledger = _db()
+    try:
+        ledger_stats = get_performance_ledger_summary(db_ledger)
+        l_col1, l_col2, l_col3, l_col4 = st.columns(4)
+        with l_col1:
+            win_r = ledger_stats.get("win_rate", 0)
+            st.metric(
+                "Slip Win Rate",
+                f"{win_r:.1f}%",
+                f"{ledger_stats.get('won_count', 0)}W / {ledger_stats.get('lost_count', 0)}L",
+            )
+        with l_col2:
+            p_ugx = ledger_stats.get("total_profit_ugx", 0)
+            p_usd = ledger_stats.get("total_profit_usd", 0)
+            st.metric(
+                "Net Profit / Loss",
+                format_stake_dual(p_ugx if sel_currency.upper() == "UGX" else p_usd, sel_currency),
+                f"{'+' if p_usd >= 0 else ''}${p_usd:.2f}",
+            )
+        with l_col3:
+            roi_val = ledger_stats.get("roi_percent", 0)
+            st.metric("All-Time ROI", f"{roi_val:+.1f}%")
+        with l_col4:
+            st.metric("Pending Slips", f"{ledger_stats.get('pending_count', 0)}")
+
+        # Tracked bets list
+        recent_tracked = ledger_stats.get("recent_bets", [])
+        if recent_tracked:
+            with st.expander(f"📜 View All Verified Slips ({len(recent_tracked)} in Ledger)", expanded=False):
+                for b in recent_tracked:
+                    st_badge = "🟢 WON" if b.status == "WON" else ("🔴 LOST" if b.status == "LOST" else "🟡 PENDING")
+                    pnl_color = "#00C851" if b.profit_loss > 0 else ("#ff4444" if b.profit_loss < 0 else "#888")
+                    pnl_display = format_stake_dual(b.profit_loss, sel_currency) if b.status != "PENDING" else "In Play"
+
+                    st.markdown(f"""
+                    <div style="background: #111A11; border: 1px solid #2A4A2A; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <strong>{b.slip_type} — {b.matchday_label}</strong>
+                            <span><strong>{st_badge}</strong> &nbsp;|&nbsp; Odds: <strong>{b.total_odds:.2f}</strong> &nbsp;|&nbsp; Outcome: <strong style="color: {pnl_color};">{pnl_display}</strong></span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    legs_arr = json.loads(b.legs_json)
+                    for idx_l, leg_it in enumerate(legs_arr, 1):
+                        l_st = leg_it.get("status", "PENDING")
+                        icon_l = "✅" if l_st == "WON" else ("❌" if l_st == "LOST" else "⏳")
+                        score_str = f"Final: {leg_it.get('final_score')}" if leg_it.get("final_score") else "Awaiting kickoff"
+                        st.caption(f"  • Leg #{idx_l}: {leg_it.get('match')} ➔ **{leg_it.get('selection')}** ({icon_l} {l_st} | {score_str})")
+        else:
+            st.info("No bets recorded in ledger yet. Active Sentinel alerts will be tracked and settled here automatically.")
+    finally:
+        db_ledger.close()
 
     st.markdown("---")
     # ── MATCHES FOR SELECTED DAY ──────────────────────────────────────────────

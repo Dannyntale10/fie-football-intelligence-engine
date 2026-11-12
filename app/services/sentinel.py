@@ -188,6 +188,12 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
     alerts_sent = 0
 
     try:
+        # ── Step 0: Settle any finished pending bets & send outcome alerts ────
+        from app.services.settlement import settle_pending_bets, record_tracked_bet
+        settled_list = settle_pending_bets(db, phone=phone, apikey=apikey, provider=provider, currency=currency)
+        if settled_list:
+            _log_event(f"⚖️ Automatically settled {len(settled_list)} pending multi-bet slip(s)! Ledger updated.")
+
         # ── Step 1: Refresh ALL fixtures from ALL leagues ─────────────────────
         _log_event("🔍 Pulling latest fixtures & odds from ALL recognised leagues/divisions…")
         feed_res = fetch_live_upcoming_fixtures_espn(db)
@@ -335,7 +341,12 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                         _sentinel_state["last_alert_eat"] = now_eat
                         _save_persisted_state()
                         alerts_sent += 1
-                        _log_event(f"📲 WhatsApp alert sent to +{phone} — {combo_summary} slip(s) for {combined_label}.")
+                        # Save each combo into the transparent ledger
+                        if best_found_2:
+                            record_tracked_bet(best_found_2, best_label_2, db, currency=currency, bankroll=bankroll)
+                        if best_found_3:
+                            record_tracked_bet(best_found_3, best_label_3, db, currency=currency, bankroll=bankroll)
+                        _log_event(f"📲 WhatsApp alert sent to +{phone} — {combo_summary} slip(s) recorded in ledger.")
                     else:
                         _log_event(f"⚠️ WhatsApp send failed: {send_res.get('error')}. Will retry next cycle.")
                 else:
@@ -343,7 +354,12 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                     _sentinel_state["last_alert_combo"] = best_found_3 or best_found_2
                     _sentinel_state["last_alert_eat"] = now_eat
                     _save_persisted_state()
-                    _log_event(f"ℹ️ Qualifying slip found ({combo_summary}) but WhatsApp not configured. Set WHATSAPP_PHONE + WHATSAPP_APIKEY to receive alerts.")
+                    # Save to ledger even if WhatsApp is not yet configured
+                    if best_found_2:
+                        record_tracked_bet(best_found_2, best_label_2, db, currency=currency, bankroll=bankroll)
+                    if best_found_3:
+                        record_tracked_bet(best_found_3, best_label_3, db, currency=currency, bankroll=bankroll)
+                    _log_event(f"ℹ️ Qualifying slip found ({combo_summary}) and recorded in ledger (WhatsApp not configured).")
             else:
                 _log_event("ℹ️ Qualifying combos already alerted previously. Skipping duplicate notification.")
         else:

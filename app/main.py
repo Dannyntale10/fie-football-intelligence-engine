@@ -6,7 +6,7 @@ import pandas as pd
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, desc
 from app.core.config import settings
 from app.database import Base, engine, get_db
 from app.models.fixture import Fixture
@@ -543,12 +543,82 @@ def whatsapp_test(
     apikey: str = Query(..., description="CallMeBot API key"),
     provider: str = Query("callmebot"),
 ):
-    """Send a test notification to verify user's WhatsApp alerts."""
+    """Send a test notification to verify user's WhatsApp alerts and persist credentials."""
     from app.services.whatsapp import send_whatsapp_message
+    from app.services.sentinel import _sentinel_state, _save_persisted_state
+    _sentinel_state["whatsapp_phone"] = phone
+    _sentinel_state["whatsapp_apikey"] = apikey
+    _save_persisted_state()
     return send_whatsapp_message(
         text="🔔 *FIE Football Intelligence Engine*\nWhatsApp alerts connected successfully! 24/7 Banker Sentinel is online.",
         phone=phone,
         apikey=apikey,
         provider=provider,
     )
+
+
+@app.get("/ledger/summary")
+def get_ledger_summary(db: Session = Depends(get_db)):
+    """Retrieve overall performance ledger summary (wins, losses, win rate %, PnL in UGX/USD, ROI)."""
+    from app.services.settlement import get_performance_ledger_summary
+    stats = get_performance_ledger_summary(db)
+    # Remove SQLAlchemy objects from dict for pure JSON serialization
+    recent = stats.pop("recent_bets", [])
+    return {
+        **stats,
+        "recent_count": len(recent),
+    }
+
+
+@app.get("/ledger/history")
+def get_ledger_history(
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Retrieve full historical tracked bets with leg outcomes and final scores."""
+    from app.models.bet import TrackedBet
+    import json
+    bets = db.scalars(
+        select(TrackedBet).order_by(desc(TrackedBet.placed_at)).limit(limit)
+    ).all()
+    out = []
+    for b in bets:
+        out.append({
+            "id": b.id,
+            "slip_type": b.slip_type,
+            "matchday_label": b.matchday_label,
+            "total_odds": b.total_odds,
+            "avg_confidence": b.avg_confidence,
+            "accum_probability": b.accum_probability,
+            "stake_amount": b.stake_amount,
+            "stake_currency": b.stake_currency,
+            "stake_usd": b.stake_usd,
+            "status": b.status,
+            "profit_loss": b.profit_loss,
+            "profit_loss_usd": b.profit_loss_usd,
+            "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+            "settled_at": b.settled_at.isoformat() if b.settled_at else None,
+            "legs": json.loads(b.legs_json),
+        })
+    return out
+
+
+@app.post("/ledger/settle")
+def trigger_settle_now(
+    phone: Optional[str] = Query(None),
+    apikey: Optional[str] = Query(None),
+    provider: str = Query("callmebot"),
+    currency: str = Query("UGX"),
+    db: Session = Depends(get_db),
+):
+    """Manually trigger settlement for all finished pending bets."""
+    from app.services.settlement import settle_pending_bets, get_performance_ledger_summary
+    settled = settle_pending_bets(db, phone=phone, apikey=apikey, provider=provider, currency=currency)
+    stats = get_performance_ledger_summary(db)
+    stats.pop("recent_bets", None)
+    return {
+        "settled_count": len(settled),
+        "ledger_stats": stats,
+    }
+
 

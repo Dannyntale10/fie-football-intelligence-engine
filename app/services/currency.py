@@ -31,3 +31,12 @@ def format_stake_dual(usd_amount: float, currency: str = "USD") -> str:
 
 def get_currency_options() -> List[str]:
     return list(CURRENCIES.keys())
+
+
+def convert_amount(amount: float, from_curr: str = "USD", to_curr: str = "UGX") -> float:
+    """Convert an amount between supported currencies using USD pivot rate."""
+    from_cfg = CURRENCIES.get(from_curr.upper(), CURRENCIES["USD"])
+    to_cfg = CURRENCIES.get(to_curr.upper(), CURRENCIES["UGX"])
+    usd = amount / from_cfg["rate_from_usd"]
+    return usd * to_cfg["rate_from_usd"]
+

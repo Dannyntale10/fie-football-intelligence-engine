@@ -4,7 +4,7 @@
 
 **Logged**: 2026-11-12T18:05:00+03:00
 **Priority**: high
-**Status**: in_progress
+**Status**: resolved
 **Area**: backend
 
 ### Requested Capability
@@ -23,13 +23,17 @@ medium
 - Frequency: first_time
 - Related Features: combo engine, ai_squad_checker, h2h
 
+### Resolution
+- **Resolved**: 2026-11-12T19:40:00+03:00
+- **Notes**: `app/services/match_analysis.py` assembles the dossier (market edges, form and venue splits, H2H, advisory team news, explicit risks, ranked best bets) and `GET /fixtures/{id}/deep-analysis` exposes it. New "🧠 Match Deep Dive" tool tab renders it with nested Market edges / Form / H2H / Team news / Risks panels. Player-level form reports `available: False` with the reason instead of inventing names. Seeded λ inputs equal to the model baseline are no longer treated as manual overrides, so provenance stays visible.
+
 ---
 
 ## [FEAT-20261112-002] self_improving_learning_loop
 
 **Logged**: 2026-11-12T18:05:00+03:00
 **Priority**: high
-**Status**: in_progress
+**Status**: resolved
 **Area**: backend
 
 ### Requested Capability
@@ -47,3 +51,7 @@ A learning service that (1) harvests leak-free predictions plus settled real leg
 ### Metadata
 - Frequency: first_time
 - Related Features: calibration, backtest, combo gate
+
+### Resolution
+- **Resolved**: 2026-11-12T19:40:00+03:00
+- **Notes**: `app/services/learning.py` fits per-market Platt scaling on leak-free walk-forward pairs plus settled real legs (synthetic slips excluded), shrinks toward the identity, and applies a market only when held-out log loss improves by ≥0.002. Per-market edge premiums need ≥25 settled legs and are capped at 2.0. `combo.py` applies calibration and premiums in EV mode and reports the learning block; `GET /learning/summary` and `POST /learning/train` expose the loop, with a retrain button in the Engine Scorecard. `data/learning.json` is versioned (`learn-1`) from 3576 walk-forward matches; home_win and away_win calibrated, draw rejected by the validation gate, no edge premiums yet because there are no settled real slips.

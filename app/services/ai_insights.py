@@ -11,41 +11,72 @@ Set the GEMINI_API_KEY environment variable to enable. Falls back gracefully
 to rule-based text if the API key is not configured or the call fails.
 """
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-_GEMINI_AVAILABLE = False
 _gemini_model = None
+_gemini_model_name: Optional[str] = None
+
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+def model_name() -> str:
+    return os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
+
 
 def _init_gemini():
     """Lazy-initialise the Gemini client on first use."""
-    global _GEMINI_AVAILABLE, _gemini_model
-    if _GEMINI_AVAILABLE:
-        return True
+    global _gemini_model, _gemini_model_name
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         return False
+    name = model_name()
+    if _gemini_model is not None and _gemini_model_name == name:
+        return True
     try:
         import google.generativeai as genai  # type: ignore
         genai.configure(api_key=api_key)
-        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-        _GEMINI_AVAILABLE = True
+        _gemini_model = genai.GenerativeModel(name)
+        _gemini_model_name = name
         return True
     except Exception:
         return False
+
+
+def call_llm(
+    prompt: str,
+    max_tokens: int = 256,
+    temperature: float = 0.3,
+    json_mode: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Call Gemini and return ``(text, error)``.
+
+    The error string is short and never contains the API key, so callers can
+    surface *why* the model was unavailable instead of silently degrading.
+    """
+    if not _init_gemini():
+        if not os.environ.get("GEMINI_API_KEY", "").strip():
+            return None, "GEMINI_API_KEY is not set"
+        return None, "Gemini client or model could not be initialised"
+    try:
+        config: Dict[str, Any] = {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if json_mode:
+            config["response_mime_type"] = "application/json"
+        resp = _gemini_model.generate_content(prompt, generation_config=config)
+        text = getattr(resp, "text", None)
+        if not text or not text.strip():
+            return None, "Gemini returned an empty response"
+        return text.strip(), None
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
 def _call_gemini(prompt: str, max_tokens: int = 256) -> Optional[str]:
     """Call Gemini and return plain-text response, or None on failure."""
-    if not _init_gemini():
-        return None
-    try:
-        resp = _gemini_model.generate_content(
-            prompt,
-            generation_config={"max_output_tokens": max_tokens, "temperature": 0.7},
-        )
-        return resp.text.strip() if resp.text else None
-    except Exception:
-        return None
+    text, _ = call_llm(prompt, max_tokens=max_tokens, temperature=0.7)
+    return text
 
 
 # ─────────────────────────────────────────────────────────────────────────────

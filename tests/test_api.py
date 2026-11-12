@@ -147,6 +147,24 @@ def test_evaluation_endpoints():
         assert "verdict" in calibration.json()
 
 
+def test_deep_analysis_and_learning_endpoints():
+    fixtures = client.get("/fixtures").json()
+    assert fixtures, "fixture list should not be empty"
+
+    deep = client.get(f"/fixtures/{fixtures[0]['id']}/deep-analysis")
+    assert deep.status_code == 200
+    data = deep.json()
+    assert {"verdict", "markets", "form", "h2h", "team_news", "player_form", "risks"} <= set(data)
+    assert data["player_form"]["available"] is False
+
+    missing = client.get("/fixtures/99999999/deep-analysis")
+    assert missing.status_code == 404
+
+    summary = client.get("/learning/summary")
+    assert summary.status_code == 200
+    assert "trained" in summary.json()
+
+
 def test_ratings_freshness_endpoint():
     response = client.get("/ratings/freshness")
     assert response.status_code == 200

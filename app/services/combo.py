@@ -9,11 +9,16 @@ Two selection strategies are available:
 
 * ``ev`` (default in the app) – compare the model's probability with the
   bookmaker's de-vigged implied probability and keep legs where the model sees
-  a positive edge. Combos are ranked by expected value. This is the strategy
+  a positive edge. Slips are ordered by a composite rank score in which edge
+  and expected value carry the most weight. This is the strategy
   that can actually find value, because a market price carries information the
   model does not.
 * ``certainty`` (legacy) – require every leg and the joint ticket to clear an
-  85% probability floor. Retained for backwards compatibility.
+  85% probability floor. Retained for backwards compatibility. Rank order here
+  rewards average and joint probability instead of edge.
+
+The rank score orders what the gates already allowed; it never admits a leg or
+slip that a selection rule rejected.
 
 Neither mode uses model-derived prices unless the caller explicitly opts in;
 by default only prices ingested from a bookmaker feed are eligible.
@@ -29,12 +34,13 @@ from sqlalchemy.orm import Session
 from app.models.fixture import Fixture
 from app.services.probabilities import analyze_fixture, calculate_kelly_stake
 from app.services.ai_squad_checker import check_squad_and_injuries
+from app.services.ranking import leg_score, payload as ranking_payload, rank_combos, rank_legs
 
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 
 # Bumped whenever the selection/scoring pipeline changes materially, so a
 # recorded slip can be attributed to the model that produced it.
-MODEL_VERSION = "fie-ev-4"
+MODEL_VERSION = "fie-ev-5"
 
 # Markets whose prices sum to one outcome set and can therefore be de-vigged
 # together. Asian handicap pairs are complementary for the listed half lines.
@@ -259,7 +265,10 @@ def _collect_ev_candidates(
                 "kickoff_eat": _format_eat(f.kickoff_utc),
             })
 
-        fixture_cands.sort(key=lambda c: c["expected_value_percent"], reverse=True)
+        fixture_cands.sort(
+            key=lambda c: (leg_score(c)["score"], c["expected_value_percent"], c["probability"]),
+            reverse=True,
+        )
         candidates.extend(fixture_cands[:3])
 
     return {
@@ -649,8 +658,10 @@ def generate_high_confidence_combos(
             ah_a15_odds = round(max(1.18, min(1.65, 1.0 / (p_ah_a15 * 0.93))), 2)
             _eval_and_add("ah_away_plus_1_5", "Asian Handicap (+1.5)", f"{f.away_team} (+1.5 Handicap)", p_ah_a15, ah_a15_odds, f.away_team, "synthetic")
 
-        # Keep top 3 highest probability candidates per fixture to keep combination search blazing fast
-        fixture_cands.sort(key=lambda c: (c["probability"], c["odds"]), reverse=True)
+        # Keep top 3 highest-ranked candidates per fixture to keep combination search blazing fast
+        fixture_cands.sort(
+            key=lambda c: (leg_score(c)["score"], c["probability"], c["odds"]), reverse=True
+        )
         candidates.extend(fixture_cands[:3])
 
     # Search combinations for requested leg count (strictly 2 or 3 teams)
@@ -738,25 +749,10 @@ def generate_high_confidence_combos(
     else:
         combos = _eval_combos(k, STRICT_ODDS, min_avg=STRICT_AVG, min_acc=STRICT_ACC)
 
-    # EV mode ranks by expected value; certainty mode by joint probability.
-    if mode == "ev":
-        combos.sort(
-            key=lambda x: (x["expected_value_percent"], x["combined_probability"], x["total_odds"]),
-            reverse=True,
-        )
-    else:
-        combos.sort(
-            key=lambda x: (
-                x["combined_probability"],
-                x["avg_leg_probability"],
-                x["total_odds"],
-                x["expected_value_percent"],
-            ),
-            reverse=True,
-        )
-
-    best_combo = combos[0] if combos else None
-    alternatives = combos[1:7] if len(combos) > 1 else []
+    # One rank order for everything the user sees: highest first.
+    ranked_combos = rank_combos(combos, mode)
+    best_combo = ranked_combos[0] if ranked_combos else None
+    alternatives = ranked_combos[1:7] if len(ranked_combos) > 1 else []
 
     # A model that has lost to the market out of sample cannot be trusted to
     # declare 3% edges. Block the slip unless the caller explicitly opts in,
@@ -785,6 +781,7 @@ def generate_high_confidence_combos(
                 )
             best_combo = None
             alternatives = []
+            ranked_combos = []
 
     try:
         provenance = {
@@ -842,6 +839,10 @@ def generate_high_confidence_combos(
         },
         "total_candidate_legs": len(candidates),
         "total_combos_generated": len(combos),
+        "ranking": ranking_payload(
+            ranked_combos,
+            [] if blocked_reason else rank_legs(candidates),
+        ),
         "diagnostics": {
             "mode": mode,
             "fixtures_in_scope": len(fixtures),

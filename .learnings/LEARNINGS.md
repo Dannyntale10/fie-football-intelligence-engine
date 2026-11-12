@@ -61,7 +61,7 @@ Filter synthetic records out of every aggregate (win rate, ROI, CLV) and surface
 
 **Logged**: 2026-11-12T18:05:00+03:00
 **Priority**: medium
-**Status**: pending
+**Status**: resolved
 **Area**: backend
 
 ### Summary
@@ -77,3 +77,37 @@ Keep `advisory: True` and `source: ai_unverified|heuristic` on every AI result, 
 - Source: conversation
 - Related Files: app/services/ai_squad_checker.py, app/services/combo.py
 - Tags: ai-honesty, selection-gates
+- Pattern-Key: harden.ai_advisory_only
+
+### Resolution
+- **Resolved**: 2026-11-12T19:40:00+03:00
+- **Notes**: The per-match dossier keeps `advisory: True` and `source` on every AI result, labels the Team news panel as advisory, and states that it is never a hard filter. `player_form` returns `available: False` with an explicit reason instead of naming players without a feed.
+
+---
+
+## [LRN-20261112-004] best_practice
+
+**Logged**: 2026-11-12T19:40:00+03:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Calibrating complementary markets independently breaks the probability simplex; renormalize each group after adjusting it.
+
+### Details
+The learning loop fits a Platt map per market key. Applied naively, `home_win`, `draw` and `away_win` each moved by their own factor, so the trio stopped summing to 1 — the same for BTTS, over/under pairs, double chance and draw-no-bet. Downstream EV and "fair price" comparisons then mixed incoherent probabilities, which can manufacture or erase edges purely as an artefact of calibration.
+
+### Suggested Action
+Calibrate per market, then renormalize each member of a complementary group to the group total, clamping to [0.005, 0.995]. Route every consumer through one shared helper so combo selection and the dossier cannot drift apart.
+
+### Metadata
+- Source: error
+- Related Files: app/services/learning.py, app/services/combo.py, app/services/match_analysis.py, tests/test_learning.py
+- Tags: calibration, probability-coherence, ev-integrity
+- Pattern-Key: harden.probability_coherence
+- See Also: FEAT-20261112-002
+
+### Resolution
+- **Resolved**: 2026-11-12T19:20:00+03:00
+- **Notes**: Added `CALIBRATION_GROUPS` and `calibrate_markets()` in `app/services/learning.py`; `combo.py` and `match_analysis.py` both call it. `tests/test_learning.py` asserts group totals land within 1e-3 of 1.0 and that ungrouped markets are left untouched.

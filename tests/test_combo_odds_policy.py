@@ -41,8 +41,11 @@ def _validated_calibration(monkeypatch):
 
     The gate tests below override this stub with an unvalidated report.
     """
-    from app.services import calibration
+    from app.services import calibration, learning
     monkeypatch.setattr(calibration, "load_report", lambda: _VALIDATED_REPORT)
+    # Learning parameters are persisted in data/learning.json; stub them out so
+    # these assertions describe selection policy, not whatever was trained last.
+    monkeypatch.setattr(learning, "load_report", lambda: None)
 
 
 def _add_fixture(db, suffix, home_odds=None, draw_odds=None, away_odds=None, market_odds=None):
@@ -134,7 +137,11 @@ def test_estimated_legs_are_allowed_and_labelled_when_opted_in(db, stub_engine):
     assert best is not None
     assert res["odds_policy"]["require_market_odds"] is False
     assert all(leg["odds_source"] in {"market", "synthetic"} for leg in best["legs"])
-    assert any(leg["odds_source"] == "synthetic" for leg in best["legs"])
+    # Ranking prefers priced legs on ties, so synthetic legs show up in the
+    # ranked match list rather than necessarily in the top slip.
+    ranked_legs = res["ranking"]["matches"]
+    assert any(row["odds_source"] == "synthetic" for row in ranked_legs)
+    assert all(row["odds_source"] in {"market", "synthetic"} for row in ranked_legs)
 
 
 def test_devig_removes_bookmaker_overround():

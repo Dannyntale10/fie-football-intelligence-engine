@@ -178,7 +178,6 @@ def _market_rows(
 
 
 def _risk_list(
-    db: Session,
     fixture: Fixture,
     analysis: Dict[str, Any],
     form_home: Dict[str, Any],
@@ -333,7 +332,7 @@ def build_match_dossier(
     except Exception:
         calibration = None
 
-    risks = _risk_list(db, fixture, analysis, form_home, form_away, h2h, rows, calibration)
+    risks = _risk_list(fixture, analysis, form_home, form_away, h2h, rows, calibration)
 
     rating_meta = analysis.get("rating_meta") or {}
     skill = (calibration or {}).get("skill") or {}

@@ -110,7 +110,12 @@ with st.sidebar:
         value=os.getenv("WHATSAPP_APIKEY", ""),
         type="password",
         placeholder="e.g. 1234567",
-        help="Free setup in 10s: Send 'I allow callmebot to send me messages' via WhatsApp to +34 941 83 07 43 to get your free key.",
+        help=(
+            "Free setup: open callmebot.com/blog/free-api-whatsapp-messages, message the "
+            "number shown there from this same phone, and send 'I allow callmebot to send me "
+            "messages' (or 'Recover APIKey' if you already activated). CallMeBot rotates its "
+            "number, so don't use numbers from other sites."
+        ),
         key="dash_wa_key",
     )
     if dash_wa_key:

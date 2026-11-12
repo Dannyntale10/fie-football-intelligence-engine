@@ -209,6 +209,43 @@ def seed_sample_historical_data(db: Session, filepath: str = "data/historical_ep
     df = pd.read_csv(p)
     return import_football_data_dataframe(db, df, default_source="HistoricalEPL")
 
+BACKTEST_HISTORY_SEASONS = (("E0", "2324"), ("E0", "2425"), ("SP1", "2425"))
+
+def seed_backtest_history(db: Session, seasons=BACKTEST_HISTORY_SEASONS) -> Dict[str, Any]:
+    """Import completed seasons (scores + closing odds) for strategy testing.
+
+    Downloads from football-data.co.uk; if every download fails, loads the
+    small bundled sample so the backtester still gets finished matches.
+    """
+    inserted = duplicates = seasons_loaded = 0
+    errors: list = []
+    for division_code, season in seasons:
+        try:
+            res = fetch_historical_league_season(db, division_code, season)
+            inserted += int(res.get("inserted", 0))
+            duplicates += int(res.get("duplicates", 0))
+            seasons_loaded += 1
+        except Exception as e:
+            errors.append(f"{DIV_MAPPING.get(division_code, division_code)} {season}: {e}")
+
+    if seasons_loaded == 0:
+        sample = seed_sample_historical_data(db)
+        return {
+            "source": "bundled_sample",
+            "inserted": int(sample.get("inserted", 0)),
+            "duplicates": int(sample.get("duplicates", 0)),
+            "seasons_loaded": 0,
+            "errors": errors,
+        }
+
+    return {
+        "source": "football-data.co.uk",
+        "inserted": inserted,
+        "duplicates": duplicates,
+        "seasons_loaded": seasons_loaded,
+        "errors": errors,
+    }
+
 def fetch_and_import_url(db: Session, url: str, default_source: str = "FootballDataLive") -> Dict[str, Any]:
     """Download CSV from live football-data.co.uk URL and ingest real fixtures and odds."""
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}

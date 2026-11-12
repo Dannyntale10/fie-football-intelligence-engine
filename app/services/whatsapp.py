@@ -4,8 +4,9 @@ whatsapp.py – Automated WhatsApp Multi-Bet Notification System.
 
 Supports:
   1. CallMeBot (Free, zero-config personal WhatsApp API – standard for personal bots)
-     - Setup in 30 seconds: Send "I allow callmebot to send me messages" via WhatsApp
-       to +34 941 83 07 43 to receive your personal apikey.
+     - Setup: message the number listed at callmebot.com/blog/free-api-whatsapp-messages
+       with "I allow callmebot to send me messages" to receive your personal apikey.
+       The gateway number rotates, so never hardcode it.
   2. Twilio WhatsApp API (Enterprise WhatsApp messaging)
 """
 import os
@@ -93,7 +94,7 @@ def send_whatsapp_message(
         if not p_key:
             return {
                 "success": False,
-                "error": "CallMeBot API key required. To get your free key: send 'I allow callmebot to send me messages' via WhatsApp to +34 941 83 07 43."
+                "error": "CallMeBot API key required. Message the number listed on callmebot.com/blog/free-api-whatsapp-messages from your phone and send 'I allow callmebot to send me messages' (or 'Recover APIKey' if already activated)."
             }
         encoded_text = urllib.parse.quote(text)
         url = f"https://api.callmebot.com/whatsapp.php?phone={p_clean}&text={encoded_text}&apikey={p_key}"

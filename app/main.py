@@ -1,9 +1,9 @@
 from __future__ import annotations
 import io
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import pandas as pd
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, delete, desc
@@ -587,6 +587,48 @@ def learning_train(db: Session = Depends(get_db)):
         return report
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Learning error: {exc}") from exc
+
+@app.get("/ai/status")
+def ai_status():
+    """Whether a language model is configured for the advisory analyst."""
+    from app.services.ai_analyst import status
+    return status()
+
+@app.post("/ai/review")
+def ai_review(payload: Dict[str, Any] = Body(...)):
+    """Advisory review of a generated slip.
+
+    Accepts the combo-engine response under ``slip``. Every number the analyst
+    cites is checked against the engine's own fact sheet; the result never
+    changes a selection.
+    """
+    from app.services import ai_analyst
+    slip = payload.get("slip")
+    if not isinstance(slip, dict) or not slip.get("best_combo"):
+        raise HTTPException(status_code=400, detail="Provide the combo-engine result under 'slip'")
+    try:
+        return ai_analyst.review(ai_analyst.facts_from_slip(slip))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Analyst error: {exc}") from exc
+
+@app.post("/ai/ask")
+def ai_ask(payload: Dict[str, Any] = Body(...)):
+    """Ask the advisory analyst a question about a generated slip."""
+    from app.services import ai_analyst
+    question = str(payload.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Provide a 'question'")
+    if len(question) > ai_analyst.MAX_QUESTION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Question is longer than {ai_analyst.MAX_QUESTION} characters",
+        )
+    slip = payload.get("slip")
+    facts = ai_analyst.facts_from_slip(slip if isinstance(slip, dict) else None)
+    try:
+        return ai_analyst.ask(question, facts)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Analyst error: {exc}") from exc
 
 @app.get("/fixtures/{fixture_id}/best-odds")
 def fixture_best_odds(fixture_id: int, db: Session = Depends(get_db)):

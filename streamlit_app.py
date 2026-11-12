@@ -66,6 +66,7 @@ from app.services.ratings import (                     # noqa: E402
 )
 from app.services.seeder import (                      # noqa: E402
     seed_sample_historical_data,
+    seed_backtest_history,
     fetch_live_upcoming_fixtures,
     fetch_historical_league_season,
     fetch_all_major_leagues,
@@ -88,6 +89,7 @@ from app.services.ai_insights import (                 # noqa: E402
     gemini_agent_rating_narrative,
     is_gemini_enabled,
 )
+from app.services import ai_analyst                    # noqa: E402
 from app.services.value_score import compute_value_score   # noqa: E402
 from app.services.currency import format_stake, format_stake_dual, get_currency_options  # noqa: E402
 from app.services.pdf_slip import generate_combo_pdf, generate_text_slip  # noqa: E402
@@ -508,7 +510,12 @@ with st.sidebar:
         value=os.getenv("WHATSAPP_APIKEY", ""),
         type="password",
         placeholder="e.g. 1234567",
-        help="Free setup in 10s: Send 'I allow callmebot to send me messages' via WhatsApp to +34 941 83 07 43 to get your free key.",
+        help=(
+            "Free setup: open callmebot.com/blog/free-api-whatsapp-messages, message the "
+            "number shown there from this same phone, and send 'I allow callmebot to send me "
+            "messages' (or 'Recover APIKey' if you already activated). CallMeBot rotates its "
+            "number, so don't use numbers from other sites."
+        ),
         key="app_wa_key",
     )
     if wa_key_val:
@@ -789,6 +796,9 @@ with tab_portfolio:
                 db_combo.close()
 
             best = c_data.get("best_combo")
+            st.session_state["ai_slip_context"] = c_data
+            st.session_state.pop("ai_review_result", None)
+            st.session_state.pop("ai_answer", None)
             matchday_hdr = c_data.get("matchday_label", "Daily")
             if not best and c_data.get("blocked_reason"):
                 st.error(f"🚫 **Slip withheld by the validation gate.** {c_data['blocked_reason']}")
@@ -881,6 +891,14 @@ with tab_portfolio:
                     acc_p = combo_obj['combined_probability'] * 100
                     n_teams = combo_obj['legs_count']
                     team_label = "Banker" if avg_p >= 85 else "High Conf"
+                    rank_badge = ""
+                    if combo_obj.get("rank"):
+                        rank_badge = (
+                            f'<span style="background:#FFBB33;color:#000;font-weight:700;'
+                            f'padding:3px 10px;border-radius:6px;font-size:13px;margin-right:8px;">'
+                            f'RANK #{combo_obj["rank"]} · {combo_obj.get("score", 0):.1f}/100 '
+                            f'({combo_obj.get("grade", "-")})</span>'
+                        )
                     # Legs bullet summary (inline like screenshot)
                     legs_bullets = " • ".join(
                         f"{l['selection']} @ {l['odds']:.2f} ({l['probability']*100:.1f}%)"
@@ -903,7 +921,7 @@ with tab_portfolio:
                     <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 16px; margin-top: 10px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
                             <div>
-                                <h3 style="margin: 0; color: #00C851;">🏆 {title_text} ({n_teams} TEAMS)</h3>
+                                <h3 style="margin: 0; color: #00C851;">🏆 {rank_badge}{title_text} ({n_teams} TEAMS)</h3>
                                 <span style="color: #AAA; font-size: 14px;">📅 Matchday: <strong>{matchday_hdr}</strong> (All games finish same day)</span>
                             </div>
                             <span style="font-size: 24px; font-weight: bold; background: #00C851; color: #000; padding: 4px 16px; border-radius: 8px;">ODDS {combo_obj['total_odds']:.2f}</span>
@@ -1015,6 +1033,11 @@ with tab_portfolio:
                     avg_p = combo_obj.get('avg_leg_probability', combo_obj.get('combined_probability', 0)) * 100
                     acc_p = combo_obj['combined_probability'] * 100
                     team_label = "Banker" if avg_p >= 85 else "High Conf"
+                    rank_no = combo_obj.get('rank', option_num)
+                    score_txt = (
+                        f" &nbsp;|&nbsp; Rank Score: {combo_obj['score']:.1f}/100 ({combo_obj.get('grade', '-')})"
+                        if combo_obj.get('score') is not None else ""
+                    )
                     legs_inline = " • ".join(
                         f"<strong>{l['selection']}</strong> @ {l['odds']:.2f}"
                         f"{'' if l.get('odds_source') == 'market' else ' (est.)'}"
@@ -1024,15 +1047,15 @@ with tab_portfolio:
                     st.markdown(f"""
                     <div style="background: #111E11; border: 1px solid #2A5A2A; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
-                            <span style="color:#00C851; font-size:15px; font-weight:700;">Combo Option #{option_num} — Odds: {combo_obj['total_odds']:.2f}</span>
-                            <span style="font-size:12px; color:#AAA;">Avg Team Prob: {avg_p:.1f}% ({team_label}) &nbsp;|&nbsp; Joint Win Prob: {acc_p:.1f}% &nbsp;|&nbsp; EV: {combo_obj['expected_value_percent']:+.1f}%</span>
+                            <span style="color:#00C851; font-size:15px; font-weight:700;">#{rank_no} — Odds: {combo_obj['total_odds']:.2f}</span>
+                            <span style="font-size:12px; color:#AAA;">Avg Team Prob: {avg_p:.1f}% ({team_label}) &nbsp;|&nbsp; Joint Win Prob: {acc_p:.1f}% &nbsp;|&nbsp; EV: {combo_obj['expected_value_percent']:+.1f}%{score_txt}</span>
                         </div>
                         <div style="font-size:13px; color:#CCC; line-height: 1.8;">{legs_inline}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
                 # Render Top Daily Banker Slip
-                _render_full_combo_display(best, f"TOP DAILY BANKER MULTI-BET", "top_banker")
+                _render_full_combo_display(best, f"#1 TOP DAILY BANKER MULTI-BET", "top_banker")
 
                 # AI Combo Explanation
                 combo_explain = gemini_combo_explanation(
@@ -1049,15 +1072,80 @@ with tab_portfolio:
                 alts = c_data.get("alternatives", [])
                 if alts:
                     with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ 2.00)", expanded=True):
-                        st.write("Browse alternative high-confidence multi-bet slips generated for this matchday:")
+                        st.write("Ranked slips, highest score first:")
                         # First render all as compact summary cards (like the screenshot)
                         for idx, alt in enumerate(alts, 2):
                             _render_alt_combo_summary(alt, idx)
                         st.markdown("<hr style='border: 1px dashed #2A4A2A; margin: 18px 0;'>", unsafe_allow_html=True)
                         # Then allow expanding each for full detail
                         for idx, alt in enumerate(alts, 2):
-                            with st.expander(f"📋 Full Detail — Combo Option #{idx} (Odds {alt['total_odds']:.2f})", expanded=False):
-                                _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"alt_combo_{idx}")
+                            rank_no = alt.get("rank", idx)
+                            with st.expander(
+                                f"📋 Full Detail — #{rank_no} (Rank Score {alt.get('score', 0):.1f}, Odds {alt['total_odds']:.2f})",
+                                expanded=False,
+                            ):
+                                _render_full_combo_display(alt, f"SLIP #{rank_no}", f"alt_combo_{rank_no}")
+
+                # Full ranking of every generated slip and every eligible match
+                ranking = c_data.get("ranking") or {}
+                combo_rows = ranking.get("combos") or []
+                match_rows = ranking.get("matches") or []
+                if combo_rows or match_rows:
+                    with st.expander(
+                        f"🏆 Ranking — {ranking.get('total_combos_ranked', 0)} slips · "
+                        f"{ranking.get('total_legs_ranked', 0)} matches (highest first)",
+                        expanded=False,
+                    ):
+                        st.caption(
+                            "Rank score is a prioritisation heuristic built from value, probability and evidence. "
+                            "It only orders what the selection gates already accepted — it is not a probability "
+                            f"and does not add edge. Scale 0-100; A ≥ 78, B ≥ 62, C ≥ 45. (ranking {ranking.get('version')})"
+                        )
+                        if combo_rows:
+                            st.markdown("###### 🎟️ Slips, highest first")
+                            st.dataframe(
+                                pd.DataFrame([
+                                    {
+                                        "#": r["rank"],
+                                        "Score": r["rank_score"],
+                                        "Grade": r["grade"],
+                                        "Odds": r["total_odds"],
+                                        "Joint %": round((r["combined_probability"] or 0) * 100, 1),
+                                        "EV %": r["expected_value_percent"],
+                                        "Edge %": r["edge_percent"],
+                                        "Legs": r["legs"],
+                                    }
+                                    for r in combo_rows
+                                ]),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        if match_rows:
+                            st.markdown("###### ⚽ Matches, highest first")
+                            st.dataframe(
+                                pd.DataFrame([
+                                    {
+                                        "#": r["rank"],
+                                        "Score": r["rank_score"],
+                                        "Grade": r["grade"],
+                                        "Match": r["match"],
+                                        "Selection": r["selection"],
+                                        "Odds": r["odds"],
+                                        "Prob %": round((r["probability"] or 0) * 100, 1),
+                                        "Edge %": r["edge_percent"],
+                                        "EV %": r["expected_value_percent"],
+                                        "Price": r["odds_source"],
+                                    }
+                                    for r in match_rows
+                                ]),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        if ranking.get("total_combos_ranked", 0) > len(combo_rows):
+                            st.caption(
+                                f"Showing the top {len(combo_rows)} of "
+                                f"{ranking['total_combos_ranked']} generated slips."
+                            )
 
     # ── TRANSPARENT PERFORMANCE LEDGER & AUTOMATED BET SETTLEMENT ─────────────
     st.markdown("---")
@@ -1668,12 +1756,14 @@ with tab_tools:
     st.caption("Historical backtesting, Dixon-Coles team ratings, Poisson probability distributions, and data ingestion feeds.")
 
     (
-        tab_backtest, tab_ratings, tab_markets, tab_deep_dive, tab_import, tab_connectors, tab_agent_rating,
+        tab_backtest, tab_ratings, tab_markets, tab_deep_dive, tab_ai, tab_import,
+        tab_connectors, tab_agent_rating,
     ) = st.tabs([
         "🧪 Strategy Backtester",
         "🛡️ Team Ratings",
         "📊 Poisson Probabilities",
         "🧠 Match Deep Dive",
+        "🤖 AI Analyst",
         "📥 Data Feeds & Sync",
         "🔌 Bookmaker Connectors",
         "🏆 Engine Scorecard",
@@ -1939,6 +2029,114 @@ with tab_deep_dive:
                         f"Dossier {dossier['version']} · generated {dossier['generated_at']}"
                     )
 
+with tab_ai:
+    st.subheader("🤖 AI Analyst")
+    st.caption(
+        "Answers about the slip you generated are built from the engine's own fact sheet: odds, "
+        "probabilities, edge, expected value, rank, price sources, calibration and learning state. "
+        "Every number the analyst cites is matched back against that fact sheet. Advisory only — "
+        "it cannot change which legs or slips the selection gates allow."
+    )
+
+    ai_state = ai_analyst.status()
+    if ai_state["llm_enabled"]:
+        st.success(
+            f"Gemini connected · model `{ai_state['model']}` · cited numbers are verified against the fact sheet."
+        )
+    else:
+        st.warning(
+            "No **GEMINI_API_KEY** configured, so the analyst runs deterministically on the same fact "
+            "sheet with no language model. Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`) in `.env` "
+            "to enable the LLM; the grounding check runs either way."
+        )
+
+    ai_slip = st.session_state.get("ai_slip_context")
+    if not ai_slip or not ai_slip.get("best_combo"):
+        st.info(
+            "Generate a slip on **🏆 Banker Slips & Ledger**, then return here to review it."
+        )
+    else:
+        ai_best = ai_slip["best_combo"]
+        ai_facts = ai_analyst.facts_from_slip(ai_slip)
+        st.markdown(
+            f"**Context:** slip #{ai_best.get('rank')} · {ai_best.get('legs_count')} legs at "
+            f"{ai_best['total_odds']:.2f} · joint {ai_best['combined_probability']*100:.1f}% · "
+            f"EV {ai_best['expected_value_percent']:+.1f}% · {ai_slip.get('matchday_label')}"
+        )
+
+        if st.button("🧠 Review this slip", type="primary", key="ai_review_btn"):
+            st.session_state["ai_review_result"] = ai_analyst.review(ai_facts)
+
+        ai_result = st.session_state.get("ai_review_result")
+        if ai_result:
+            ai_mode = "Gemini LLM" if ai_result.get("mode") == "llm" else "deterministic rules"
+            ai_ground = ai_result.get("grounding") or {}
+            st.markdown(f"### {ai_result.get('headline', '')}")
+            st.caption(
+                f"Generated by the {ai_mode} · confidence **{ai_result.get('confidence', 'low')}** · "
+                f"advisory only"
+            )
+            if ai_ground.get("grounded"):
+                st.caption(
+                    f"🔎 Grounding: all {ai_ground.get('cited_numbers', 0)} cited numbers were found "
+                    "in the engine's fact sheet."
+                )
+            elif ai_ground.get("cited_numbers"):
+                st.warning(
+                    f"🔎 Grounding: {ai_ground.get('matched_numbers', 0)} of "
+                    f"{ai_ground.get('cited_numbers', 0)} cited numbers matched the fact sheet. "
+                    f"Untraceable: {ai_ground.get('unmatched')}. Treat those claims as unverified."
+                )
+            if ai_result.get("llm_error"):
+                st.caption(f"⚠️ LLM unavailable, fell back to rules: {ai_result['llm_error']}")
+
+            ai_c1, ai_c2, ai_c3 = st.columns(3)
+            with ai_c1:
+                st.markdown("###### ✅ Strengths")
+                for item in ai_result.get("strengths") or ["None identified."]:
+                    st.markdown(f"- {item}")
+            with ai_c2:
+                st.markdown("###### ⚠️ Risks")
+                for item in ai_result.get("risks") or ["None identified."]:
+                    st.markdown(f"- {item}")
+            with ai_c3:
+                st.markdown("###### 🔍 Check before betting")
+                for item in ai_result.get("checks") or ["None listed."]:
+                    st.markdown(f"- {item}")
+
+            with st.expander("Fact sheet the analyst was given"):
+                st.json(ai_result.get("facts") or ai_facts)
+
+        st.markdown("#### Ask about this slip")
+        with st.form("ai_ask_form"):
+            ai_question = st.text_input(
+                "Question",
+                placeholder="What are the risks? · Why did this qualify? · How much does Kelly size?",
+                key="ai_question",
+            )
+            ai_asked = st.form_submit_button("Ask the analyst")
+        if ai_asked:
+            if not ai_question.strip():
+                st.warning("Type a question first.")
+            else:
+                st.session_state["ai_answer"] = ai_analyst.ask(ai_question, ai_facts)
+
+        ai_answer = st.session_state.get("ai_answer")
+        if ai_answer:
+            if ai_answer.get("error"):
+                st.warning(ai_answer["error"])
+            else:
+                ai_mode = "Gemini LLM" if ai_answer.get("mode") == "llm" else "deterministic rules"
+                st.markdown(f"**{ai_answer.get('question')}**")
+                st.markdown(ai_answer.get("answer", ""))
+                ai_ground = ai_answer.get("grounding") or {}
+                ground_note = (
+                    f"all {ai_ground.get('cited_numbers', 0)} cited numbers traced to the fact sheet"
+                    if ai_ground.get("grounded")
+                    else f"untraceable numbers: {ai_ground.get('unmatched')}"
+                )
+                st.caption(f"{ai_mode} · advisory only · grounding: {ground_note}")
+
 with tab_import:
     st.subheader("Data Ingestion & Real-Time League Feeds")
     st.write(
@@ -2161,7 +2359,34 @@ with tab_backtest:
     with bt_c4:
         bt_bankroll = st.number_input("Initial Bankroll ($)", 50.0, 100_000.0, 1000.0, 100.0)
 
-    if st.button("⚡ Run Backtest Simulation", type="primary", use_container_width=True):
+    bt_run_col, bt_seed_col = st.columns([3, 2])
+    with bt_run_col:
+        run_bt = st.button("⚡ Run Backtest Simulation", type="primary", use_container_width=True)
+    with bt_seed_col:
+        seed_bt = st.button("📥 Load Finished Matches", use_container_width=True)
+
+    if seed_bt:
+        db_hist = _db()
+        try:
+            with st.spinner("Downloading completed seasons (scores + closing odds)…"):
+                hist = seed_backtest_history(db_hist)
+        except Exception as e:
+            st.error(f"Historical import error: {e}")
+        else:
+            if hist.get("seasons_loaded"):
+                st.success(
+                    f"Loaded {hist['seasons_loaded']} season(s) from football-data.co.uk — "
+                    f"{hist['inserted']:,} new finished matches, {hist['duplicates']:,} already present."
+                )
+            else:
+                st.warning(
+                    f"Season download failed, loaded the bundled sample instead "
+                    f"({hist.get('inserted', 0)} matches). Details: {'; '.join(hist.get('errors', [])[:2])}"
+                )
+        finally:
+            db_hist.close()
+
+    if run_bt:
         db_bt = _db()
         try:
             with st.spinner("Running simulation…"):
@@ -2202,7 +2427,8 @@ with tab_backtest:
         else:
             st.warning(
                 "No completed matches matched the strategy criteria. "
-                "Import finished matches with scores (Ingestion tab → Option B or Download Season)."
+                "Press '📥 Load Finished Matches' above to import completed seasons with scores and "
+                "closing odds, or use the Ingestion tab."
             )
 
     # ── Walk-forward evaluation: the measurement that governs EV selection ────

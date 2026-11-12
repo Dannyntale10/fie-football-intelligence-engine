@@ -22,6 +22,7 @@ def ensure_schema_compatibility(eng):
                     ("opening_draw_odds", "REAL"),
                     ("opening_away_odds", "REAL"),
                     ("odds_updated_at", "TIMESTAMP"),
+                    ("market_odds_json", "TEXT"),
                 ]
                 for col, col_type in new_cols:
                     if col not in col_names:

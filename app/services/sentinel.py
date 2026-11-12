@@ -231,20 +231,20 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                     db=db,
                     target_date=m_date,
                     num_legs=2,
-                    min_leg_prob=0.85,
-                    min_accumulator_prob=0.85,  # HARD RULE: ACCUM WIN PROB >= 85%
-                    min_total_odds=2.00,         # HARD RULE: Odds >= 2.00
+                    min_leg_prob=0.55,
+                    min_total_odds=1.50,
                     bankroll=bankroll,
+                    selection_mode="ev",
+                    min_edge_percent=3.0,
                 )
                 b2 = res2.get("best_combo")
                 if b2:
-                    avg2  = b2.get("avg_leg_probability", 0) * 100
-                    acc2  = b2.get("combined_probability", 0) * 100
+                    ev2 = b2.get("expected_value_percent", 0)
                     odds2 = b2.get("total_odds", 0)
-                    if odds2 >= 2.00 and avg2 >= 85.0 and acc2 >= 85.0:
+                    if odds2 >= 1.50 and ev2 > 0:
                         best_found_2 = b2
                         best_label_2 = m_label
-                        _log_event(f"  ✅ Qualifying 2-team found: Odds {odds2:.2f} | AvgConf {avg2:.1f}% | AccumProb {acc2:.1f}%")
+                        _log_event(f"  ✅ Value 2-team found: Odds {odds2:.2f} | EV {ev2:+.1f}% | Edge {b2.get('edge_percent', 0):+.1f}%")
 
             # Search 3-team combo on this matchday if not already found
             if not best_found_3:
@@ -252,20 +252,20 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                     db=db,
                     target_date=m_date,
                     num_legs=3,
-                    min_leg_prob=0.85,
-                    min_accumulator_prob=0.85,  # HARD RULE: ACCUM WIN PROB >= 85%
-                    min_total_odds=2.00,         # HARD RULE: Odds >= 2.00
+                    min_leg_prob=0.55,
+                    min_total_odds=1.50,
                     bankroll=bankroll,
+                    selection_mode="ev",
+                    min_edge_percent=3.0,
                 )
                 b3 = res3.get("best_combo")
                 if b3:
-                    avg3  = b3.get("avg_leg_probability", 0) * 100
-                    acc3  = b3.get("combined_probability", 0) * 100
+                    ev3 = b3.get("expected_value_percent", 0)
                     odds3 = b3.get("total_odds", 0)
-                    if odds3 >= 2.00 and avg3 >= 85.0 and acc3 >= 85.0:
+                    if odds3 >= 1.50 and ev3 > 0:
                         best_found_3 = b3
                         best_label_3 = m_label
-                        _log_event(f"  ✅ Qualifying 3-team found: Odds {odds3:.2f} | AvgConf {avg3:.1f}% | AccumProb {acc3:.1f}%")
+                        _log_event(f"  ✅ Value 3-team found: Odds {odds3:.2f} | EV {ev3:+.1f}% | Edge {b3.get('edge_percent', 0):+.1f}%")
 
             # If both 2-team and 3-team have been found, we can stop searching matchdays
             if best_found_2 and best_found_3:
@@ -279,40 +279,40 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                     db=db,
                     target_date="all",
                     num_legs=2,
-                    min_leg_prob=0.85,
-                    min_accumulator_prob=0.85,
-                    min_total_odds=2.00,
+                    min_leg_prob=0.55,
+                    min_total_odds=1.50,
                     bankroll=bankroll,
+                    selection_mode="ev",
+                    min_edge_percent=3.0,
                 )
                 b2_all = res2_all.get("best_combo")
                 if b2_all:
-                    avg2  = b2_all.get("avg_leg_probability", 0) * 100
-                    acc2  = b2_all.get("combined_probability", 0) * 100
+                    ev2 = b2_all.get("expected_value_percent", 0)
                     odds2 = b2_all.get("total_odds", 0)
-                    if odds2 >= 2.00 and avg2 >= 85.0 and acc2 >= 85.0:
+                    if odds2 >= 1.50 and ev2 > 0:
                         best_found_2 = b2_all
                         best_label_2 = "Cross-League Upcoming"
-                        _log_event(f"  ✅ Cross-league 2-team found: Odds {odds2:.2f} | AvgConf {avg2:.1f}% | AccumProb {acc2:.1f}%")
+                        _log_event(f"  ✅ Cross-league value 2-team found: Odds {odds2:.2f} | EV {ev2:+.1f}%")
 
             if not best_found_3:
                 res3_all = generate_high_confidence_combos(
                     db=db,
                     target_date="all",
                     num_legs=3,
-                    min_leg_prob=0.85,
-                    min_accumulator_prob=0.85,
-                    min_total_odds=2.00,
+                    min_leg_prob=0.55,
+                    min_total_odds=1.50,
                     bankroll=bankroll,
+                    selection_mode="ev",
+                    min_edge_percent=3.0,
                 )
                 b3_all = res3_all.get("best_combo")
                 if b3_all:
-                    avg3  = b3_all.get("avg_leg_probability", 0) * 100
-                    acc3  = b3_all.get("combined_probability", 0) * 100
+                    ev3 = b3_all.get("expected_value_percent", 0)
                     odds3 = b3_all.get("total_odds", 0)
-                    if odds3 >= 2.00 and avg3 >= 85.0 and acc3 >= 85.0:
+                    if odds3 >= 1.50 and ev3 > 0:
                         best_found_3 = b3_all
                         best_label_3 = "Cross-League Upcoming"
-                        _log_event(f"  ✅ Cross-league 3-team found: Odds {odds3:.2f} | AvgConf {avg3:.1f}% | AccumProb {acc3:.1f}%")
+                        _log_event(f"  ✅ Cross-league value 3-team found: Odds {odds3:.2f} | EV {ev3:+.1f}%")
 
         # ── Step 5: Dispatch WhatsApp Alert if qualifying combos found ─────────
         if best_found_2 or best_found_3:

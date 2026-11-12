@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -38,6 +38,9 @@ class Fixture(Base):
     opening_draw_odds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     opening_away_odds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     odds_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # JSON map of real bookmaker prices keyed by the probability model's market
+    # names (double_chance_1x, over_2_5, ah_away_plus_1_5, btts_no, ...).
+    market_odds_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     home_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     away_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="scheduled", index=True)

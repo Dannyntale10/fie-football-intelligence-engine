@@ -601,18 +601,22 @@ with st.sidebar:
 # TAB 0 — DAILY BANKER SLIPS & PERFORMANCE LEDGER
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_portfolio:
-    st.subheader("🏆 Daily High-Confidence Banker Slips & Portfolio")
+    st.subheader("🏆 Daily Slips & Portfolio")
     st.caption(
-        "Quantitative selection engine: generate optimal 2-team or 3-team accumulators (Odds ≥ 2.00+, Confidence ≥ 85%) "
-        "with quarter-Kelly stake sizing, pre-match injury check, and automated settlement. "
-        "By default, slips are built only from prices ingested from bookmaker feeds — model-derived prices are excluded."
+        "Value engine: every leg must beat the de-vigged betPawa price, and slips are ranked by expected value. "
+        "Quarter-Kelly stake sizing, pre-match injury check and automated settlement. "
+        "Only prices ingested from the bookmaker feed are eligible — the legacy 85% certainty filter is still available."
     )
 
     # ══════════════════════════════════════════════════════════════════════
-    # 🎯 HIGH-CONFIDENCE COMBO BUILDER (ODDS >= 2.00+)
+    # 🎯 DAILY COMBO BUILDER
     # ══════════════════════════════════════════════════════════════════════
-    st.markdown("### 🔥 High-Confidence Daily Combo Slip (Odds ≥ 2.0+)")
-    st.write("Generates **same-day accumulator slips** using 85%+ win probability teams from a chosen matchday so bets settle on the same night.")
+    st.markdown("### 🔥 Daily Combo Slip (Value vs Market)")
+    st.write(
+        "Builds **same-day accumulator slips** from real bookmaker prices. "
+        "Value mode needs model probability above the vig-free market probability; "
+        "certainty mode is the old 85% probability filter."
+    )
 
     # Matchday selector from DB
     db_md = _db()
@@ -632,38 +636,79 @@ with tab_portfolio:
                 target_date_val = d["date"]
                 break
 
+    strategy = st.radio(
+        "Selection strategy",
+        ["Value (EV) — recommended", "Certainty (legacy 85%)"],
+        horizontal=True,
+        key="cloud_combo_strategy",
+        help=(
+            "Value keeps legs whose model probability beats the de-vigged market "
+            "price and ranks slips by expected value. Certainty applies the old "
+            "85% probability floors, which almost never produce a slip."
+        ),
+    )
+    ev_mode = strategy.startswith("Value")
+
     combo_col1, combo_col2, combo_col3, combo_col4 = st.columns(4)
     with combo_col1:
         sel_legs = st.radio("Number of Teams (Max 3)", [2, 3], index=1, horizontal=True, format_func=lambda x: f"{x}-Team Combo", key="cloud_combo_legs")
     with combo_col2:
-        sel_min_acc_pct = st.slider(
-            "Min Accumulator Win Prob", 85, 98, 85, 1, format="%d%%",
-            key="cloud_combo_acc_prob", help="Strict engine floor is 85%. Raise it to demand a safer joint ticket.",
-        )
+        if ev_mode:
+            sel_min_edge_pct = st.slider(
+                "Min Edge vs Market", 1, 15, 3, 1, format="%d%%",
+                key="cloud_combo_edge",
+                help="Model probability must exceed the vig-free market probability by at least this much.",
+            )
+            sel_min_acc_pct = 85
+        else:
+            sel_min_acc_pct = st.slider(
+                "Min Accumulator Win Prob", 85, 98, 85, 1, format="%d%%",
+                key="cloud_combo_acc_prob",
+                help="Strict engine floor is 85%. Raise it to demand a safer joint ticket.",
+            )
     with combo_col3:
-        sel_min_leg_pct = st.slider(
-            "Min Team Confidence", 85, 98, 85, 1, format="%d%%",
-            key="cloud_combo_prob", help="Strict engine floor is 85%. Raise it to demand stronger individual legs.",
-        )
+        if ev_mode:
+            sel_min_leg_pct = st.slider(
+                "Min Leg Probability", 50, 80, 55, 1, format="%d%%",
+                key="cloud_combo_prob_ev",
+                help="Skip longshots: the model must already rate the leg at least this likely.",
+            )
+        else:
+            sel_min_leg_pct = st.slider(
+                "Min Team Confidence", 85, 98, 85, 1, format="%d%%",
+                key="cloud_combo_prob_cert",
+                help="Strict engine floor is 85%. Raise it to demand stronger individual legs.",
+            )
     with combo_col4:
         sel_combo_bankroll = st.number_input("Bankroll", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cloud_combo_bankroll")
 
     sel_min_acc_prob = sel_min_acc_pct / 100.0
     sel_min_leg_prob = sel_min_leg_pct / 100.0
+    sel_min_edge_prob = (sel_min_edge_pct / 100.0) if ev_mode else 0.0
+    sel_odds_floor = 1.50 if ev_mode else 2.00
 
-    allow_est_odds = st.checkbox(
-        "🧮 Allow estimated/derived odds (research only)",
-        value=False,
-        key="cloud_allow_est_odds",
-        help=(
-            "Off by default: a slip can only contain prices actually ingested from a bookmaker feed. "
-            "Turning this on lets the engine use model-derived prices (double chance, totals, DNB, handicaps). "
-            "Those legs are labelled 'Estimate' and are not real market prices."
-        ),
-    )
+    allow_est_odds = False
+    if not ev_mode:
+        allow_est_odds = st.checkbox(
+            "🧮 Allow estimated/derived odds (research only)",
+            value=False,
+            key="cloud_allow_est_odds",
+            help=(
+                "Off by default: a slip can only contain prices actually ingested from a bookmaker feed. "
+                "Turning this on lets the engine use model-derived prices (double chance, totals, DNB, handicaps). "
+                "Those legs are labelled 'Estimate' and are not real market prices."
+            ),
+        )
 
-    if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Ticket Win Prob ≥ {sel_min_acc_pct}%)", type="primary", use_container_width=True, key="cloud_btn_combo"):
-        with st.spinner(f"Scanning fixtures for {sel_legs}-leg slips at ≥ {sel_min_acc_pct}% joint probability…"):
+    if ev_mode:
+        button_label = f"⚡ Generate {sel_legs}-Team Value Slip (Edge ≥ {sel_min_edge_pct}%, Odds ≥ {sel_odds_floor:.2f})"
+        spinner_label = f"Comparing model probabilities with de-vigged betPawa prices for {sel_legs}-leg value slips…"
+    else:
+        button_label = f"⚡ Generate {sel_legs}-Team Daily Slip (Ticket Win Prob ≥ {sel_min_acc_pct}%)"
+        spinner_label = f"Scanning fixtures for {sel_legs}-leg slips at ≥ {sel_min_acc_pct}% joint probability…"
+
+    if st.button(button_label, type="primary", use_container_width=True, key="cloud_btn_combo"):
+        with st.spinner(spinner_label):
             db_combo = _db()
             try:
                 c_data = generate_high_confidence_combos(
@@ -671,10 +716,12 @@ with tab_portfolio:
                     target_date=target_date_val,
                     num_legs=sel_legs,
                     min_leg_prob=sel_min_leg_prob,
-                    min_accumulator_prob=sel_min_acc_prob,
-                    min_total_odds=2.00,  # Always enforce odds >= 2.00
+                    min_accumulator_prob=None if ev_mode else sel_min_acc_prob,
+                    min_total_odds=sel_odds_floor,
                     bankroll=sel_combo_bankroll,
                     require_market_odds=not allow_est_odds,
+                    selection_mode="ev" if ev_mode else "certainty",
+                    min_edge_percent=sel_min_edge_prob * 100.0,
                 )
             finally:
                 db_combo.close()
@@ -689,12 +736,32 @@ with tab_portfolio:
                 )
                 gate_active = odds_policy.get("require_market_odds", True)
 
-                st.markdown(
-                    f"""
+                if ev_mode:
+                    card = f"""
+                    <div class="fie-empty">
+                        <h4>No {sel_legs}-team value slip for {matchday_hdr}</h4>
+                        <p style="margin:0;color:#94A3B8;font-size:13px;">
+                            No priced leg beat the vig-free market probability by at least
+                            <strong>{sel_min_edge_pct}%</strong> while rating ≥ {sel_min_leg_pct}% model confidence.
+                        </p>
+                        <div class="fie-funnel">
+                            <div><span>FIXTURES SCANNED</span><strong>{diag.get('fixtures_in_scope', 0)}</strong></div>
+                            <div><span>WITH MULTI-MARKET PRICES</span><strong>{diag.get('fixtures_with_priced_markets', 0)}</strong></div>
+                            <div><span>PRICED LEGS CHECKED</span><strong>{diag.get('priced_legs', 0)}</strong></div>
+                            <div><span>VALUE LEGS</span><strong>{diag.get('candidate_legs', 0)}</strong></div>
+                        </div>
+                        <p style="margin:10px 0 0;color:#64748B;font-size:12px;">
+                            Best edge seen: {diag.get('best_edge_percent', 0):+.1f}% &nbsp;·&nbsp;
+                            Slips built: {diag.get('combos_generated', 0)}
+                        </p>
+                    </div>
+                    """
+                else:
+                    card = f"""
                     <div class="fie-empty">
                         <h4>No qualifying {sel_legs}-team slip for {matchday_hdr}</h4>
                         <p style="margin:0;color:#94A3B8;font-size:13px;">
-                            Rules applied together: every leg ≥ {sel_min_leg_pct}% · joint probability ≥ {sel_min_acc_pct}% · total odds ≥ 2.00.
+                            Rules applied together: every leg ≥ {sel_min_leg_pct}% · joint probability ≥ {sel_min_acc_pct}% · total odds ≥ {sel_odds_floor:.2f}.
                         </p>
                         <div class="fie-funnel">
                             <div><span>FIXTURES SCANNED</span><strong>{diag.get('fixtures_in_scope', 0)}</strong></div>
@@ -703,24 +770,34 @@ with tab_portfolio:
                             <div><span>SLIPS BUILT</span><strong>{diag.get('combos_generated', 0)}</strong></div>
                         </div>
                     </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                if gate_active and excluded_estimates:
+                    """
+
+                st.markdown(card, unsafe_allow_html=True)
+                if not ev_mode and gate_active and excluded_estimates:
                     st.caption(
                         f"🔒 Market-price gate is on — {excluded_estimates} model-derived leg(s) were rejected. "
                         "Enable estimated odds to widen the search (research only)."
                     )
                 with st.expander("Why no slip? (the maths)"):
-                    st.markdown(
-                        "A joint 85% probability across 3 legs means each leg must win about **95%** of the time. "
-                        "At fair prices a 95% favourite pays ~1.05, so three of them multiply to only ~1.16 — "
-                        "far below the 2.00 odds floor. **The joint-probability rule and the odds floor pull in "
-                        "opposite directions**, so qualifying slips are genuinely rare. This is the engine being "
-                        "honest rather than lowering the bar.\n\n"
-                        "Options: switch to a 2-team slip, lower the joint threshold (not allowed in strict mode), "
-                        "or add more markets so the safest selections have real bookmaker prices."
-                    )
+                    if ev_mode:
+                        st.markdown(
+                            "Value mode only bets when the model's probability is **higher than the "
+                            "bookmaker's vig-free probability**. When the feed and the model agree, there "
+                            "is no edge, and the honest answer is no slip.\n\n"
+                            "Options: lower the minimum edge, lower the leg-probability floor, switch to a "
+                            "2-team ticket, or widen the matchday. More priced markets (double chance, "
+                            "totals, BTTS, handicaps) mean more legs to compare."
+                        )
+                    else:
+                        st.markdown(
+                            "A joint 85% probability across 3 legs means each leg must win about **95%** of the time. "
+                            "At fair prices a 95% favourite pays ~1.05, so three of them multiply to only ~1.16 — "
+                            "far below the 2.00 odds floor. **The joint-probability rule and the odds floor pull in "
+                            "opposite directions**, so qualifying slips are genuinely rare. This is the engine being "
+                            "honest rather than lowering the bar.\n\n"
+                            "Options: switch to a 2-team slip, lower the joint threshold (not allowed in strict mode), "
+                            "or use Value mode, which bets on edge rather than certainty."
+                        )
             else:
                 st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
                 
@@ -735,6 +812,19 @@ with tab_portfolio:
                         f"{l['selection']} @ {l['odds']:.2f} ({l['probability']*100:.1f}%)"
                         for l in combo_obj["legs"]
                     )
+                    if ev_mode:
+                        edge_note = (
+                            f"💡 <em>Value slip</em>: every leg's model probability beats the vig-free "
+                            f"market probability. Joint probability is {acc_p:.0f}% at {combo_obj['total_odds']:.2f} odds, "
+                            f"giving {combo_obj['expected_value_percent']:+.1f}% expected value."
+                        )
+                    else:
+                        edge_note = (
+                            f"💡 <em>Why Accumulator Win Prob is ~{acc_p:.0f}% while each team is {avg_p:.0f}%+</em>: "
+                            f"Every individual team is an ultra-safe banker (avg {avg_p:.0f}%+ win rate). When independent "
+                            f"events multiply (e.g. 90% × 90% × 90% ≈ 73%), the joint ticket has lower probability — but "
+                            f"because bookmakers only need 50% implied probability for odds of 2.00, this can still be +EV."
+                        )
                     st.markdown(f"""
                     <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 16px; margin-top: 10px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
@@ -751,7 +841,7 @@ with tab_portfolio:
                             <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 18px; color: #FFBB33;">{format_stake_dual(combo_obj['kelly_stake_amount'], sel_currency)} ({combo_obj['kelly_stake_percent']}%)</strong></div>
                         </div>
                         <div style="background:#0A180A; border-left: 3px solid #00C851; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #AAA; margin-bottom: 12px;">
-                            💡 <em>Why Accumulator Win Prob is ~{acc_p:.0f}% while each team is {avg_p:.0f}%+</em>: Every individual team is an ultra-safe banker (avg {avg_p:.0f}%+ win rate). When independent events multiply (e.g. 90% × 90% × 90% ≈ 73%), the joint ticket has lower probability — but because bookmakers only need 50% implied probability for odds of 2.00, this guarantees a massive mathematical edge (+EV)!
+                            {edge_note}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -772,6 +862,7 @@ with tab_portfolio:
                         "Odds": f"{l['odds']:.2f}",
                         "Price Source": "🏦 Market" if l.get("odds_source") == "market" else "🧮 Estimate",
                         "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
+                        "Edge vs Market": f"{l['edge_percent']:+.1f}%" if l.get("edge_percent") is not None else "—",
                         "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],
                         "League": l["competition"],
                     } for i, l in enumerate(combo_obj["legs"])])

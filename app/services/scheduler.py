@@ -21,6 +21,19 @@ def _job_live():
     except Exception as e:
         logger.error(f"[Scheduler] Live feed error: {e}")
 
+    try:
+        from app.database import get_db
+        from app.services.betpawa_feed import ingest_betpawa_odds
+        db = next(get_db())
+        res = ingest_betpawa_odds(db)
+        db.close()
+        logger.info(
+            f"[Scheduler] betPawa odds synced: {res['matched_existing']} refreshed, "
+            f"{res['inserted_new']} new fixtures."
+        )
+    except Exception as e:
+        logger.error(f"[Scheduler] betPawa feed error: {e}")
+
 def _job_results():
     try:
         from app.database import get_db

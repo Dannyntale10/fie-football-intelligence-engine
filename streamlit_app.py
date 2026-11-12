@@ -334,74 +334,78 @@ with tab_portfolio:
             else:
                 st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
                 
-                # Banker Slip Banner Card
-                avg_p_val = best.get('avg_leg_probability', best.get('combined_probability', 0)) * 100
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
-                        <div>
-                            <h3 style="margin: 0; color: #00C851;">🏆 TOP DAILY BANKER MULTI-BET ({best['legs_count']} TEAMS)</h3>
-                            <span style="color: #AAA; font-size: 14px;">📅 Matchday: <strong>{matchday_hdr}</strong> (All games finish same day)</span>
+                # Helper to render full screenshot-styled combo card + table
+                def _render_full_combo_display(combo_obj: dict, title_text: str, prefix_key: str):
+                    avg_p = combo_obj.get('avg_leg_probability', combo_obj.get('combined_probability', 0)) * 100
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 16px; margin-top: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
+                            <div>
+                                <h3 style="margin: 0; color: #00C851;">🏆 {title_text} ({combo_obj['legs_count']} TEAMS)</h3>
+                                <span style="color: #AAA; font-size: 14px;">📅 Matchday: <strong>{matchday_hdr}</strong> (All games finish same day)</span>
+                            </div>
+                            <span style="font-size: 24px; font-weight: bold; background: #00C851; color: #000; padding: 4px 16px; border-radius: 8px;">ODDS {combo_obj['total_odds']:.2f}</span>
                         </div>
-                        <span style="font-size: 24px; font-weight: bold; background: #00C851; color: #000; padding: 4px 16px; border-radius: 8px;">ODDS {best['total_odds']:.2f}</span>
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
+                            <div><span style="color: #888; font-size: 12px;">AVG TEAM CONFIDENCE</span><br><strong style="font-size: 20px; color: #00C851;">{avg_p:.1f}% (Bankers)</strong></div>
+                            <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #FFF;">{combo_obj['combined_probability']*100:.1f}%</strong></div>
+                            <div><span style="color: #888; font-size: 12px;">EXPECTED VALUE (+EV)</span><br><strong style="font-size: 20px; color: #00C851;">{combo_obj['expected_value_percent']:+.1f}% EV</strong></div>
+                            <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 18px; color: #FFBB33;">{format_stake_dual(combo_obj['kelly_stake_amount'], sel_currency)} ({combo_obj['kelly_stake_percent']}%)</strong></div>
+                        </div>
                     </div>
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
-                        <div><span style="color: #888; font-size: 12px;">AVG TEAM CONFIDENCE</span><br><strong style="font-size: 20px; color: #00C851;">{avg_p_val:.1f}% (Bankers)</strong></div>
-                        <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #FFF;">{best['combined_probability']*100:.1f}%</strong></div>
-                        <div><span style="color: #888; font-size: 12px;">EXPECTED VALUE (+EV)</span><br><strong style="font-size: 20px; color: #00C851;">{best['expected_value_percent']:+.1f}% EV</strong></div>
-                        <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 18px; color: #FFBB33;">{format_stake_dual(best['kelly_stake_amount'], sel_currency)} ({best['kelly_stake_percent']}%)</strong></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
+
+                    # Table of Legs
+                    l_df = pd.DataFrame([{
+                        "Leg": f"Leg #{i+1}",
+                        "Match": l["match"],
+                        "Selection": l["selection"],
+                        "Market Type": l["market_type"],
+                        "Odds": f"{l['odds']:.2f}",
+                        "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
+                        "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],
+                        "League": l["competition"],
+                    } for i, l in enumerate(combo_obj["legs"])])
+                    st.dataframe(l_df, use_container_width=True, hide_index=True)
+
+                    # Formatted Booking Text to copy
+                    s_text = f"🔥 FIE {combo_obj['legs_count']}-TEAM SLIP (Total Odds: {combo_obj['total_odds']:.2f} | Avg Win Prob: {avg_p:.1f}%)\n"
+                    for i, l in enumerate(combo_obj["legs"], 1):
+                        s_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f} (Prob: {l['probability']*100:.1f}%) [{l['kickoff_eat']}]\n"
+                    s_text += f"Total Odds: {combo_obj['total_odds']:.2f} | Kelly Stake: {format_stake_dual(combo_obj['kelly_stake_amount'], sel_currency)}"
+                    st.text_area("📋 Copy Booking Slip Text", s_text, height=110, key=f"{prefix_key}_text")
+
+                    # Download Buttons
+                    b_pdf_col, b_txt_col = st.columns(2)
+                    with b_pdf_col:
+                        try:
+                            pdf_b = generate_combo_pdf(combo_obj, matchday_hdr, bankroll=sel_combo_bankroll, currency=sel_currency)
+                            if pdf_b:
+                                st.download_button(
+                                    "📄 Download PDF Slip",
+                                    data=pdf_b,
+                                    file_name=f"fie_{prefix_key}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"{prefix_key}_dl_pdf"
+                                )
+                        except Exception:
+                            pass
+                    with b_txt_col:
+                        txt_b = generate_text_slip(combo_obj, matchday_hdr, currency=sel_currency)
+                        st.download_button(
+                            "📋 Download Text Slip",
+                            data=txt_b.encode("utf-8"),
+                            file_name=f"fie_{prefix_key}.txt",
+                            mime="text/plain",
+                            use_container_width=True,
+                            key=f"{prefix_key}_dl_txt"
+                        )
+
+                # Render Top Daily Banker Slip
+                _render_full_combo_display(best, f"TOP DAILY BANKER MULTI-BET", "top_banker")
 
                 st.info("💡 **Why Accumulator Win Prob is ~55-65% while each team is 85%+**: Every individual team is an ultra-safe banker (averaging 88%+ win rate). When independent events multiply together (e.g. 88% × 88% × 88% = 68%), the joint ticket has ~60% probability. Because bookmakers only require 50% implied probability for odds of 2.00, this guarantees a massive mathematical edge (+EV)!")
-
-                # Table of Legs
-                legs_df = pd.DataFrame([{
-                    "Leg": f"Leg #{i+1}",
-                    "Match": l["match"],
-                    "Selection": l["selection"],
-                    "Market Type": l["market_type"],
-                    "Odds": f"{l['odds']:.2f}",
-                    "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
-                    "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],
-                    "League": l["competition"],
-                } for i, l in enumerate(best["legs"])])
-                st.dataframe(legs_df, use_container_width=True, hide_index=True)
-
-                # Formatted Booking Text to copy
-                slip_text = f"🔥 FIE {best['legs_count']}-TEAM BANKER SLIP (Total Odds: {best['total_odds']:.2f} | Avg Team Win Prob: {avg_p_val:.1f}%)\n"
-                for i, l in enumerate(best["legs"], 1):
-                    slip_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f} (Prob: {l['probability']*100:.1f}%) [{l['kickoff_eat']}]\n"
-                slip_text += f"Total Odds: {best['total_odds']:.2f} | Kelly Stake: {format_stake_dual(best['kelly_stake_amount'], sel_currency)}"
-                st.text_area("📋 Copy Booking Slip Text", slip_text, height=130, key="cloud_slip_text")
-
-                # PDF & Text Slip Download buttons
-                btn_pdf_col, btn_txt_col = st.columns(2)
-                with btn_pdf_col:
-                    try:
-                        pdf_data = generate_combo_pdf(best, matchday_hdr, bankroll=sel_combo_bankroll, currency=sel_currency)
-                        if pdf_data:
-                            st.download_button(
-                                "📄 Download Branded PDF Slip",
-                                data=pdf_data,
-                                file_name=f"fie_ticket_{target_date_val or 'today'}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                                key="btn_download_pdf"
-                            )
-                    except Exception:
-                        pass
-                with btn_txt_col:
-                    txt_slip = generate_text_slip(best, matchday_hdr, currency=sel_currency)
-                    st.download_button(
-                        "📋 Download Text Slip",
-                        data=txt_slip.encode("utf-8"),
-                        file_name=f"fie_ticket_{target_date_val or 'today'}.txt",
-                        mime="text/plain",
-                        use_container_width=True,
-                        key="btn_download_txt"
-                    )
 
                 # AI Combo Explanation
                 combo_explain = gemini_combo_explanation(
@@ -414,14 +418,15 @@ with tab_portfolio:
                 )
                 st.info(combo_explain)
 
-                # Alternative Combos
+                # Alternative Combos (Rendered in full screenshot card + table style!)
                 alts = c_data.get("alternatives", [])
                 if alts:
-                    with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ {sel_min_odds:.2f})"):
+                    with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ {sel_min_odds:.2f})", expanded=True):
+                        st.write("Browse alternative high-confidence multi-bet slips generated for this matchday:")
                         for idx, alt in enumerate(alts, 2):
-                            alt_avg = alt.get('avg_leg_probability', 0) * 100
-                            st.write(f"**Combo Option #{idx}** — Odds: `{alt['total_odds']:.2f}` | Avg Team Prob: `{alt_avg:.1f}%` (Banker) | Joint Win Prob: `{alt['combined_probability']*100:.1f}%` | EV: `+{alt['expected_value_percent']:.1f}%`")
-                            st.caption(" • ".join([f"{l['selection']} @ {l['odds']:.2f} ({l['probability']*100:.1f}%)" for l in alt["legs"]]))
+                            _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"alt_combo_{idx}")
+                            if idx < len(alts) + 1:
+                                st.markdown("<hr style='border: 1px dashed #2A4A2A; margin: 25px 0;'>", unsafe_allow_html=True)
 
     st.markdown("---")
     # ── MATCHES FOR SELECTED DAY ──────────────────────────────────────────────

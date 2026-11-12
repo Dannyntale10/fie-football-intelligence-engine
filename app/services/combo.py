@@ -221,8 +221,8 @@ def generate_high_confidence_combos(
 
         # 6. Team to score at least 1 goal (Team Over 0.5) - Banker safety (88-92%+)
         p_ho05 = probs.get("home_over_0_5", 0.0)
-        if p_ho05 >= max(0.85, cand_thresh) and h_odds and h_odds <= 1.45:
-            t_odds = round(max(1.10, min(1.28, 1.0 / (p_ho05 * 0.94))), 2)
+        if p_ho05 >= max(0.85, cand_thresh) and h_odds and h_odds <= 1.50:
+            t_odds = round(max(1.10, min(1.30, 1.0 / (p_ho05 * 0.94))), 2)
             candidates.append({
                 "fixture_id": f.id,
                 "match": f"{f.home_team} vs {f.away_team}",
@@ -238,8 +238,8 @@ def generate_high_confidence_combos(
             })
 
         p_ao05 = probs.get("away_over_0_5", 0.0)
-        if p_ao05 >= max(0.85, cand_thresh) and a_odds and a_odds <= 1.45:
-            t_odds = round(max(1.10, min(1.28, 1.0 / (p_ao05 * 0.94))), 2)
+        if p_ao05 >= max(0.85, cand_thresh) and a_odds and a_odds <= 1.50:
+            t_odds = round(max(1.10, min(1.30, 1.0 / (p_ao05 * 0.94))), 2)
             candidates.append({
                 "fixture_id": f.id,
                 "match": f"{f.home_team} vs {f.away_team}",
@@ -254,21 +254,71 @@ def generate_high_confidence_combos(
                 "kickoff_eat": _format_eat(f.kickoff_utc),
             })
 
-    # Search combinations for requested leg count (strictly 2 or 3 teams, max 3)
+        # 7. Match Goals Over 1.5 (High safety, prob 70-85%+, odds 1.25-1.55)
+        p_o15 = probs.get("over_1_5", 0.0)
+        if p_o15 >= cand_thresh:
+            o15_odds = round(max(1.22, min(1.65, 1.0 / (p_o15 * 0.93))), 2)
+            candidates.append({
+                "fixture_id": f.id,
+                "match": f"{f.home_team} vs {f.away_team}",
+                "competition": f.competition,
+                "team": f"{f.home_team} / {f.away_team}",
+                "selection": "Over 1.5 Match Goals",
+                "market_key": "over_1_5",
+                "market_type": "Total Goals (Over 1.5)",
+                "odds": o15_odds,
+                "probability": p_o15,
+                "kickoff_utc": f.kickoff_utc.isoformat(),
+                "kickoff_eat": _format_eat(f.kickoff_utc),
+            })
+
+        # 8. Draw No Bet (DNB)
+        p_hw_all = probs.get("home_win", 0.0)
+        p_aw_all = probs.get("away_win", 0.0)
+        if p_hw_all + p_aw_all > 0:
+            dnb_h_p = round(p_hw_all / (p_hw_all + p_aw_all), 4)
+            if dnb_h_p >= cand_thresh and h_odds and h_odds >= 1.30 and d_odds:
+                dnb_h_odds = round(max(1.18, min(2.10, h_odds * (1.0 - 1.0/d_odds))), 2)
+                candidates.append({
+                    "fixture_id": f.id,
+                    "match": f"{f.home_team} vs {f.away_team}",
+                    "competition": f.competition,
+                    "team": f.home_team,
+                    "selection": f"{f.home_team} Draw No Bet (DNB)",
+                    "market_key": "dnb_home",
+                    "market_type": "Draw No Bet (DNB)",
+                    "odds": dnb_h_odds,
+                    "probability": dnb_h_p,
+                    "kickoff_utc": f.kickoff_utc.isoformat(),
+                    "kickoff_eat": _format_eat(f.kickoff_utc),
+                })
+            dnb_a_p = round(p_aw_all / (p_hw_all + p_aw_all), 4)
+            if dnb_a_p >= cand_thresh and a_odds and a_odds >= 1.30 and d_odds:
+                dnb_a_odds = round(max(1.18, min(2.10, a_odds * (1.0 - 1.0/d_odds))), 2)
+                candidates.append({
+                    "fixture_id": f.id,
+                    "match": f"{f.home_team} vs {f.away_team}",
+                    "competition": f.competition,
+                    "team": f.away_team,
+                    "selection": f"{f.away_team} Draw No Bet (DNB)",
+                    "market_key": "dnb_away",
+                    "market_type": "Draw No Bet (DNB)",
+                    "odds": dnb_a_odds,
+                    "probability": dnb_a_p,
+                    "kickoff_utc": f.kickoff_utc.isoformat(),
+                    "kickoff_eat": _format_eat(f.kickoff_utc),
+                })
+
+    # Search combinations for requested leg count (strictly 2 or 3 teams)
     k = max(2, min(3, num_legs))
     combos: List[Dict[str, Any]] = []
 
-    # Strictly 2 or 3 teams only to respect max 3-team multi-bet constraint
-    leg_counts_to_try = [k]
-    for alt_k in [3, 2]:
-        if alt_k not in leg_counts_to_try:
-            leg_counts_to_try.append(alt_k)
-
-    for try_k in leg_counts_to_try:
-        for combo_legs in itertools.combinations(candidates, try_k):
+    def _eval_combos(legs_k: int, min_odds: float) -> List[Dict[str, Any]]:
+        found = []
+        for combo_legs in itertools.combinations(candidates, legs_k):
             # Ensure distinct fixtures
             fixture_ids = {leg["fixture_id"] for leg in combo_legs}
-            if len(fixture_ids) < try_k:
+            if len(fixture_ids) < legs_k:
                 continue
 
             tot_odds = 1.0
@@ -280,8 +330,7 @@ def generate_high_confidence_combos(
             tot_odds = round(tot_odds, 2)
             tot_prob = round(tot_prob, 4)
 
-            # Accept combos that hit min_total_odds
-            if tot_odds >= min_total_odds and tot_odds <= max_total_odds:
+            if tot_odds >= min_odds and tot_odds <= max_total_odds:
                 implied_prob = round(1.0 / tot_odds, 4)
                 ev = round(((tot_prob * tot_odds) - 1.0) * 100, 2)
                 edge = round((tot_prob - implied_prob) * 100, 2)
@@ -296,8 +345,8 @@ def generate_high_confidence_combos(
                     max_stake_percent=5.0,
                 )
 
-                combos.append({
-                    "legs_count": try_k,
+                found.append({
+                    "legs_count": legs_k,
                     "total_odds": tot_odds,
                     "combined_probability": tot_prob,
                     "avg_leg_probability": avg_prob,
@@ -309,9 +358,21 @@ def generate_high_confidence_combos(
                     "kelly_stake_percent": kelly.get("stake_percent", 0.0),
                     "legs": list(combo_legs),
                 })
+        return found
 
-        if len(combos) >= 5 and try_k >= k:
-            break
+    # 1. Strictly look for requested leg count (k) at target min_total_odds
+    combos = _eval_combos(k, min_total_odds)
+
+    # 2. If no combos hit min_total_odds at requested k, look at slightly relaxed odds for k (e.g. 1.75+)
+    if not combos:
+        combos = _eval_combos(k, max(1.60, min_total_odds * 0.85))
+
+    # 3. Only if still no combos exist for requested k, consider alternative leg count
+    if not combos:
+        alt_k = 3 if k == 2 else 2
+        combos = _eval_combos(alt_k, min_total_odds)
+        if not combos:
+            combos = _eval_combos(alt_k, max(1.60, min_total_odds * 0.85))
 
     # Sort combos by highest average team confidence, then highest joint win probability, then EV
     combos.sort(

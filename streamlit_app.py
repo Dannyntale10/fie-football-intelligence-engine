@@ -391,7 +391,7 @@ with tab_portfolio:
                     num_legs=sel_legs,
                     min_leg_prob=sel_min_leg_prob,
                     min_accumulator_prob=sel_min_acc_prob,
-                    min_total_odds=1.15 if sel_min_acc_prob >= 0.80 else 2.00,
+                    min_total_odds=2.00,  # Always enforce odds >= 2.00
                     bankroll=sel_combo_bankroll,
                 )
             finally:
@@ -407,20 +407,31 @@ with tab_portfolio:
                 # Helper to render full screenshot-styled combo card + table
                 def _render_full_combo_display(combo_obj: dict, title_text: str, prefix_key: str):
                     avg_p = combo_obj.get('avg_leg_probability', combo_obj.get('combined_probability', 0)) * 100
+                    acc_p = combo_obj['combined_probability'] * 100
+                    n_teams = combo_obj['legs_count']
+                    team_label = "Banker" if avg_p >= 85 else "High Conf"
+                    # Legs bullet summary (inline like screenshot)
+                    legs_bullets = " • ".join(
+                        f"{l['selection']} @ {l['odds']:.2f} ({l['probability']*100:.1f}%)"
+                        for l in combo_obj["legs"]
+                    )
                     st.markdown(f"""
                     <div style="background: linear-gradient(135deg, #1A2E1A 0%, #0E1A14 100%); border: 2px solid #00C851; border-radius: 12px; padding: 20px; margin-bottom: 16px; margin-top: 10px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A4A2A; padding-bottom: 12px; margin-bottom: 15px;">
                             <div>
-                                <h3 style="margin: 0; color: #00C851;">🏆 {title_text} ({combo_obj['legs_count']} TEAMS)</h3>
+                                <h3 style="margin: 0; color: #00C851;">🏆 {title_text} ({n_teams} TEAMS)</h3>
                                 <span style="color: #AAA; font-size: 14px;">📅 Matchday: <strong>{matchday_hdr}</strong> (All games finish same day)</span>
                             </div>
                             <span style="font-size: 24px; font-weight: bold; background: #00C851; color: #000; padding: 4px 16px; border-radius: 8px;">ODDS {combo_obj['total_odds']:.2f}</span>
                         </div>
                         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
-                            <div><span style="color: #888; font-size: 12px;">AVG TEAM CONFIDENCE</span><br><strong style="font-size: 20px; color: #00C851;">{avg_p:.1f}% (Bankers)</strong></div>
-                            <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #00C851;">{combo_obj['combined_probability']*100:.1f}% (Banker)</strong></div>
+                            <div><span style="color: #888; font-size: 12px;">AVG TEAM CONFIDENCE</span><br><strong style="font-size: 20px; color: #00C851;">{avg_p:.1f}% ({team_label})</strong></div>
+                            <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #00C851;">{acc_p:.1f}%</strong></div>
                             <div><span style="color: #888; font-size: 12px;">EXPECTED VALUE (+EV)</span><br><strong style="font-size: 20px; color: #00C851;">{combo_obj['expected_value_percent']:+.1f}% EV</strong></div>
                             <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 18px; color: #FFBB33;">{format_stake_dual(combo_obj['kelly_stake_amount'], sel_currency)} ({combo_obj['kelly_stake_percent']}%)</strong></div>
+                        </div>
+                        <div style="background:#0A180A; border-left: 3px solid #00C851; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #AAA; margin-bottom: 12px;">
+                            💡 <em>Why Accumulator Win Prob is ~{acc_p:.0f}% while each team is {avg_p:.0f}%+</em>: Every individual team is an ultra-safe banker (avg {avg_p:.0f}%+ win rate). When independent events multiply (e.g. 90% × 90% × 90% ≈ 73%), the joint ticket has lower probability — but because bookmakers only need 50% implied probability for odds of 2.00, this guarantees a massive mathematical edge (+EV)!
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -433,7 +444,6 @@ with tab_portfolio:
                         "Market Type": l["market_type"],
                         "Odds": f"{l['odds']:.2f}",
                         "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
-                        "AI Squad / Injury Check": l.get("ai_squad", {}).get("badge", "✅ Approved Banker"),
                         "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],
                         "League": l["competition"],
                     } for i, l in enumerate(combo_obj["legs"])])
@@ -504,10 +514,28 @@ with tab_portfolio:
                                     else:
                                         st.error(f"WhatsApp Error: {res_wa.get('error')}")
 
+                # Helper to render a compact summary row for alternative combos (like the screenshot)
+                def _render_alt_combo_summary(combo_obj: dict, option_num: int):
+                    """Renders a compact inline summary card for an alternative combo (screenshot-style)."""
+                    avg_p = combo_obj.get('avg_leg_probability', combo_obj.get('combined_probability', 0)) * 100
+                    acc_p = combo_obj['combined_probability'] * 100
+                    team_label = "Banker" if avg_p >= 85 else "High Conf"
+                    legs_inline = " • ".join(
+                        f"<strong>{l['selection']}</strong> @ {l['odds']:.2f} ({l['probability']*100:.1f}%)"
+                        for l in combo_obj["legs"]
+                    )
+                    st.markdown(f"""
+                    <div style="background: #111E11; border: 1px solid #2A5A2A; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                            <span style="color:#00C851; font-size:15px; font-weight:700;">Combo Option #{option_num} — Odds: {combo_obj['total_odds']:.2f}</span>
+                            <span style="font-size:12px; color:#AAA;">Avg Team Prob: {avg_p:.1f}% ({team_label}) &nbsp;|&nbsp; Joint Win Prob: {acc_p:.1f}% &nbsp;|&nbsp; EV: {combo_obj['expected_value_percent']:+.1f}%</span>
+                        </div>
+                        <div style="font-size:13px; color:#CCC; line-height: 1.8;">{legs_inline}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
                 # Render Top Daily Banker Slip
                 _render_full_combo_display(best, f"TOP DAILY BANKER MULTI-BET", "top_banker")
-
-                st.info("💡 **Why Accumulator Win Prob is ~55-65% while each team is 85%+**: Every individual team is an ultra-safe banker (averaging 88%+ win rate). When independent events multiply together (e.g. 88% × 88% × 88% = 68%), the joint ticket has ~60% probability. Because bookmakers only require 50% implied probability for odds of 2.00, this guarantees a massive mathematical edge (+EV)!")
 
                 # AI Combo Explanation
                 combo_explain = gemini_combo_explanation(
@@ -520,15 +548,19 @@ with tab_portfolio:
                 )
                 st.info(combo_explain)
 
-                # Alternative Combos (Rendered in full screenshot card + table style!)
+                # Alternative Combos — compact screenshot-style summary cards + expandable full view
                 alts = c_data.get("alternatives", [])
                 if alts:
-                    with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ {sel_min_odds:.2f})", expanded=True):
+                    with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ 2.00)", expanded=True):
                         st.write("Browse alternative high-confidence multi-bet slips generated for this matchday:")
+                        # First render all as compact summary cards (like the screenshot)
                         for idx, alt in enumerate(alts, 2):
-                            _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"alt_combo_{idx}")
-                            if idx < len(alts) + 1:
-                                st.markdown("<hr style='border: 1px dashed #2A4A2A; margin: 25px 0;'>", unsafe_allow_html=True)
+                            _render_alt_combo_summary(alt, idx)
+                        st.markdown("<hr style='border: 1px dashed #2A4A2A; margin: 18px 0;'>", unsafe_allow_html=True)
+                        # Then allow expanding each for full detail
+                        for idx, alt in enumerate(alts, 2):
+                            with st.expander(f"📋 Full Detail — Combo Option #{idx} (Odds {alt['total_odds']:.2f})", expanded=False):
+                                _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"alt_combo_{idx}")
 
     st.markdown("---")
     # ── MATCHES FOR SELECTED DAY ──────────────────────────────────────────────

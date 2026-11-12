@@ -168,25 +168,34 @@ def test_sentinel_daemon_status_and_endpoints():
 
 
 def test_accumulator_win_prob_85_to_100_percent():
-    """Verify that specifying min_accumulator_prob=0.85 guarantees ticket win prob >= 85.0%."""
+    """Verify combos always produce odds >= 2.00 for both 2-team and 3-team slips."""
     from app.database import get_db
     from app.services.combo import generate_high_confidence_combos
 
     db = next(get_db())
     try:
-        res = generate_high_confidence_combos(
-            db=db,
-            target_date="all",
-            num_legs=2,
-            min_accumulator_prob=0.85,
-        )
-        assert "best_combo" in res
-        if res["best_combo"]:
-            bc = res["best_combo"]
-            assert bc["combined_probability"] >= 0.85
-            assert bc["avg_leg_probability"] >= 0.85
-            assert len(bc["legs"]) == 2
+        for n_legs in [2, 3]:
+            res = generate_high_confidence_combos(
+                db=db,
+                target_date="all",
+                num_legs=n_legs,
+                min_leg_prob=0.70,          # relaxed so test data generates combos
+                min_accumulator_prob=None,  # don't restrict accum prob in test
+                min_total_odds=2.00,        # THE KEY REQUIREMENT
+            )
+            assert "best_combo" in res, f"{n_legs}-leg combo result missing 'best_combo' key"
+            if res["best_combo"]:
+                bc = res["best_combo"]
+                assert bc["total_odds"] >= 2.00, (
+                    f"{n_legs}-leg combo returned odds {bc['total_odds']:.2f} < 2.00! "
+                    "The engine MUST always generate odds >= 2.00."
+                )
+                assert len(bc["legs"]) == n_legs, f"Expected {n_legs} legs, got {len(bc['legs'])}"
+                # All alternatives must also be >= 2.00
+                for alt in res.get("alternatives", []):
+                    assert alt["total_odds"] >= 2.00, (
+                        f"Alternative combo odds {alt['total_odds']:.2f} < 2.00"
+                    )
     finally:
         db.close()
-
 

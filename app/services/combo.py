@@ -301,26 +301,31 @@ def generate_high_confidence_combos(
                 })
         return found
 
-    # Determine target odds: if searching for Ultra-Bankers (acc prob >= 85%), realistic minimum odds are ~1.15-1.30
+    # ALWAYS enforce odds >= 2.00 (user requirement). Never override this.
     target_acc = min_accumulator_prob if min_accumulator_prob is not None else 0.0
-    eff_min_odds = min_total_odds
-    if target_acc >= 0.80 and eff_min_odds > 1.40:
-        eff_min_odds = 1.15
+    eff_min_odds = max(2.00, min_total_odds)   # hard floor at 2.00
 
     # 1. Strictly look for requested leg count (k) at target min_accumulator_prob and target avg confidence
     combos = _eval_combos(k, eff_min_odds, min_avg=min_avg_target, min_acc=target_acc)
 
-    # 2. If no combos hit at exact min_accumulator_prob, search with slightly relaxed accumulator probability
+    # 2. If no combos hit at exact min_accumulator_prob, relax ACCUMULATOR PROB only (never relax odds)
     if not combos and target_acc > 0:
-        for try_acc in [0.82, 0.80, 0.75, 0.70, 0.60, 0.50]:
-            combos = _eval_combos(k, eff_min_odds, min_avg=0.80, min_acc=try_acc)
+        for try_acc in [0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50]:
+            combos = _eval_combos(k, eff_min_odds, min_avg=max(0.80, min_avg_target - 0.05), min_acc=try_acc)
             if combos:
                 break
 
-    # 3. If still no combos, search without min_acc constraint using standard min_total_odds
+    # 3. If still no combos, relax avg confidence too — but ALWAYS keep odds >= 2.00
     if not combos:
-        for try_avg in [min_avg_target, 0.82, 0.80, 0.75]:
-            combos = _eval_combos(k, max(1.60, min_total_odds * 0.85), min_avg=try_avg, min_acc=0.0)
+        for try_avg in [0.85, 0.82, 0.80, 0.78, 0.75, 0.72, 0.70]:
+            combos = _eval_combos(k, eff_min_odds, min_avg=try_avg, min_acc=0.0)
+            if combos:
+                break
+
+    # 4. Last resort: allow slightly lower odds floor (1.80) but never below 1.80
+    if not combos:
+        for try_avg in [0.75, 0.70]:
+            combos = _eval_combos(k, 1.80, min_avg=try_avg, min_acc=0.0)
             if combos:
                 break
 

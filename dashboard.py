@@ -251,7 +251,7 @@ with tab_portfolio:
                         params={
                             "target_date": target_date_val,
                             "num_legs": sel_legs,
-                            "min_total_odds": 1.15 if sel_min_acc_prob >= 0.80 else 2.00,
+                            "min_total_odds": 2.00,  # Always enforce odds >= 2.00
                             "min_leg_prob": sel_min_leg_prob,
                             "min_accumulator_prob": sel_min_acc_prob,
                             "bankroll": sel_combo_bankroll,
@@ -383,15 +383,34 @@ with tab_portfolio:
                             )
                             st.info(combo_explain)
 
-                            # Alternative Combos (Rendered in full screenshot card + table style!)
+                            # Alternative Combos — compact summary cards + expandable full detail
                             alts = c_data.get("alternatives", [])
                             if alts:
-                                with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ {sel_min_odds:.2f})", expanded=True):
+                                with st.expander(f"📦 View {len(alts)} Alternative Combos (Odds ≥ 2.00)", expanded=True):
                                     st.write("Browse alternative high-confidence multi-bet slips generated for this matchday:")
+                                    # Compact summary rows (like the screenshot)
                                     for idx, alt in enumerate(alts, 2):
-                                        _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"dash_alt_combo_{idx}")
-                                        if idx < len(alts) + 1:
-                                            st.markdown("<hr style='border: 1px dashed #2A4A2A; margin: 25px 0;'>", unsafe_allow_html=True)
+                                        avg_p_alt = alt.get('avg_leg_probability', alt.get('combined_probability', 0)) * 100
+                                        acc_p_alt = alt['combined_probability'] * 100
+                                        team_lbl = "Banker" if avg_p_alt >= 85 else "High Conf"
+                                        legs_inline = " • ".join(
+                                            f"<strong>{l['selection']}</strong> @ {l['odds']:.2f} ({l['probability']*100:.1f}%)"
+                                            for l in alt["legs"]
+                                        )
+                                        st.markdown(f"""
+                                        <div style="background:#111E11; border:1px solid #2A5A2A; border-radius:10px; padding:14px 18px; margin-bottom:10px;">
+                                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                                <span style="color:#00C851; font-size:15px; font-weight:700;">Combo Option #{idx} — Odds: {alt['total_odds']:.2f}</span>
+                                                <span style="font-size:12px; color:#AAA;">Avg Team Prob: {avg_p_alt:.1f}% ({team_lbl}) &nbsp;|&nbsp; Joint Win Prob: {acc_p_alt:.1f}% &nbsp;|&nbsp; EV: {alt['expected_value_percent']:+.1f}%</span>
+                                            </div>
+                                            <div style="font-size:13px; color:#CCC; line-height:1.8;">{legs_inline}</div>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                    st.markdown("<hr style='border:1px dashed #2A4A2A; margin:18px 0;'>", unsafe_allow_html=True)
+                                    # Expandable full detail per combo
+                                    for idx, alt in enumerate(alts, 2):
+                                        with st.expander(f"📋 Full Detail — Combo Option #{idx} (Odds {alt['total_odds']:.2f})", expanded=False):
+                                            _render_full_combo_display(alt, f"COMBO OPTION #{idx}", f"dash_alt_combo_{idx}")
                     else:
                         st.error(f"Error generating combos: {c_res.text}")
                 except Exception as e:

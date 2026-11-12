@@ -35,6 +35,15 @@ Base.metadata.create_all(bind=engine)
 # ── Core service imports ──────────────────────────────────────────────────────
 import pandas as pd                                    # noqa: E402
 import streamlit as st                                 # noqa: E402
+
+# ── Secrets bridge: services read env vars, Streamlit Cloud exposes st.secrets ─
+try:
+    for _k, _v in st.secrets.items():
+        if isinstance(_v, str) and _v.strip():
+            os.environ.setdefault(_k, _v)
+except Exception:
+    pass  # no secrets.toml locally — env vars / sidebar inputs are used instead
+
 from sqlalchemy import select, func, delete            # noqa: E402
 from app.services.fixtures import import_fixtures_from_dataframe        # noqa: E402
 from app.services.probabilities import (               # noqa: E402
@@ -87,6 +96,12 @@ from app.services.settlement import (                  # noqa: E402
     get_performance_ledger_summary,
 )
 from app.services.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now  # noqa: E402
+from app.services.betpawa_feed import (  # noqa: E402
+    start_auto_ingest,
+    stop_auto_ingest,
+    get_auto_ingest_status,
+    resolve_refresh_seconds,
+)
 
 
 
@@ -155,8 +170,145 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("⚽ Football Intelligence Engine")
-st.caption("Local-first football research & prediction platform · Cloud Edition v0.3")
+# ═════════════════════════════════════════════════════════════════════════════
+# Theme — modern dark surface, emerald accent
+# ═════════════════════════════════════════════════════════════════════════════
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    .stApp {
+        background:
+            radial-gradient(1100px 520px at 8% -12%, rgba(16,185,129,.12), transparent 60%),
+            radial-gradient(900px 480px at 92% -6%, rgba(56,189,248,.10), transparent 55%),
+            #0B0F14;
+        color: #E5E7EB;
+    }
+    .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1440px; }
+    header[data-testid="stHeader"] { background: transparent; height: 0; }
+    #MainMenu, footer { visibility: hidden; }
+
+    section[data-testid="stSidebar"] {
+        background: #0D131A;
+        border-right: 1px solid rgba(148,163,184,.12);
+    }
+    section[data-testid="stSidebar"] h2 { font-size: 15px; letter-spacing: -.01em; }
+
+    h1, h2, h3, h4 { color: #F8FAFC !important; letter-spacing: -.02em; }
+    h3 { font-size: 20px !important; margin-top: 1.2rem !important; }
+    p, li, .stMarkdown { color: #C7D0DB; }
+    a { color: #38BDF8; }
+
+    /* Hero */
+    .fie-hero {
+        position: relative; overflow: hidden;
+        border-radius: 20px; padding: 24px 26px; margin-bottom: 18px;
+        background: linear-gradient(135deg, rgba(16,185,129,.13), rgba(56,189,248,.05) 48%, rgba(15,23,42,.35));
+        border: 1px solid rgba(148,163,184,.16);
+        box-shadow: 0 24px 60px -38px rgba(0,0,0,.95);
+    }
+    .fie-hero::after {
+        content: ""; position: absolute; width: 340px; height: 340px; right: -90px; top: -190px;
+        border-radius: 50%; background: radial-gradient(circle, rgba(16,185,129,.30), transparent 70%);
+        filter: blur(6px); pointer-events: none;
+    }
+    .fie-hero-row { display: flex; align-items: center; gap: 14px; }
+    .fie-logo {
+        display: inline-flex; width: 46px; height: 46px; border-radius: 14px;
+        align-items: center; justify-content: center; font-size: 23px;
+        background: linear-gradient(135deg, #10B981, #0EA5E9);
+        box-shadow: 0 10px 26px -12px rgba(16,185,129,.85);
+    }
+    .fie-hero h1 { font-size: 27px; font-weight: 800; margin: 0; color: #F8FAFC !important; }
+    .fie-hero .fie-sub { margin: 3px 0 0; color: #94A3B8; font-size: 13.5px; }
+    .fie-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    .fie-chip {
+        font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 999px;
+        background: rgba(148,163,184,.09); border: 1px solid rgba(148,163,184,.18); color: #CBD5E1;
+    }
+    .fie-chip.live { color: #6EE7B7; border-color: rgba(16,185,129,.38); background: rgba(16,185,129,.12); }
+    .fie-chip.off  { color: #94A3B8; }
+    .fie-chip.warn { color: #FCD34D; border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.10); }
+
+    /* Cards */
+    .fie-card {
+        background: rgba(17,24,39,.66); border: 1px solid rgba(148,163,184,.14);
+        border-radius: 16px; padding: 16px 18px;
+    }
+    .fie-eyebrow {
+        text-transform: uppercase; letter-spacing: .16em; font-size: 10.5px;
+        font-weight: 700; color: #64748B;
+    }
+    .fie-empty {
+        background: linear-gradient(135deg, rgba(244,63,94,.09), rgba(15,23,42,.5));
+        border: 1px solid rgba(244,63,94,.28); border-radius: 16px; padding: 20px 22px;
+    }
+    .fie-empty h4 { margin: 0 0 6px; color: #FDA4AF !important; font-size: 17px; }
+    .fie-funnel { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+    .fie-funnel div {
+        background: rgba(15,23,42,.7); border: 1px solid rgba(148,163,184,.12);
+        border-radius: 12px; padding: 10px 12px;
+    }
+    .fie-funnel span { display: block; font-size: 11px; color: #64748B; margin-bottom: 3px; }
+    .fie-funnel strong { font-size: 18px; color: #F1F5F9; }
+
+    /* Metrics */
+    div[data-testid="stMetric"] {
+        background: rgba(17,24,39,.7); border: 1px solid rgba(148,163,184,.14);
+        border-radius: 16px; padding: 14px 16px;
+    }
+    div[data-testid="stMetricLabel"] p { color: #94A3B8 !important; font-size: 12px !important; }
+    div[data-testid="stMetricValue"] { color: #F8FAFC; font-size: 24px !important; }
+
+    /* Controls */
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 12px; border: 1px solid rgba(148,163,184,.22);
+        background: rgba(148,163,184,.07); color: #E2E8F0; font-weight: 600;
+        transition: all .15s ease;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        border-color: rgba(16,185,129,.55); background: rgba(16,185,129,.12); color: #ECFDF5;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #10B981, #059669); border: none; color: #04140E;
+        box-shadow: 0 12px 30px -14px rgba(16,185,129,.9);
+    }
+    .stButton > button[kind="primary"]:hover { filter: brightness(1.06); color: #04140E; }
+
+    .stTextInput input, .stNumberInput input, div[data-baseweb="select"] > div {
+        background: rgba(15,23,42,.65) !important; color: #E2E8F0 !important;
+        border-color: rgba(148,163,184,.18) !important; border-radius: 10px !important;
+    }
+    .stSlider [data-baseweb="slider"] [role="slider"] { background: #10B981 !important; }
+    .stSlider [data-testid="stTickBar"] { display: none; }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px; background: rgba(15,23,42,.55); padding: 6px;
+        border-radius: 14px; border: 1px solid rgba(148,163,184,.12);
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px; padding: 8px 16px; color: #94A3B8; font-weight: 600; font-size: 13.5px;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] { background: rgba(16,185,129,.14); color: #6EE7B7; }
+    .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display: none; }
+
+    /* Containers */
+    div[data-testid="stExpander"] {
+        border: 1px solid rgba(148,163,184,.14); border-radius: 14px;
+        background: rgba(15,23,42,.45); overflow: hidden;
+    }
+    div[data-testid="stDataFrame"] {
+        border: 1px solid rgba(148,163,184,.12); border-radius: 14px; overflow: hidden;
+    }
+    hr { border-color: rgba(148,163,184,.12) !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Auto-Boot 24/7 Background Sentinel (30s Real-Time Bookmaker Sync)
@@ -168,6 +320,75 @@ if not s_status.get("is_running", False):
         s_status = get_sentinel_status()
     except Exception:
         pass
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Auto-Boot betPawa live-odds refresh (runs on startup, then on an interval)
+# ═════════════════════════════════════════════════════════════════════════════
+@st.cache_resource(show_spinner=False)
+def _boot_betpawa_feed() -> bool:
+    try:
+        start_auto_ingest()
+    except Exception:
+        return False
+    return True
+
+
+_boot_betpawa_feed()
+feed_status = get_auto_ingest_status()
+feed_interval = feed_status.get("interval_seconds") or resolve_refresh_seconds()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Hero header
+# ═════════════════════════════════════════════════════════════════════════════
+db_hero = _db()
+now_hero = datetime.now(timezone.utc)
+hero_upcoming = db_hero.scalar(
+    select(func.count(Fixture.id)).where(Fixture.kickoff_utc >= now_hero)
+) or 0
+hero_priced = db_hero.scalar(
+    select(func.count(Fixture.id)).where(
+        Fixture.kickoff_utc >= now_hero,
+        Fixture.home_odds.isnot(None),
+        Fixture.draw_odds.isnot(None),
+        Fixture.away_odds.isnot(None),
+    )
+) or 0
+db_hero.close()
+
+_sentinel_chip = (
+    '<span class="fie-chip live">● Sentinel active</span>'
+    if s_status.get("is_running")
+    else '<span class="fie-chip off">● Sentinel standby</span>'
+)
+if feed_status.get("running"):
+    _feed_chip = f'<span class="fie-chip live">● Odds feed · every {feed_interval}s</span>'
+elif feed_status.get("last_error"):
+    _feed_chip = '<span class="fie-chip warn">● Odds feed error</span>'
+else:
+    _feed_chip = '<span class="fie-chip off">● Odds feed idle</span>'
+
+st.markdown(
+    f"""
+    <div class="fie-hero">
+        <div class="fie-hero-row">
+            <div class="fie-logo">⚽</div>
+            <div>
+                <h1>Football Intelligence Engine</h1>
+                <p class="fie-sub">Dixon-Coles probabilities · live betPawa prices · Kelly-sized slips</p>
+            </div>
+        </div>
+        <div class="fie-chips">
+            {_sentinel_chip}
+            {_feed_chip}
+            <span class="fie-chip">{hero_upcoming:,} upcoming fixtures</span>
+            <span class="fie-chip">{hero_priced:,} with market prices</span>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Sidebar
@@ -212,6 +433,49 @@ with st.sidebar:
                     st.rerun()
                 finally:
                     db_set.close()
+
+    st.divider()
+    st.header("🏦 betPawa Live Odds")
+    feed_status = get_auto_ingest_status()
+    if feed_status.get("running"):
+        st.success(f"🟢 Auto-refresh every **{feed_interval}s**")
+    else:
+        st.info("⚪ Auto-refresh stopped")
+    st.caption(
+        "Fetching live prices…"
+        if feed_status.get("in_progress")
+        else f"Last run: {feed_status.get('last_run_at') or 'starting…'}"
+    )
+    last_res = feed_status.get("last_result") or {}
+    if last_res:
+        st.caption(
+            f"Refreshed {last_res.get('odds_updated', 0)} · "
+            f"new {last_res.get('inserted_new', 0)} · "
+            f"{last_res.get('fetched_events', 0)} events scanned"
+        )
+    if feed_status.get("last_error"):
+        st.caption(f"⚠️ {feed_status['last_error'][:120]}")
+
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
+        if st.button("🔄 Refresh now", use_container_width=True, key="app_btn_feed_now"):
+            with st.spinner("Pulling betPawa prices..."):
+                from app.services.betpawa_feed import _run_ingest_once
+                try:
+                    _run_ingest_once()
+                    st.toast("✅ betPawa odds refreshed.")
+                except Exception as exc:
+                    st.error(f"Feed error: {exc}")
+            st.rerun()
+    with f_col2:
+        if feed_status.get("running"):
+            if st.button("⏸ Stop feed", use_container_width=True, key="app_btn_feed_stop"):
+                stop_auto_ingest()
+                st.rerun()
+        else:
+            if st.button("▶ Start feed", type="primary", use_container_width=True, key="app_btn_feed_start"):
+                start_auto_ingest()
+                st.rerun()
 
     st.divider()
     st.header("📱 WhatsApp Notifications")
@@ -372,11 +636,20 @@ with tab_portfolio:
     with combo_col1:
         sel_legs = st.radio("Number of Teams (Max 3)", [2, 3], index=1, horizontal=True, format_func=lambda x: f"{x}-Team Combo", key="cloud_combo_legs")
     with combo_col2:
-        sel_min_acc_prob = st.slider("Min Accumulator Win Prob", min_value=0.50, max_value=0.98, value=0.85, step=0.01, format="%.0f%%", key="cloud_combo_acc_prob", help="Guarantees the overall ticket win probability is between 85% and 100%!")
+        sel_min_acc_pct = st.slider(
+            "Min Accumulator Win Prob", 85, 98, 85, 1, format="%d%%",
+            key="cloud_combo_acc_prob", help="Strict engine floor is 85%. Raise it to demand a safer joint ticket.",
+        )
     with combo_col3:
-        sel_min_leg_prob = st.slider("Min Team Confidence", min_value=0.80, max_value=0.98, value=0.85, step=0.01, format="%.0f%%", key="cloud_combo_prob")
+        sel_min_leg_pct = st.slider(
+            "Min Team Confidence", 85, 98, 85, 1, format="%d%%",
+            key="cloud_combo_prob", help="Strict engine floor is 85%. Raise it to demand stronger individual legs.",
+        )
     with combo_col4:
-        sel_combo_bankroll = st.number_input("Bankroll ($)", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cloud_combo_bankroll")
+        sel_combo_bankroll = st.number_input("Bankroll", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cloud_combo_bankroll")
+
+    sel_min_acc_prob = sel_min_acc_pct / 100.0
+    sel_min_leg_prob = sel_min_leg_pct / 100.0
 
     allow_est_odds = st.checkbox(
         "🧮 Allow estimated/derived odds (research only)",
@@ -389,8 +662,8 @@ with tab_portfolio:
         ),
     )
 
-    if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Ticket Win Prob ≥ {sel_min_acc_prob*100:.0f}%)", type="primary", use_container_width=True, key="cloud_btn_combo"):
-        with st.spinner("Finding optimal combinations with 85%-100% Accumulator Win Probability…"):
+    if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Ticket Win Prob ≥ {sel_min_acc_pct}%)", type="primary", use_container_width=True, key="cloud_btn_combo"):
+        with st.spinner(f"Scanning fixtures for {sel_legs}-leg slips at ≥ {sel_min_acc_pct}% joint probability…"):
             db_combo = _db()
             try:
                 c_data = generate_high_confidence_combos(
@@ -409,24 +682,45 @@ with tab_portfolio:
             best = c_data.get("best_combo")
             matchday_hdr = c_data.get("matchday_label", "Daily")
             if not best:
+                diag = c_data.get("diagnostics", {})
                 odds_policy = c_data.get("odds_policy", {})
-                excluded_estimates = odds_policy.get("synthetic_legs_excluded", 0)
-                gate_note = ""
-                if odds_policy.get("require_market_odds"):
-                    gate_note = (
-                        f"\n\n🔒 **Market-price gate active:** only real ingested bookmaker prices are eligible. "
-                        f"{excluded_estimates} model-derived leg(s) were rejected as estimates."
-                    )
-                st.error(
-                    f"🚫 **No qualifying {sel_legs}-team combo found for {matchday_hdr}.**\n\n"
-                    f"All three rules must be met simultaneously — no exceptions:\n"
-                    f"- ✅ **AVG TEAM CONFIDENCE ≥ 85%** (every leg individually)\n"
-                    f"- ✅ **ACCUMULATOR WIN PROB ≥ 85%** (joint probability of all legs)\n"
-                    f"- ✅ **TOTAL ODDS ≥ 2.00**\n\n"
-                    f"Today's fixture data does not contain a combination that satisfies all three. "
-                    f"Try a different matchday, or wait for the next sentinel scan."
-                    f"{gate_note}"
+                excluded_estimates = odds_policy.get(
+                    "synthetic_legs_excluded", diag.get("synthetic_legs_excluded", 0)
                 )
+                gate_active = odds_policy.get("require_market_odds", True)
+
+                st.markdown(
+                    f"""
+                    <div class="fie-empty">
+                        <h4>No qualifying {sel_legs}-team slip for {matchday_hdr}</h4>
+                        <p style="margin:0;color:#94A3B8;font-size:13px;">
+                            Rules applied together: every leg ≥ {sel_min_leg_pct}% · joint probability ≥ {sel_min_acc_pct}% · total odds ≥ 2.00.
+                        </p>
+                        <div class="fie-funnel">
+                            <div><span>FIXTURES SCANNED</span><strong>{diag.get('fixtures_in_scope', 0)}</strong></div>
+                            <div><span>WITH 1X2 MARKET PRICES</span><strong>{diag.get('fixtures_with_market_1x2', 0)}</strong></div>
+                            <div><span>ELIGIBLE LEGS</span><strong>{diag.get('candidate_legs', 0)}</strong></div>
+                            <div><span>SLIPS BUILT</span><strong>{diag.get('combos_generated', 0)}</strong></div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if gate_active and excluded_estimates:
+                    st.caption(
+                        f"🔒 Market-price gate is on — {excluded_estimates} model-derived leg(s) were rejected. "
+                        "Enable estimated odds to widen the search (research only)."
+                    )
+                with st.expander("Why no slip? (the maths)"):
+                    st.markdown(
+                        "A joint 85% probability across 3 legs means each leg must win about **95%** of the time. "
+                        "At fair prices a 95% favourite pays ~1.05, so three of them multiply to only ~1.16 — "
+                        "far below the 2.00 odds floor. **The joint-probability rule and the odds floor pull in "
+                        "opposite directions**, so qualifying slips are genuinely rare. This is the engine being "
+                        "honest rather than lowering the bar.\n\n"
+                        "Options: switch to a 2-team slip, lower the joint threshold (not allowed in strict mode), "
+                        "or add more markets so the safest selections have real bookmaker prices."
+                    )
             else:
                 st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
                 

@@ -168,7 +168,8 @@ def test_sentinel_daemon_status_and_endpoints():
 
 
 def test_accumulator_win_prob_85_to_100_percent():
-    """Verify combos always produce odds >= 2.00 for both 2-team and 3-team slips."""
+    """STRICT: Both AVG TEAM CONFIDENCE and ACCUMULATOR WIN PROB must be >= 85%.
+    Any combo below 85% on EITHER metric must be REJECTED. Odds must also be >= 2.00."""
     from app.database import get_db
     from app.services.combo import generate_high_confidence_combos
 
@@ -179,23 +180,31 @@ def test_accumulator_win_prob_85_to_100_percent():
                 db=db,
                 target_date="all",
                 num_legs=n_legs,
-                min_leg_prob=0.70,          # relaxed so test data generates combos
-                min_accumulator_prob=None,  # don't restrict accum prob in test
-                min_total_odds=2.00,        # THE KEY REQUIREMENT
+                min_leg_prob=0.85,
+                min_accumulator_prob=0.85,
+                min_total_odds=2.00,
             )
-            assert "best_combo" in res, f"{n_legs}-leg combo result missing 'best_combo' key"
+            assert "best_combo" in res, f"{n_legs}-leg result missing 'best_combo' key"
             if res["best_combo"]:
                 bc = res["best_combo"]
+                # Rule 1: TOTAL ODDS >= 2.00 — always, no exceptions
                 assert bc["total_odds"] >= 2.00, (
-                    f"{n_legs}-leg combo returned odds {bc['total_odds']:.2f} < 2.00! "
-                    "The engine MUST always generate odds >= 2.00."
+                    f"❌ {n_legs}-leg combo odds {bc['total_odds']:.2f} < 2.00"
                 )
-                assert len(bc["legs"]) == n_legs, f"Expected {n_legs} legs, got {len(bc['legs'])}"
-                # All alternatives must also be >= 2.00
+                # Rule 2: AVG TEAM CONFIDENCE >= 85% — no exceptions
+                assert bc["avg_leg_probability"] >= 0.85, (
+                    f"❌ AVG TEAM CONFIDENCE {bc['avg_leg_probability']*100:.1f}% < 85%"
+                )
+                # Rule 3: ACCUMULATOR WIN PROB >= 85% — no exceptions
+                assert bc["combined_probability"] >= 0.85, (
+                    f"❌ ACCUMULATOR WIN PROB {bc['combined_probability']*100:.1f}% < 85% — REJECTED"
+                )
+                assert len(bc["legs"]) == n_legs
+                # Every alternative must also pass all 3 rules
                 for alt in res.get("alternatives", []):
-                    assert alt["total_odds"] >= 2.00, (
-                        f"Alternative combo odds {alt['total_odds']:.2f} < 2.00"
-                    )
+                    assert alt["total_odds"] >= 2.00
+                    assert alt["avg_leg_probability"] >= 0.85
+                    assert alt["combined_probability"] >= 0.85
     finally:
         db.close()
 

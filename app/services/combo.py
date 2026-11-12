@@ -261,16 +261,19 @@ def generate_high_confidence_combos(
             avg_prob = round(sum(l["probability"] for l in combo_legs) / len(combo_legs), 4)
             min_prob = round(min(l["probability"] for l in combo_legs), 4)
 
-            # Strictly enforce ACCUMULATOR WIN PROB between min_acc (min 85%) and 100%
+            # ── HARD RULE 1: ACCUMULATOR WIN PROB must be >= min_acc (85% minimum) ──
+            # No exceptions. If tot_prob < min_acc, this combo is REJECTED.
             if min_acc > 0.0 and tot_prob < min_acc:
                 continue
 
-            # Strictly enforce AVG TEAM CONFIDENCE between min_avg (min 85%) and 100%
-            if avg_prob < min_avg or avg_prob > 1.00:
+            # ── HARD RULE 2: AVG TEAM CONFIDENCE must be >= min_avg (85% minimum) ──
+            # No exceptions. If avg_prob < min_avg, this combo is REJECTED.
+            if avg_prob < min_avg:
                 continue
 
-            # Ensure individual legs maintain strong banker profile
-            if min_prob < 0.70:
+            # ── HARD RULE 3: Every individual leg must be >= 85% confidence ──
+            # No weak legs allowed in a banker slip.
+            if min_prob < min_avg:
                 continue
 
             if tot_odds >= min_odds and tot_odds <= max_total_odds:
@@ -301,33 +304,18 @@ def generate_high_confidence_combos(
                 })
         return found
 
-    # ALWAYS enforce odds >= 2.00 (user requirement). Never override this.
-    target_acc = min_accumulator_prob if min_accumulator_prob is not None else 0.0
-    eff_min_odds = max(2.00, min_total_odds)   # hard floor at 2.00
+    # ══════════════════════════════════════════════════════════════════════
+    # STRICT COMBO SELECTION RULES (non-negotiable, as required by user):
+    #   • AVG TEAM CONFIDENCE   >= 85%  (every single leg >= 85%)
+    #   • ACCUMULATOR WIN PROB  >= 85%  (joint probability of all legs)
+    #   • TOTAL ODDS            >= 2.00 (hard floor, never overridden)
+    # If NO combo satisfies ALL THREE → return empty (no slip today).
+    # ══════════════════════════════════════════════════════════════════════
+    STRICT_AVG   = 0.85   # AVG TEAM CONFIDENCE floor
+    STRICT_ACC   = 0.85   # ACCUMULATOR WIN PROB floor
+    STRICT_ODDS  = max(2.00, min_total_odds)  # ODDS floor
 
-    # 1. Strictly look for requested leg count (k) at target min_accumulator_prob and target avg confidence
-    combos = _eval_combos(k, eff_min_odds, min_avg=min_avg_target, min_acc=target_acc)
-
-    # 2. If no combos hit at exact min_accumulator_prob, relax ACCUMULATOR PROB only (never relax odds)
-    if not combos and target_acc > 0:
-        for try_acc in [0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50]:
-            combos = _eval_combos(k, eff_min_odds, min_avg=max(0.80, min_avg_target - 0.05), min_acc=try_acc)
-            if combos:
-                break
-
-    # 3. If still no combos, relax avg confidence too — but ALWAYS keep odds >= 2.00
-    if not combos:
-        for try_avg in [0.85, 0.82, 0.80, 0.78, 0.75, 0.72, 0.70]:
-            combos = _eval_combos(k, eff_min_odds, min_avg=try_avg, min_acc=0.0)
-            if combos:
-                break
-
-    # 4. Last resort: allow slightly lower odds floor (1.80) but never below 1.80
-    if not combos:
-        for try_avg in [0.75, 0.70]:
-            combos = _eval_combos(k, 1.80, min_avg=try_avg, min_acc=0.0)
-            if combos:
-                break
+    combos = _eval_combos(k, STRICT_ODDS, min_avg=STRICT_AVG, min_acc=STRICT_ACC)
 
     # Sort combos primarily by ACCUMULATOR WIN PROB (descending), then AVG TEAM CONFIDENCE, then odds
     combos.sort(

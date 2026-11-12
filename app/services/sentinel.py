@@ -112,7 +112,11 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
         _sentinel_state["fixtures_scanned_last"] = feed_res.get("inserted", 0) + feed_res.get("updated", 0)
         _log_event(f"✅ Fixtures updated ({feed_res.get('inserted', 0)} new, {feed_res.get('updated', 0)} odds refreshed).")
 
-        # Evaluate 2-team and 3-team banker multi-bets with min 85.0% avg confidence
+        # Evaluate 2-team and 3-team banker multi-bets with STRICT rules:
+        # ALL THREE must be satisfied or combo is skipped — no exceptions:
+        #   • AVG TEAM CONFIDENCE   >= 85%
+        #   • ACCUMULATOR WIN PROB  >= 85%
+        #   • TOTAL ODDS            >= 2.00
         alerts_sent = 0
         phone = os.getenv("WHATSAPP_PHONE", "").strip()
         apikey = os.getenv("WHATSAPP_APIKEY", "").strip()
@@ -125,24 +129,27 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                 target_date=None,  # next active matchday
                 num_legs=legs_target,
                 min_leg_prob=0.85,
+                min_accumulator_prob=0.85,  # enforce ACCUM WIN PROB >= 85%
                 min_total_odds=2.00,
                 bankroll=float(os.getenv("FIE_BANKROLL", "1000")),
             )
             best = c_data.get("best_combo")
             m_label = c_data.get("matchday_label", "Today")
             if not best:
+                _log_event(f"ℹ️ No qualifying {legs_target}-team combo today (all 3 rules: AVG≥85%, ACCUM≥85%, Odds≥2.00).")
                 continue
 
-            avg_conf = best.get("avg_leg_probability", 0) * 100
-            odds_val = best.get("total_odds", 0)
+            avg_conf   = best.get("avg_leg_probability", 0) * 100
+            accum_prob = best.get("combined_probability", 0) * 100
+            odds_val   = best.get("total_odds", 0)
 
-            # Strict banker constraints
-            if odds_val >= 2.00 and avg_conf >= 85.0:
+            # Double-check strict rules before alerting (belt-and-suspenders)
+            if odds_val >= 2.00 and avg_conf >= 85.0 and accum_prob >= 85.0:
                 sig = _combo_signature(best, m_label)
                 notified = _sentinel_state.setdefault("notified_hashes", set())
 
                 if sig not in notified:
-                    _log_event(f"🎯 Qualifying {legs_target}-team Banker found! Odds: {odds_val:.2f} | Avg Conf: {avg_conf:.1f}%")
+                    _log_event(f"🎯 Qualifying {legs_target}-team Banker found! Odds: {odds_val:.2f} | Avg Conf: {avg_conf:.1f}% | Accum Win Prob: {accum_prob:.1f}%")
                     if phone and apikey:
                         send_res = send_combo_whatsapp_alert(
                             combo=best,

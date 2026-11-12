@@ -263,7 +263,15 @@ with tab_portfolio:
                         best = c_data.get("best_combo")
                         matchday_hdr = c_data.get("matchday_label", "Daily")
                         if not best:
-                            st.warning(f"No {sel_legs}-team combos found on {matchday_hdr} with ticket win probability ≥ {sel_min_acc_prob*100:.0f}%. Try selecting a different matchday or adjusting the slider.")
+                            st.error(
+                                f"🚫 **No qualifying {sel_legs}-team combo found for {matchday_hdr}.**\n\n"
+                                f"All three rules must be met simultaneously — no exceptions:\n"
+                                f"- ✅ **AVG TEAM CONFIDENCE ≥ 85%** (every leg individually)\n"
+                                f"- ✅ **ACCUMULATOR WIN PROB ≥ 85%** (joint probability of all legs)\n"
+                                f"- ✅ **TOTAL ODDS ≥ 2.00**\n\n"
+                                f"Today's fixture data does not contain a combination that satisfies all three. "
+                                f"Try a different matchday, or wait for the next sentinel scan."
+                            )
                         else:
                             st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
                             

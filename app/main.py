@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.database import Base, engine, get_db
 from app.models.fixture import Fixture
 from app.models.team_rating import TeamRating
+from app.models.price_snapshot import PriceSnapshot  # noqa: F401  (registers the table)
 from app.schemas import (
     FixtureImportRequest,
     FixtureOut,
@@ -435,6 +436,7 @@ def get_portfolio_combos(
     allow_synthetic_odds: bool = Query(False, description="Allow model-derived (estimated) prices, labelled as such. Off by default: only ingested bookmaker prices are eligible."),
     require_ratings: bool = Query(True, description="EV mode: only compare the independent team-ratings model against the market. With no ratings the model is fitted to the same 1X2 prices, so any edge would be circular."),
     max_edge_percent: float = Query(20.0, ge=3.0, le=50.0, description="EV mode: reject legs where model and market disagree by more than this (usually stale ratings, not a real edge)."),
+    allow_unvalidated_ev: bool = Query(False, description="EV mode: return slips even when walk-forward evaluation shows the model has not beaten the market. Research only."),
     db: Session = Depends(get_db),
 ):
     """Generate daily accumulators. EV mode (default) targets model edge over the bookmaker's de-vigged price; certainty mode targets joint win probability >= 85%."""
@@ -453,7 +455,100 @@ def get_portfolio_combos(
         min_edge_percent=min_edge_percent,
         require_ratings=require_ratings,
         max_edge_percent=max_edge_percent,
+        allow_unvalidated_ev=allow_unvalidated_ev,
     )
+
+@app.get("/evaluation/calibration")
+def get_calibration_report():
+    """Return the last saved walk-forward calibration report (cheap, no recompute)."""
+    from app.services.calibration import load_report
+    report = load_report()
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail="No calibration report yet. POST /evaluation/calibration to run the walk-forward evaluation.",
+        )
+    return report
+
+@app.post("/evaluation/calibration")
+def run_calibration(
+    competition: Optional[str] = Query(None, description="Optional competition filter"),
+    refit_days: int = Query(14, ge=1, le=60, description="Days between refits; shorter is stricter but slower"),
+    db: Session = Depends(get_db),
+):
+    """Replay history out-of-sample and compare the model with the de-vigged market.
+
+    This is deliberately an explicit action: it takes tens of seconds because it
+    refits the rating model hundreds of times.
+    """
+    from app.services.calibration import run_walk_forward, save_report
+    try:
+        report = run_walk_forward(db, competition=competition, refit_days=refit_days)
+        if report.get("n_matches"):
+            save_report(report)
+        return report
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Calibration error: {exc}") from exc
+
+@app.post("/evaluation/backtest")
+def run_walkforward_backtest_api(
+    min_edge_percent: float = Query(3.0, ge=0.0, le=50.0),
+    staking: str = Query("flat", pattern="^(flat|quarter_kelly)$"),
+    flat_stake_percent: float = Query(2.0, ge=0.1, le=10.0),
+    initial_bankroll: float = Query(1000.0, ge=10.0),
+    competition: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Backtest the EV strategy with ratings that never see the future."""
+    from app.services.backtest import run_walkforward_backtest
+    try:
+        result = run_walkforward_backtest(
+            db,
+            min_edge_percent=min_edge_percent,
+            staking=staking,
+            flat_stake_percent=flat_stake_percent,
+            initial_bankroll=initial_bankroll,
+            competition=competition,
+        )
+        result.pop("history", None)  # keep the response small
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Backtest error: {exc}") from exc
+
+@app.get("/evaluation/clv")
+def get_clv(
+    days: int = Query(90, ge=1, le=3650),
+    db: Session = Depends(get_db),
+):
+    """Closing-line value: did the prices we took beat the closing price?"""
+    from app.services.clv import clv_summary
+    from app.services.settlement import synthetic_slip_ids
+    return clv_summary(db, days=days, exclude_slip_ids=synthetic_slip_ids(db))
+
+@app.get("/ratings/freshness")
+def ratings_freshness(db: Session = Depends(get_db)):
+    """How old is the evidence behind each competition's ratings?"""
+    from sqlalchemy import func
+    from app.services.ratings import STALE_AFTER_DAYS, data_age_days, ratings_snapshot_hash
+
+    rows = db.execute(
+        select(TeamRating.competition, func.count(TeamRating.id), func.max(TeamRating.last_match_at))
+        .group_by(TeamRating.competition)
+    ).all()
+    competitions = []
+    for comp, teams, last_match in rows:
+        age = data_age_days(last_match)
+        competitions.append({
+            "competition": comp,
+            "teams": teams,
+            "data_age_days": age,
+            "stale": bool(age is not None and age > STALE_AFTER_DAYS),
+        })
+    return {
+        "snapshot_hash": ratings_snapshot_hash(db),
+        "stale_after_days": STALE_AFTER_DAYS,
+        "competitions": sorted(competitions, key=lambda c: -(c["teams"] or 0)),
+    }
 
 @app.get("/fixtures/{fixture_id}/best-odds")
 def fixture_best_odds(fixture_id: int, db: Session = Depends(get_db)):

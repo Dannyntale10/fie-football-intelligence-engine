@@ -18,4 +18,7 @@ class TeamRating(Base):
     home_attack_boost: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
     home_goals_avg: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
     away_goals_avg: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    # Decayed evidence behind this rating and when the team last played.
+    weighted_matches: Mapped[Optional[float]] = mapped_column(Float, default=0.0, nullable=True)
+    last_match_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

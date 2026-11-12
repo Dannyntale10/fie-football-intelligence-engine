@@ -6,6 +6,140 @@ from sqlalchemy.orm import Session
 from app.models.fixture import Fixture
 from app.services.probabilities import analyze_fixture
 
+
+def run_walkforward_backtest(
+    db: Session,
+    min_edge_percent: float = 3.0,
+    min_leg_prob: float = 0.50,
+    staking: str = "flat",
+    flat_stake_percent: float = 2.0,
+    initial_bankroll: float = 1000.0,
+    refit_days: int = 14,
+    competition: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Backtest the EV strategy with ratings that never see the future.
+
+    Unlike :func:`run_backtest`, every prediction here comes from a model
+    refitted only on matches played before the prediction window, so the ROI
+    is not inflated by lookahead bias. Only 1X2 is evaluated because that is
+    the only market with historical prices in the database.
+    """
+    from app.services.calibration import brier_score, log_loss, iter_walkforward_predictions
+
+    predictions = list(iter_walkforward_predictions(
+        db, competition=competition, refit_days=refit_days
+    ))
+    if not predictions:
+        return {
+            "strategy": "ev_walkforward",
+            "total_bets": 0,
+            "message": "Not enough rated history to run a walk-forward backtest.",
+        }
+
+    bankroll = float(initial_bankroll)
+    peak = bankroll
+    max_drawdown = 0.0
+    total_staked = 0.0
+    wins = 0
+    losses = 0
+    edges: List[float] = []
+    history: List[Dict[str, Any]] = []
+    curve: List[Dict[str, Any]] = []
+
+    for prediction in predictions:
+        odds = prediction["odds"]
+        probs = prediction["model"]
+        fair = prediction["market"]
+
+        best = None
+        for key in ("home_win", "draw", "away_win"):
+            price = odds[key]
+            prob = probs[key]
+            edge = (prob - fair[key]) * 100.0
+            ev = (prob * price - 1.0) * 100.0
+            if edge < min_edge_percent or ev <= 0 or prob < min_leg_prob:
+                continue
+            if best is None or edge > best["edge_percent"]:
+                best = {
+                    "market_key": key,
+                    "price": price,
+                    "probability": prob,
+                    "edge_percent": round(edge, 2),
+                }
+        if best is None:
+            continue
+
+        if staking == "flat" or staking == "quarter_kelly":
+            stake = round(bankroll * (flat_stake_percent / 100.0), 2)
+            if staking == "quarter_kelly":
+                b = best["price"] - 1.0
+                full_kelly = (b * best["probability"] - (1.0 - best["probability"])) / b if b > 0 else 0.0
+                stake = round(bankroll * min(5.0, max(0.0, full_kelly * 0.25 * 100.0)) / 100.0, 2)
+        else:
+            stake = round(bankroll * (flat_stake_percent / 100.0), 2)
+
+        stake = max(1.0, min(stake, bankroll))
+        if bankroll <= 0:
+            break
+
+        won = prediction["label"] == best["market_key"]
+        profit = round(stake * (best["price"] - 1.0), 2) if won else round(-stake, 2)
+        if won:
+            wins += 1
+        else:
+            losses += 1
+        total_staked += stake
+        bankroll = round(bankroll + profit, 2)
+        edges.append(best["edge_percent"])
+
+        peak = max(peak, bankroll)
+        drawdown = ((peak - bankroll) / peak) * 100.0 if peak > 0 else 0.0
+        max_drawdown = max(max_drawdown, drawdown)
+
+        fixture = prediction["fixture"]
+        history.append({
+            "date": fixture.kickoff_utc.strftime("%Y-%m-%d") if fixture.kickoff_utc else "",
+            "match": f"{fixture.home_team} vs {fixture.away_team}",
+            "market": best["market_key"],
+            "odds": round(best["price"], 2),
+            "edge_percent": best["edge_percent"],
+            "stake": stake,
+            "outcome": "WON" if won else "LOST",
+            "profit": profit,
+            "bankroll": bankroll,
+        })
+        if len(history) % 25 == 0:
+            curve.append({"bets": len(history), "bankroll": bankroll})
+
+    total_bets = wins + losses
+    model_probs = [p["model"] for p in predictions]
+    market_probs = [p["market"] for p in predictions]
+    labels = [p["label"] for p in predictions]
+
+    return {
+        "strategy": "ev_walkforward",
+        "staking": staking,
+        "total_predictions": len(predictions),
+        "total_bets": total_bets,
+        "wins": wins,
+        "losses": losses,
+        "win_rate_percent": round(wins / total_bets * 100.0, 2) if total_bets else 0.0,
+        "avg_edge_percent": round(sum(edges) / len(edges), 2) if edges else 0.0,
+        "initial_bankroll": initial_bankroll,
+        "final_bankroll": bankroll,
+        "net_profit": round(bankroll - initial_bankroll, 2),
+        "roi_percent": round((bankroll - initial_bankroll) / total_staked * 100.0, 2) if total_staked else 0.0,
+        "max_drawdown_percent": round(max_drawdown, 2),
+        "validation": {
+            "model_brier": brier_score(model_probs, labels),
+            "market_brier": brier_score(market_probs, labels),
+            "model_log_loss": log_loss(model_probs, labels),
+            "market_log_loss": log_loss(market_probs, labels),
+        },
+        "bankroll_curve": curve,
+        "history": history,
+    }
+
 def run_backtest(
     db: Session,
     strategy: str = "value_bet",
@@ -16,7 +150,12 @@ def run_backtest(
     flat_stake_percent: float = 2.0,
     competition: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Execute historical backtesting simulation on completed matches."""
+    """Execute historical backtesting simulation on completed matches.
+
+    Warning: this legacy path scores each match with ratings fitted on the full
+    history, including matches that had not been played yet. Its ROI is
+    optimistic. Use :func:`run_walkforward_backtest` for an honest estimate.
+    """
     query = select(Fixture).where(
         Fixture.home_score.isnot(None),
         Fixture.away_score.isnot(None),

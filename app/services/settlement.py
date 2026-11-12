@@ -142,10 +142,21 @@ def record_tracked_bet(
         legs_json=json.dumps(legs_data),
         whatsapp_alert_sent=True,
         whatsapp_settlement_sent=False,
+        model_version=(combo.get("provenance") or {}).get("model_version"),
+        ratings_hash=(combo.get("provenance") or {}).get("ratings_hash"),
+        selection_mode=(combo.get("provenance") or {}).get("selection_mode"),
     )
     db.add(tracked)
     db.commit()
     db.refresh(tracked)
+
+    # Remember the exact prices taken so closing-line value can be measured.
+    try:
+        from app.services.clv import record_selection_prices
+        record_selection_prices(db, tracked.id, legs_data)
+    except Exception:
+        logger.warning("Could not record selection price snapshots", exc_info=True)
+
     return tracked
 
 
@@ -312,11 +323,44 @@ def settle_pending_bets(
     return settled_slips
 
 
+def _is_synthetic_bet(bet: TrackedBet) -> bool:
+    """True for slips built from test/demo fixtures rather than a real league.
+
+    Synthetic slips are legitimate for exercising the pipeline, but counting
+    them as proof of performance is not: they settle against fixtures that were
+    also generated for the test, so they always win.
+    """
+    from app.services.ratings import IGNORED_COMPETITIONS
+
+    label = (bet.matchday_label or "").strip().lower()
+    if label.startswith("test"):
+        return True
+    try:
+        legs = json.loads(bet.legs_json or "[]")
+    except (TypeError, ValueError):
+        return False
+    comps = {
+        str(leg.get("competition") or "").strip().lower()
+        for leg in legs
+        if isinstance(leg, dict)
+    }
+    comps.discard("")
+    return bool(comps) and comps <= IGNORED_COMPETITIONS
+
+
+def synthetic_slip_ids(db: Session) -> set:
+    bets = db.scalars(select(TrackedBet)).all()
+    return {b.id for b in bets if _is_synthetic_bet(b)}
+
+
 def get_performance_ledger_summary(db: Session) -> Dict[str, Any]:
     """Calculate overall performance metrics for the transparent betting ledger."""
-    all_bets = db.scalars(
+    recorded = db.scalars(
         select(TrackedBet).order_by(desc(TrackedBet.placed_at))
     ).all()
+
+    synthetic = [b for b in recorded if _is_synthetic_bet(b)]
+    all_bets = [b for b in recorded if not _is_synthetic_bet(b)]
 
     total_slips = len(all_bets)
     settled = [b for b in all_bets if b.status in ("WON", "LOST")]
@@ -335,6 +379,12 @@ def get_performance_ledger_summary(db: Session) -> Dict[str, Any]:
 
     roi_pct = (total_profit_usd / total_staked_usd * 100.0) if total_staked_usd > 0 else 0.0
 
+    try:
+        from app.services.clv import clv_summary
+        clv = clv_summary(db, exclude_slip_ids={b.id for b in synthetic})
+    except Exception:
+        clv = {"n_selections": 0, "mean_clv_percent": None, "beat_close_percent": None}
+
     return {
         "total_slips": total_slips,
         "settled_count": settled_count,
@@ -345,6 +395,8 @@ def get_performance_ledger_summary(db: Session) -> Dict[str, Any]:
         "total_profit_ugx": round(total_profit_ugx, 0),
         "total_profit_usd": round(total_profit_usd, 2),
         "roi_percent": round(roi_pct, 1),
+        "excluded_synthetic_count": len(synthetic),
+        "clv": clv,
         "recent_bets": all_bets[:25],
     }
 

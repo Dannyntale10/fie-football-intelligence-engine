@@ -24,6 +24,27 @@ def db():
         engine.dispose()
 
 
+_VALIDATED_REPORT = {
+    "verdict": "model_beats_market",
+    "n_matches": 3576,
+    "model": {"brier": 0.5600},
+    "market": {"brier": 0.5663},
+    "skill": {"validated": True},
+    "edge_threshold_multiplier": 1.0,
+    "generated_at": "2026-11-01T00:00:00+00:00",
+}
+
+
+@pytest.fixture(autouse=True)
+def _validated_calibration(monkeypatch):
+    """Keep selection tests independent of whatever report is on disk.
+
+    The gate tests below override this stub with an unvalidated report.
+    """
+    from app.services import calibration
+    monkeypatch.setattr(calibration, "load_report", lambda: _VALIDATED_REPORT)
+
+
 def _add_fixture(db, suffix, home_odds=None, draw_odds=None, away_odds=None, market_odds=None):
     fixture = Fixture(
         dedupe_key=f"test-odds-policy-{suffix}",
@@ -330,3 +351,127 @@ def test_ev_mode_rejects_implausible_edges(db, monkeypatch):
 
     assert res["best_combo"] is None
     assert res["diagnostics"]["implausible_edges_skipped"] > 0
+
+
+# ── Calibration gate: an unvalidated model must not sell edges ───────────────
+
+_UNVALIDATED_REPORT = {
+    "verdict": "market_beats_model",
+    "n_matches": 3576,
+    "model": {"brier": 0.5995, "log_loss": 1.0034},
+    "market": {"brier": 0.5663, "log_loss": 0.9549},
+    "skill": {"validated": False},
+    "edge_threshold_multiplier": 1.35,
+    "generated_at": "2026-11-01T00:00:00+00:00",
+}
+
+
+def _edge_legs(db, monkeypatch):
+    monkeypatch.setattr(
+        combo_mod,
+        "analyze_fixture",
+        lambda fixture, **kwargs: {
+            "all_markets": {"home_win": 0.70, "draw": 0.18, "away_win": 0.12},
+            "lambda_source": "team_ratings",
+        },
+    )
+    monkeypatch.setattr(
+        combo_mod, "check_squad_and_injuries", lambda **kwargs: {"verdict": "APPROVED"}
+    )
+    for suffix in ("1", "2"):
+        _add_fixture(
+            db,
+            suffix,
+            home_odds=2.10,
+            draw_odds=3.50,
+            away_odds=3.40,
+            market_odds={"home_win": 2.10, "draw": 3.50, "away_win": 3.40},
+        )
+
+
+def _ev_kwargs(**extra):
+    return dict(
+        target_date="all",
+        num_legs=2,
+        min_leg_prob=0.55,
+        min_total_odds=1.50,
+        min_edge_percent=3.0,
+        max_edge_percent=50.0,
+        selection_mode="ev",
+        **extra,
+    )
+
+
+def _stub_report(monkeypatch, report):
+    from app.services import calibration
+    monkeypatch.setattr(calibration, "load_report", lambda: report)
+
+
+def test_ev_mode_withholds_slips_when_model_loses_to_market(db, monkeypatch):
+    _edge_legs(db, monkeypatch)
+    _stub_report(monkeypatch, _UNVALIDATED_REPORT)
+
+    res = combo_mod.generate_high_confidence_combos(db=db, **_ev_kwargs())
+
+    assert res["best_combo"] is None
+    assert res["alternatives"] == []
+    assert res["blocked_reason"]
+    assert res["calibration"]["validated"] is False
+    assert res["calibration"]["verdict"] == "market_beats_model"
+    assert res["calibration"]["market_brier"] == pytest.approx(0.5663)
+    # The engine still built the combos; the gate, not the maths, withheld them.
+    assert res["total_combos_generated"] > 0
+
+
+def test_allow_unvalidated_ev_returns_slips_flagged_as_unvalidated(db, monkeypatch):
+    _edge_legs(db, monkeypatch)
+    _stub_report(monkeypatch, _UNVALIDATED_REPORT)
+
+    res = combo_mod.generate_high_confidence_combos(
+        db=db, **_ev_kwargs(allow_unvalidated_ev=True)
+    )
+
+    assert res["best_combo"] is not None
+    assert res["blocked_reason"] is None
+    assert res["calibration"]["validated"] is False
+    assert res["params"]["allow_unvalidated_ev"] is True
+
+
+def test_calibration_multiplier_raises_the_required_edge(db, monkeypatch):
+    # Home 0.70 vs a de-vigged fair home of ~0.657 is a ~4.3% edge.
+    monkeypatch.setattr(
+        combo_mod,
+        "analyze_fixture",
+        lambda fixture, **kwargs: {
+            "all_markets": {"home_win": 0.70, "draw": 0.18, "away_win": 0.12},
+            "lambda_source": "team_ratings",
+        },
+    )
+    monkeypatch.setattr(
+        combo_mod, "check_squad_and_injuries", lambda **kwargs: {"verdict": "APPROVED"}
+    )
+    for suffix in ("1", "2"):
+        _add_fixture(
+            db,
+            suffix,
+            home_odds=1.45,
+            draw_odds=4.60,
+            away_odds=7.00,
+            market_odds={"home_win": 1.45, "draw": 4.60, "away_win": 7.00},
+        )
+
+    baseline = dict(_UNVALIDATED_REPORT, edge_threshold_multiplier=1.0, verdict="model_matches_market")
+    _stub_report(monkeypatch, baseline)
+    lenient = combo_mod.generate_high_confidence_combos(
+        db=db, **_ev_kwargs(allow_unvalidated_ev=True)
+    )
+    assert lenient["best_combo"] is not None
+    assert lenient["params"]["required_edge_percent"] == pytest.approx(3.0)
+
+    strict = dict(_UNVALIDATED_REPORT, edge_threshold_multiplier=1.55, verdict="model_matches_market")
+    _stub_report(monkeypatch, strict)
+    tightened = combo_mod.generate_high_confidence_combos(
+        db=db, **_ev_kwargs(allow_unvalidated_ev=True)
+    )
+    assert tightened["params"]["required_edge_percent"] == pytest.approx(4.65)
+    assert tightened["best_combo"] is None

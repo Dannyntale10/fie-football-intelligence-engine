@@ -32,6 +32,10 @@ from app.services.ai_squad_checker import check_squad_and_injuries
 
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 
+# Bumped whenever the selection/scoring pipeline changes materially, so a
+# recorded slip can be attributed to the model that produced it.
+MODEL_VERSION = "fie-ev-3"
+
 # Markets whose prices sum to one outcome set and can therefore be de-vigged
 # together. Asian handicap pairs are complementary for the listed half lines.
 _DEVIG_GROUPS = (
@@ -70,6 +74,15 @@ def _fixture_market_odds(fixture: Fixture) -> Dict[str, float]:
     ):
         if key not in odds and value and value > 1.0:
             odds[key] = float(value)
+
+    # Use the best price available across ingested books when one exists.
+    for key, best in (
+        ("home_win", getattr(fixture, "max_home_odds", None)),
+        ("draw", getattr(fixture, "max_draw_odds", None)),
+        ("away_win", getattr(fixture, "max_away_odds", None)),
+    ):
+        if best and best > odds.get(key, 0.0):
+            odds[key] = float(best)
     return odds
 
 
@@ -142,6 +155,7 @@ def _collect_ev_candidates(
     min_edge_percent: float,
     require_ratings: bool = True,
     max_edge_percent: float = 20.0,
+    edge_multiplier: float = 1.0,
 ) -> Dict[str, Any]:
     """Value path: keep legs where the model beats the de-vigged market price."""
     candidates: List[Dict[str, Any]] = []
@@ -151,6 +165,8 @@ def _collect_ev_candidates(
     rated_fixtures = 0
     unrated_skipped = 0
     implausible_skipped = 0
+    stale_rated_fixtures = 0
+    required_edge = min_edge_percent * max(1.0, edge_multiplier)
 
     for f in fixtures:
         market_odds = _fixture_market_odds(f)
@@ -169,6 +185,8 @@ def _collect_ev_candidates(
         model_source = analysis.get("lambda_source")
         if model_source == "team_ratings":
             rated_fixtures += 1
+            if (analysis.get("rating_meta") or {}).get("stale"):
+                stale_rated_fixtures += 1
         elif require_ratings:
             # Without ratings the model is fitted to these very 1X2 prices, so
             # any "edge" would be circular rather than independent information.
@@ -186,7 +204,7 @@ def _collect_ev_candidates(
             fair_implied = fair.get(key, 1.0 / price)
             edge_pct = (prob - fair_implied) * 100.0
             ev_pct = (prob * price - 1.0) * 100.0
-            if edge_pct < min_edge_percent or ev_pct <= 0:
+            if edge_pct < required_edge or ev_pct <= 0:
                 continue
             if edge_pct > max_edge_percent:
                 implausible_skipped += 1
@@ -200,7 +218,9 @@ def _collect_ev_candidates(
                 selection=selection,
                 db=db,
             )
-            if squad_check.get("verdict") == "VETO":
+            # Only a verdict backed by a verified feed may remove a leg. An
+            # LLM reading from memory must never silently veto a priced edge.
+            if squad_check.get("verdict") == "VETO" and squad_check.get("source") == "verified":
                 continue
 
             fixture_cands.append({
@@ -232,8 +252,10 @@ def _collect_ev_candidates(
         "fixtures_with_market_odds": fixtures_with_market_odds,
         "priced_legs": priced_legs,
         "rated_fixtures": rated_fixtures,
+        "stale_rated_fixtures": stale_rated_fixtures,
         "unrated_skipped": unrated_skipped,
         "implausible_skipped": implausible_skipped,
+        "required_edge_percent": round(required_edge, 2),
     }
 
 
@@ -349,6 +371,7 @@ def generate_high_confidence_combos(
     min_edge_percent: float = 3.0,
     require_ratings: bool = True,
     max_edge_percent: float = 20.0,
+    allow_unvalidated_ev: bool = False,
 ) -> Dict[str, Any]:
     """Generate optimal same-day multi-bet slips.
 
@@ -376,11 +399,19 @@ def generate_high_confidence_combos(
         max_edge_percent: Edges this large mean the model and the market
             disagree about team strength (usually stale ratings), not that the
             bookmaker is wrong. Such legs are rejected as model failures.
+        allow_unvalidated_ev: EV mode only. When a walk-forward evaluation
+            shows the model has not beaten the market out of sample, no slip is
+            returned unless this is set. The measured deficit is always
+            reported so the caller can show it.
 
     Returns:
         dict with target_matchday, best_combo, alternatives, candidate_legs,
         diagnostics and available_matchdays.
     """
+    from app.services.calibration import load_report
+    from app.services.ratings import ratings_snapshot_hash
+
+    mode = "ev" if str(selection_mode).lower() == "ev" else "certainty"
     now = datetime.now(timezone.utc)
     matchdays = get_available_matchdays(db)
 
@@ -420,6 +451,14 @@ def generate_high_confidence_combos(
     if mode not in ("ev", "certainty"):
         mode = "certainty"
 
+    calibration_report = load_report() if mode == "ev" else None
+    edge_multiplier = (
+        float(calibration_report.get("edge_threshold_multiplier", 1.0))
+        if calibration_report else 1.0
+    )
+    stale_rated_fixtures = 0
+    required_edge_percent = round(min_edge_percent * max(1.0, edge_multiplier), 2)
+
     candidates: List[Dict[str, Any]] = []
 
     # Individual floor to allow complementary legs that combine to >= 85% average confidence
@@ -440,12 +479,14 @@ def generate_high_confidence_combos(
             min_edge_percent=min_edge_percent,
             require_ratings=require_ratings,
             max_edge_percent=max_edge_percent,
+            edge_multiplier=edge_multiplier,
         )
         candidates = ev_collected["candidates"]
         fixtures_with_market_odds = ev_collected["fixtures_with_market_odds"]
         fixtures_with_priced_markets = ev_collected["fixtures_with_priced_markets"]
         priced_legs = ev_collected["priced_legs"]
         rated_fixtures = ev_collected["rated_fixtures"]
+        stale_rated_fixtures = ev_collected["stale_rated_fixtures"]
         unrated_skipped = ev_collected["unrated_skipped"]
         implausible_skipped = ev_collected["implausible_skipped"]
         fixtures_for_certainty: List[Fixture] = []
@@ -695,6 +736,44 @@ def generate_high_confidence_combos(
     best_combo = combos[0] if combos else None
     alternatives = combos[1:7] if len(combos) > 1 else []
 
+    # A model that has lost to the market out of sample cannot be trusted to
+    # declare 3% edges. Block the slip unless the caller explicitly opts in,
+    # and always report the measurement that caused it.
+    calibration = None
+    blocked_reason = None
+    if mode == "ev" and calibration_report:
+        skill = calibration_report.get("skill") or {}
+        calibration = {
+            "verdict": calibration_report.get("verdict"),
+            "validated": bool(skill.get("validated")),
+            "n_matches": calibration_report.get("n_matches"),
+            "model_brier": (calibration_report.get("model") or {}).get("brier"),
+            "market_brier": (calibration_report.get("market") or {}).get("brier"),
+            "model_log_loss": (calibration_report.get("model") or {}).get("log_loss"),
+            "market_log_loss": (calibration_report.get("market") or {}).get("log_loss"),
+            "edge_threshold_multiplier": edge_multiplier,
+            "evaluated_at": calibration_report.get("generated_at"),
+        }
+        if not calibration["validated"] and not allow_unvalidated_ev:
+            if best_combo is not None:
+                blocked_reason = (
+                    "Walk-forward evaluation shows the model has not beaten the de-vigged "
+                    "market, so its edges are not validated. Refresh results/ratings and "
+                    "re-run the evaluation, or pass allow_unvalidated_ev=True to research anyway."
+                )
+            best_combo = None
+            alternatives = []
+
+    try:
+        provenance = {
+            "model_version": MODEL_VERSION,
+            "ratings_hash": ratings_snapshot_hash(db),
+            "selection_mode": mode,
+            "edge_threshold_multiplier": edge_multiplier,
+        }
+    except Exception:
+        provenance = {"model_version": MODEL_VERSION, "selection_mode": mode}
+
     return {
         "target_date": target_date,
         "matchday_label": target_matchday_info["label"] if target_matchday_info else ("All Upcoming Fixtures" if target_date == "all" else (target_date or "All Matchdays")),
@@ -709,9 +788,14 @@ def generate_high_confidence_combos(
             "require_market_odds": require_market_odds,
             "selection_mode": mode,
             "min_edge_percent": min_edge_percent,
+            "required_edge_percent": required_edge_percent,
             "require_ratings": require_ratings,
             "max_edge_percent": max_edge_percent,
+            "allow_unvalidated_ev": allow_unvalidated_ev,
         },
+        "calibration": calibration,
+        "blocked_reason": blocked_reason,
+        "provenance": provenance,
         "odds_policy": {
             "require_market_odds": require_market_odds,
             "synthetic_legs_excluded": synthetic_legs_excluded,
@@ -734,8 +818,11 @@ def generate_high_confidence_combos(
             "fixtures_with_priced_markets": fixtures_with_priced_markets,
             "priced_legs": priced_legs,
             "rated_fixtures": rated_fixtures,
+            "stale_rated_fixtures": stale_rated_fixtures,
             "unrated_fixtures_skipped": unrated_skipped,
             "implausible_edges_skipped": implausible_skipped,
+            "required_edge_percent": required_edge_percent,
+            "edge_threshold_multiplier": edge_multiplier,
             "candidate_legs": len(candidates),
             "synthetic_legs_excluded": synthetic_legs_excluded,
             "combos_generated": len(combos),

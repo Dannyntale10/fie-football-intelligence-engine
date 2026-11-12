@@ -37,10 +37,26 @@ def ensure_schema_compatibility(eng):
                     ("home_attack_boost", "REAL DEFAULT 0.0"),
                     ("home_goals_avg", "REAL DEFAULT 0.0"),
                     ("away_goals_avg", "REAL DEFAULT 0.0"),
+                    ("weighted_matches", "REAL DEFAULT 0.0"),
+                    ("last_match_at", "TIMESTAMP"),
                 ]
                 for col, col_type in new_tr_cols:
                     if col not in tr_cols:
                         conn.execute(text(f"ALTER TABLE team_ratings ADD COLUMN {col} {col_type}"))
+                conn.commit()
+
+            # Check tracked_bets provenance columns
+            res_bets = conn.execute(text("PRAGMA table_info(tracked_bets)")).fetchall()
+            if res_bets:
+                bet_cols = {row[1] for row in res_bets}
+                new_bet_cols = [
+                    ("model_version", "TEXT"),
+                    ("ratings_hash", "TEXT"),
+                    ("selection_mode", "TEXT"),
+                ]
+                for col, col_type in new_bet_cols:
+                    if col not in bet_cols:
+                        conn.execute(text(f"ALTER TABLE tracked_bets ADD COLUMN {col} {col_type}"))
                 conn.commit()
     except Exception:
         pass

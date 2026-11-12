@@ -108,7 +108,17 @@ def poisson_market_probabilities(
         "ah_away_plus_0_5": prob(lambda h, a: a >= h),
         "ah_away_plus_1_5": prob(lambda h, a: a + 1 >= h),
         "ah_away_plus_2_5": prob(lambda h, a: a + 2 >= h),
+
+        # Draw No Bet (stake refunded on a draw, so it is the 1X2 split
+        # renormalised over the decisive outcomes)
+        "dnb_home": 0.0,
+        "dnb_away": 0.0,
     }
+
+    decisive = markets["home_win"] + markets["away_win"]
+    if decisive > 0:
+        markets["dnb_home"] = round(markets["home_win"] / decisive, 4)
+        markets["dnb_away"] = round(markets["away_win"] / decisive, 4)
 
     # Top 10 most likely exact scorelines
     sorted_scores = sorted(scores, key=lambda x: x[2], reverse=True)[:10]
@@ -283,6 +293,126 @@ def estimate_lambdas_from_odds(
     away_lambda = max(0.2, min(5.0, round(default_total_goals * (1.0 - home_ratio), 2)))
     return home_lambda, away_lambda
 
+
+_TOTAL_MARKET_LINES = {1.5: ("over_1_5", "under_1_5"), 2.5: ("over_2_5", "under_2_5"), 3.5: ("over_3_5", "under_3_5")}
+MAX_GOALS_GRID = 12
+
+
+def _devig_1x2(home_odds, draw_odds, away_odds) -> Optional[tuple[float, float, float]]:
+    if not (home_odds and draw_odds and away_odds):
+        return None
+    if min(home_odds, draw_odds, away_odds) <= 1.0:
+        return None
+    raw = (1.0 / home_odds, 1.0 / draw_odds, 1.0 / away_odds)
+    total = sum(raw)
+    if total <= 0:
+        return None
+    return tuple(p / total for p in raw)
+
+
+def _poisson_total_over_probability(total_goals: float, home_share: float, line: float) -> float:
+    """P(total goals > line) when goals are Poisson with the given total and split."""
+    if total_goals <= 0:
+        return 0.0
+    needed = math.floor(line) + 1  # over 2.5 needs three goals
+    p_under = 0.0
+    for h in range(0, needed):
+        for a in range(0, needed - h):
+            p_under += _poisson_pmf(h, total_goals * home_share) * _poisson_pmf(a, total_goals * (1.0 - home_share))
+    return max(0.0, min(1.0, 1.0 - p_under))
+
+
+def _poisson_draw_probability(total_goals: float, home_share: float) -> float:
+    if total_goals <= 0:
+        return 0.0
+    return sum(
+        _poisson_pmf(k, total_goals * home_share) * _poisson_pmf(k, total_goals * (1.0 - home_share))
+        for k in range(MAX_GOALS_GRID + 1)
+    )
+
+
+def _solve_total_goals(target_prob, evaluator, low: float = 0.8, high: float = 7.0, increasing: bool = True) -> float:
+    """Bisection for the total-goals value whose model probability matches the market."""
+    lo, hi = low, high
+    for _ in range(48):
+        mid = (lo + hi) / 2.0
+        prob = evaluator(mid)
+        if (prob < target_prob) == increasing:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def _market_json(fixture: Any) -> Dict[str, float]:
+    import json
+
+    raw = getattr(fixture, "market_odds_json", None)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): float(v) for k, v in parsed.items() if isinstance(v, (int, float)) and v > 1.0}
+
+
+def estimate_lambdas_from_market(fixture: Any) -> tuple[float, float, str]:
+    """Infer expected goals from the bookmaker's own prices.
+
+    Total goals are solved from the over/under lines when the feed provides
+    them, otherwise from the draw price. Fixing the total at a constant (the
+    old behaviour) made every secondary market a function of a guess, which
+    showed up as phantom edges on totals, BTTS and handicaps.
+    """
+    fair = _devig_1x2(
+        getattr(fixture, "home_odds", None),
+        getattr(fixture, "draw_odds", None),
+        getattr(fixture, "away_odds", None),
+    )
+    if fair is None:
+        return 1.45, 1.15, "fallback"
+
+    fair_home, fair_draw, fair_away = fair
+    decisive = fair_home + fair_away
+    home_share = fair_home / decisive if decisive > 0 else 0.5
+
+    market = _market_json(fixture)
+    estimates = []
+    for line, (over_key, under_key) in _TOTAL_MARKET_LINES.items():
+        over_price, under_price = market.get(over_key), market.get(under_key)
+        if not over_price or not under_price:
+            continue
+        raw_over, raw_under = 1.0 / over_price, 1.0 / under_price
+        fair_over = raw_over / (raw_over + raw_under)
+        if not 0.02 < fair_over < 0.98:
+            continue
+        estimates.append(
+            _solve_total_goals(
+                fair_over,
+                lambda total, line=line: _poisson_total_over_probability(total, home_share, line),
+            )
+        )
+
+    if estimates:
+        estimates.sort()
+        total = estimates[len(estimates) // 2]
+        source = "market_totals"
+    else:
+        total = _solve_total_goals(
+            fair_draw,
+            lambda t: _poisson_draw_probability(t, home_share),
+            increasing=False,
+        )
+        source = "market_draw"
+
+    total = max(1.2, min(5.5, total))
+    home_lambda = round(max(0.15, total * home_share), 2)
+    away_lambda = round(max(0.15, total * (1.0 - home_share)), 2)
+    return home_lambda, away_lambda, source
+
 def analyze_fixture(
     fixture: Any,
     home_lambda: Optional[float] = None,
@@ -317,14 +447,10 @@ def analyze_fixture(
                 pass
 
         if not ratings_found:
-            est_h, est_a = estimate_lambdas_from_odds(
-                getattr(fixture, "home_odds", None),
-                getattr(fixture, "draw_odds", None),
-                getattr(fixture, "away_odds", None)
-            )
+            est_h, est_a, market_source = estimate_lambdas_from_market(fixture)
             final_h = home_lambda if home_lambda is not None else est_h
             final_a = away_lambda if away_lambda is not None else est_a
-            lambda_source = "odds_implied" if (home_lambda is None and away_lambda is None) else "mixed"
+            lambda_source = market_source if (home_lambda is None and away_lambda is None) else "mixed"
     else:
         final_h, final_a = home_lambda, away_lambda
 
@@ -376,6 +502,19 @@ def analyze_fixture(
     signals = evaluate_fixture_signals(fixture, has_ratings=ratings_found)
     quality = grade_data_quality(signals)
 
+    rating_meta = None
+    if db is not None:
+        try:
+            from app.services.ratings import get_rating_context
+            rating_meta = get_rating_context(
+                db,
+                getattr(fixture, "home_team", ""),
+                getattr(fixture, "away_team", ""),
+                getattr(fixture, "competition", ""),
+            )
+        except Exception:
+            rating_meta = None
+
     return {
         "fixture_id": getattr(fixture, "id", None),
         "match": f"{getattr(fixture, 'home_team', '')} vs {getattr(fixture, 'away_team', '')}",
@@ -384,7 +523,9 @@ def analyze_fixture(
         "kickoff_utc": getattr(fixture, "kickoff_utc", None),
         "source": getattr(fixture, "source", ""),
         "estimated_lambdas": {"home_lambda": final_h, "away_lambda": final_a},
+        "estimated_total_goals": round(final_h + final_a, 2),
         "lambda_source": lambda_source,
+        "rating_meta": rating_meta,
         "dixon_coles_rho": rho,
         "qualification_threshold": qualification_threshold,
         "bookmaker_margin": margin_info,

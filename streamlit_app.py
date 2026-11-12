@@ -32,6 +32,7 @@ from app.database import Base, engine, get_db          # noqa: E402
 from app.models.fixture import Fixture                 # noqa: E402, F401
 from app.models.team_rating import TeamRating          # noqa: E402, F401
 from app.models.bet import TrackedBet                  # noqa: E402, F401
+from app.models.price_snapshot import PriceSnapshot    # noqa: E402, F401
 Base.metadata.create_all(bind=engine)
 
 # ── Core service imports ──────────────────────────────────────────────────────
@@ -59,6 +60,8 @@ from app.services.quality import (                     # noqa: E402
 from app.services.ratings import (                     # noqa: E402
     upsert_team_rating,
     calculate_ratings_from_fixtures,
+    ratings_snapshot_hash,
+    STALE_AFTER_DAYS,
 )
 from app.services.seeder import (                      # noqa: E402
     seed_sample_historical_data,
@@ -70,6 +73,7 @@ from app.services.live_feed import fetch_live_upcoming_fixtures_espn  # noqa: E4
 from app.services.backtest import run_backtest          # noqa: E402
 from app.services.portfolio import build_daily_portfolio  # noqa: E402
 from app.services.combo import generate_high_confidence_combos  # noqa: E402
+from app.services.calibration import load_report as load_calibration_report  # noqa: E402
 from app.connectors.bookmakers import BOOKMAKERS       # noqa: E402
 from app.services.ai_insights import (                 # noqa: E402
     gemini_match_preview,
@@ -691,6 +695,7 @@ with tab_portfolio:
 
     allow_est_odds = False
     sel_require_ratings = True
+    sel_allow_unvalidated = False
     if ev_mode:
         sel_require_ratings = st.checkbox(
             "🎯 Only use teams with independent model ratings (recommended)",
@@ -700,6 +705,40 @@ with tab_portfolio:
                 "Fixtures without attack/defence ratings get their probabilities fitted to the very "
                 "1X2 prices they are compared against — any 'edge' there is circular. Leaving this on "
                 "means a value slip only appears when the model genuinely disagrees with the market."
+            ),
+        )
+        cal = load_calibration_report() or {}
+        cal_model = (cal.get("model") or {}).get("brier")
+        cal_market = (cal.get("market") or {}).get("brier")
+        cal_model_s = f"{cal_model:.4f}" if isinstance(cal_model, (int, float)) else "n/a"
+        cal_market_s = f"{cal_market:.4f}" if isinstance(cal_market, (int, float)) else "n/a"
+        if cal.get("verdict") == "market_beats_model":
+            st.warning(
+                "🚫 **EV slips are gated off.** Out-of-sample, the de-vigged market predicts better "
+                f"than the model (Brier {cal_market_s} vs {cal_model_s} over {cal.get('n_matches', 0)} matches). "
+                "Value edges are not validated, so the engine will return no slip rather than a false one."
+            )
+        elif cal.get("verdict") == "model_beats_market":
+            st.success(
+                f"✅ **EV edges validated** — model Brier {cal_model_s} vs market {cal_market_s} "
+                f"over {cal.get('n_matches', 0)} matches. Edge floor is multiplied by "
+                f"{cal.get('edge_threshold_multiplier', 1.0)}×."
+            )
+        elif cal:
+            st.info(
+                f"ℹ️ Model and market are level (Brier {cal_model_s} vs {cal_market_s}). "
+                f"Edges are required to be {cal.get('edge_threshold_multiplier', 1.0)}× larger."
+            )
+        else:
+            st.info("ℹ️ No walk-forward evaluation yet. Run it under **Tools → Backtest & Evaluation** before trusting EV edges.")
+
+        sel_allow_unvalidated = st.checkbox(
+            "🧪 Return EV slips even if the model is unvalidated (research only)",
+            value=False,
+            key="cloud_allow_unvalidated_ev",
+            help=(
+                "Off by default. Turning this on returns slips even when the walk-forward evaluation "
+                "shows the model does not beat the market. Those slips are not evidence of value."
             ),
         )
     else:
@@ -737,13 +776,24 @@ with tab_portfolio:
                     selection_mode="ev" if ev_mode else "certainty",
                     min_edge_percent=sel_min_edge_prob * 100.0,
                     require_ratings=sel_require_ratings,
+                    allow_unvalidated_ev=sel_allow_unvalidated,
                 )
             finally:
                 db_combo.close()
 
             best = c_data.get("best_combo")
             matchday_hdr = c_data.get("matchday_label", "Daily")
-            if not best:
+            if not best and c_data.get("blocked_reason"):
+                st.error(f"🚫 **Slip withheld by the validation gate.** {c_data['blocked_reason']}")
+                cal_meta = c_data.get("calibration") or {}
+                st.caption(
+                    f"Model Brier {cal_meta.get('model_brier') or 0:.4f} vs market "
+                    f"{cal_meta.get('market_brier') or 0:.4f} over {cal_meta.get('n_matches') or 0} out-of-sample "
+                    f"matches · edge floor {c_data.get('params', {}).get('required_edge_percent', 0):.2f}%."
+                )
+                if ev_mode and not sel_allow_unvalidated:
+                    st.caption("Tick **Return EV slips even if the model is unvalidated** above to inspect them anyway.")
+            if not best and not c_data.get("blocked_reason"):
                 diag = c_data.get("diagnostics", {})
                 odds_policy = c_data.get("odds_policy", {})
                 excluded_estimates = odds_policy.get(
@@ -1032,6 +1082,24 @@ with tab_portfolio:
         with l_col4:
             st.metric("Pending Slips", f"{ledger_stats.get('pending_count', 0)}")
 
+        clv = ledger_stats.get("clv") or {}
+        if ledger_stats.get("excluded_synthetic_count"):
+            st.caption(
+                f"🧪 {ledger_stats['excluded_synthetic_count']} synthetic test slip(s) are excluded from "
+                "these figures — they settle against generated fixtures and would otherwise show a perfect record."
+            )
+        if clv.get("n_selections"):
+            beat_pct = clv.get("beat_close_percent")
+            mean_clv = clv.get("mean_clv_percent")
+            beat_icon = "🟢" if (beat_pct or 0) >= 50 else "🔴"
+            st.caption(
+                f"{beat_icon} **Closing-line value:** beat the closing price on {beat_pct:.1f}% of "
+                f"{clv['n_selections']} tracked selection(s), mean CLV {mean_clv:+.2f}%. "
+                "Positive CLV is the earliest honest sign that a strategy has an edge — win rate alone is noise."
+            )
+        else:
+            st.caption("📈 Closing-line value tracking starts once priced slips are recorded and settled.")
+
         # Tracked bets list
         recent_tracked = ledger_stats.get("recent_bets", [])
         if recent_tracked:
@@ -1046,6 +1114,9 @@ with tab_portfolio:
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <strong>{b.slip_type} — {b.matchday_label}</strong>
                             <span><strong>{st_badge}</strong> &nbsp;|&nbsp; Odds: <strong>{b.total_odds:.2f}</strong> &nbsp;|&nbsp; Outcome: <strong style="color: {pnl_color};">{pnl_display}</strong></span>
+                        </div>
+                        <div style="color:#64748B; font-size:11px; margin-top:4px;">
+                            Mode: {b.selection_mode or '—'} · Model: {b.model_version or '—'} · Ratings: {b.ratings_hash or '—'}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1792,8 +1863,8 @@ with tab_import:
 with tab_backtest:
     st.subheader("🧪 Strategy Backtester & Performance Simulator")
     st.caption(
-        "Simulate quantitative predictive strategies against completed matches "
-        "with real scores and closing odds. Requires historical data with final scores."
+        "Quick simulation on completed matches with real scores and closing odds. This path fits ratings on "
+        "the full history, so its ROI is optimistic — use the walk-forward evaluation below for an honest number."
     )
 
     bt_c1, bt_c2, bt_c3, bt_c4 = st.columns(4)
@@ -1865,6 +1936,85 @@ with tab_backtest:
                 "Import finished matches with scores (Ingestion tab → Option B or Download Season)."
             )
 
+    # ── Walk-forward evaluation: the measurement that governs EV selection ────
+    st.markdown("---")
+    st.markdown("#### 🔬 Walk-Forward Evaluation (leak-free)")
+    st.caption(
+        "Each prediction is made with ratings that only saw earlier matches, then scored against the "
+        "de-vigged closing market. If the market wins, the model's 'edges' are noise and the engine gates "
+        "EV slips off instead of selling them."
+    )
+    wf_c1, wf_c2 = st.columns(2)
+    with wf_c1:
+        run_cal = st.button("📐 Run Calibration Evaluation", use_container_width=True)
+    with wf_c2:
+        run_wf = st.button("🎯 Run Walk-Forward EV Backtest", use_container_width=True)
+
+    if run_cal:
+        db_cal = _db()
+        try:
+            from app.services.calibration import run_walk_forward, save_report
+            with st.spinner("Refitting the rating model across history…"):
+                rep = run_walk_forward(db_cal)
+                if rep.get("n_matches"):
+                    save_report(rep)
+            st.session_state["cal_report"] = rep
+        except Exception as e:
+            st.error(f"Calibration error: {e}")
+        finally:
+            db_cal.close()
+
+    if run_wf:
+        db_wf = _db()
+        try:
+            from app.services.backtest import run_walkforward_backtest
+            with st.spinner("Replaying value bets out of sample…"):
+                st.session_state["wf_report"] = run_walkforward_backtest(
+                    db_wf, min_edge_percent=float(bt_min_ev)
+                )
+        except Exception as e:
+            st.error(f"Walk-forward backtest error: {e}")
+        finally:
+            db_wf.close()
+
+    cal_rep = st.session_state.get("cal_report") or load_calibration_report() or {}
+    if cal_rep:
+        verdict = cal_rep.get("verdict")
+        verdict_text = {
+            "model_beats_market": "✅ Model beats market",
+            "market_beats_model": "🚫 Market beats model",
+            "model_matches_market": "➖ Level with market",
+        }.get(verdict, str(verdict))
+        cm = cal_rep.get("model") or {}
+        mk = cal_rep.get("market") or {}
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Verdict", verdict_text)
+        k2.metric("Matches scored", cal_rep.get("n_matches", 0))
+        k3.metric("Model Brier", f"{cm.get('brier') or 0:.4f}")
+        k4.metric("Market Brier", f"{mk.get('brier') or 0:.4f}")
+        k5.metric("Edge multiplier", f"{cal_rep.get('edge_threshold_multiplier', 1.0)}×")
+        if verdict != "model_beats_market":
+            st.warning(
+                "EV slips are being withheld because this measurement does not validate the model's edges. "
+                "Refresh match results and ratings, then re-run until the model genuinely beats the market."
+            )
+        if cal_rep.get("generated_at"):
+            st.caption(f"Measured at {cal_rep['generated_at']}")
+
+    wf_rep = st.session_state.get("wf_report")
+    if wf_rep:
+        st.markdown("##### Walk-forward value-bet replay")
+        w1, w2, w3, w4, w5 = st.columns(5)
+        w1.metric("Bets", wf_rep.get("total_bets", 0))
+        w2.metric("Win rate", f"{wf_rep.get('win_rate_percent', 0):.1f}%")
+        w3.metric("ROI", f"{wf_rep.get('roi_percent', 0):+.1f}%")
+        w4.metric("Max drawdown", f"{wf_rep.get('max_drawdown_percent', 0):.1f}%")
+        w5.metric("Avg claimed edge", f"{wf_rep.get('avg_edge_percent', 0):+.1f}%")
+        st.caption(
+            "A strongly negative ROI on a large sample with a large average claimed edge is the signature "
+            "of unvalidated edges: the prices are fair, the model's disagreement is the error."
+        )
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 4 — MARKET PROBABILITIES
@@ -1933,6 +2083,36 @@ with tab_ratings:
         "fixture data-quality scores to Grade A/B analysis readiness."
     )
 
+    db_fresh = _db()
+    try:
+        from app.services.ratings import data_age_days
+        fresh_rows = db_fresh.execute(
+            select(TeamRating.competition, func.count(TeamRating.id), func.max(TeamRating.last_match_at))
+            .group_by(TeamRating.competition)
+        ).all()
+        fresh = []
+        for comp, teams, last_match in fresh_rows:
+            age = data_age_days(last_match)
+            fresh.append({"Competition": comp, "Teams": teams, "Data age (days)": age,
+                          "Status": "🔴 Stale" if (age is not None and age > STALE_AFTER_DAYS) else "🟢 Fresh"})
+        snapshot = ratings_snapshot_hash(db_fresh)
+    finally:
+        db_fresh.close()
+
+    st.markdown("#### Evidence Freshness")
+    st.caption(
+        f"Ratings snapshot `{snapshot}` · considered stale after {STALE_AFTER_DAYS:.0f} days. "
+        "Stale ratings are the most common source of fake EV: the model is pricing last season's team."
+    )
+    if fresh:
+        st.dataframe(pd.DataFrame(fresh), use_container_width=True, hide_index=True)
+        if any(r["Status"] != "🟢 Fresh" for r in fresh):
+            st.warning(
+                "At least one competition's ratings are stale. Import recent finished matches and press "
+                "**Auto-Calculate Ratings** so the model is not comparing old form with new prices."
+            )
+
+    st.markdown("---")
     db_r = _db()
     ratings_all = db_r.scalars(
         select(TeamRating).order_by(TeamRating.competition, TeamRating.team_name).limit(200)

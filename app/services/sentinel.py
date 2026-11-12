@@ -191,6 +191,13 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
     try:
         # ── Step 0: Settle any finished pending bets & send outcome alerts ────
         from app.services.settlement import settle_pending_bets, record_tracked_bet
+        try:
+            from app.services.clv import capture_closing_prices
+            captured = capture_closing_prices(db)
+            if captured:
+                _log_event(f"🏁 Captured {captured} closing price(s) for closing-line value tracking.")
+        except Exception:
+            _log_event("⚠️ Closing-price capture failed; CLV will be retried next cycle.")
         settled_list = settle_pending_bets(db, phone=phone, apikey=apikey, provider=provider, currency=currency)
         if settled_list:
             _log_event(f"⚖️ Automatically settled {len(settled_list)} pending multi-bet slip(s)! Ledger updated.")

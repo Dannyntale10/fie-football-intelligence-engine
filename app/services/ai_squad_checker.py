@@ -149,21 +149,28 @@ def check_squad_and_injuries(
         verdict = ai_result.get("verdict", "APPROVED").upper()
         res = {
             "verdict": verdict,
+            # The model answers from memory, not from a verified lineup feed;
+            # callers must not use this as a hard filter.
+            "source": "ai_unverified",
+            "advisory": True,
             "badge": "✅ Approved Banker" if verdict == "APPROVED" else "⚠️ Caution Advised",
-            "injuries": ai_result.get("injuries", "Squad news: Key starting core fit and available."),
+            "injuries": ai_result.get("injuries", "Squad news unavailable from a verified feed."),
             "form_summary": ai_result.get("form_summary", form_text),
             "h2h_summary": h2h_text,
-            "risk_note": ai_result.get("risk_note", "Dixon-Coles ratings and squad health confirm edge."),
+            "risk_note": ai_result.get("risk_note", "Model and market disagree; treat squad commentary as advisory."),
         }
     else:
-        # Algorithmic fallback
+        # Algorithmic fallback: no verified squad feed is configured, so say so
+        # rather than inventing a starting XI.
         res = {
             "verdict": "APPROVED",
+            "source": "heuristic",
+            "advisory": True,
             "badge": "✅ Approved Banker",
-            "injuries": "Squad status: Regular starting XI available. Key goalscorers and goalkeepers fit.",
+            "injuries": "No verified lineup/injury feed configured.",
             "form_summary": f"Recent Performance: {form_text} (Goals: {home_team} {h_form.get('gf_avg', 1.8)}/m vs {away_team} {a_form.get('gf_avg', 1.1)}/m)",
             "h2h_summary": h2h_text,
-            "risk_note": "Poisson rating consistency and data quality confirm safe banker profile.",
+            "risk_note": "Advisory only: not grounded in a verified squad feed.",
         }
 
     _AI_SQUAD_CACHE[cache_key] = res

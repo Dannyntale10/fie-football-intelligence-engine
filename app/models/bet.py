@@ -26,3 +26,7 @@ class TrackedBet(Base):
     settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     whatsapp_alert_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     whatsapp_settlement_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Provenance: what produced this slip, so results can be attributed later.
+    model_version: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    ratings_hash: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    selection_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)

@@ -133,6 +133,7 @@ def test_ev_mode_selects_legs_that_beat_the_market(db, monkeypatch):
         "analyze_fixture",
         lambda fixture, **kwargs: {
             "all_markets": {"home_win": 0.70, "draw": 0.18, "away_win": 0.12},
+            "lambda_source": "team_ratings",
         },
     )
     monkeypatch.setattr(
@@ -156,6 +157,7 @@ def test_ev_mode_selects_legs_that_beat_the_market(db, monkeypatch):
         min_leg_prob=0.55,
         min_total_odds=1.50,
         min_edge_percent=3.0,
+        max_edge_percent=50.0,
         selection_mode="ev",
     )
 
@@ -173,6 +175,7 @@ def test_ev_mode_rejects_legs_without_an_edge(db, monkeypatch):
         "analyze_fixture",
         lambda fixture, **kwargs: {
             "all_markets": {"home_win": 0.70, "draw": 0.18, "away_win": 0.12},
+            "lambda_source": "team_ratings",
         },
     )
     monkeypatch.setattr(
@@ -210,6 +213,7 @@ def test_ev_mode_uses_non_1x2_market_prices(db, monkeypatch):
         "analyze_fixture",
         lambda fixture, **kwargs: {
             "all_markets": {"home_win": 0.40, "draw": 0.27, "away_win": 0.33, "btts_no": 0.68},
+            "lambda_source": "team_ratings",
         },
     )
     monkeypatch.setattr(
@@ -245,3 +249,84 @@ def test_ev_mode_uses_non_1x2_market_prices(db, monkeypatch):
     assert best is not None
     # 1/1.70 = 58.8% implied vs the model's 68% -> a real edge on BTTS No.
     assert {leg["market_key"] for leg in best["legs"]} == {"btts_no"}
+
+
+def test_ev_mode_skips_fixtures_without_team_ratings(db, monkeypatch):
+    monkeypatch.setattr(
+        combo_mod,
+        "analyze_fixture",
+        lambda fixture, **kwargs: {
+            "all_markets": {"home_win": 0.70, "draw": 0.18, "away_win": 0.12},
+            "lambda_source": "odds_implied",
+        },
+    )
+    monkeypatch.setattr(
+        combo_mod, "check_squad_and_injuries", lambda **kwargs: {"verdict": "APPROVED"}
+    )
+
+    for suffix in ("1", "2"):
+        _add_fixture(
+            db,
+            suffix,
+            home_odds=2.10,
+            draw_odds=3.50,
+            away_odds=3.40,
+            market_odds={"home_win": 2.10, "draw": 3.50, "away_win": 3.40},
+        )
+
+    kwargs = dict(
+        db=db,
+        target_date="all",
+        num_legs=2,
+        min_leg_prob=0.55,
+        min_total_odds=1.50,
+        min_edge_percent=3.0,
+        max_edge_percent=50.0,
+        selection_mode="ev",
+    )
+    gated = combo_mod.generate_high_confidence_combos(**kwargs)
+    assert gated["best_combo"] is None
+    assert gated["diagnostics"]["unrated_fixtures_skipped"] == 2
+    assert gated["diagnostics"]["candidate_legs"] == 0
+
+    # Opting out of the ratings gate re-exposes the circular edges, proving the
+    # gate is what suppressed them.
+    ungated = combo_mod.generate_high_confidence_combos(require_ratings=False, **kwargs)
+    assert ungated["best_combo"] is not None
+
+
+def test_ev_mode_rejects_implausible_edges(db, monkeypatch):
+    monkeypatch.setattr(
+        combo_mod,
+        "analyze_fixture",
+        lambda fixture, **kwargs: {
+            "all_markets": {"home_win": 0.95, "draw": 0.03, "away_win": 0.02},
+            "lambda_source": "team_ratings",
+        },
+    )
+    monkeypatch.setattr(
+        combo_mod, "check_squad_and_injuries", lambda **kwargs: {"verdict": "APPROVED"}
+    )
+
+    for suffix in ("1", "2"):
+        _add_fixture(
+            db,
+            suffix,
+            home_odds=1.80,
+            draw_odds=3.60,
+            away_odds=7.00,
+            market_odds={"home_win": 1.80, "draw": 3.60, "away_win": 7.00},
+        )
+
+    res = combo_mod.generate_high_confidence_combos(
+        db=db,
+        target_date="all",
+        num_legs=2,
+        min_leg_prob=0.55,
+        min_total_odds=1.50,
+        min_edge_percent=3.0,
+        selection_mode="ev",
+    )
+
+    assert res["best_combo"] is None
+    assert res["diagnostics"]["implausible_edges_skipped"] > 0

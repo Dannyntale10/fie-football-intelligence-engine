@@ -425,25 +425,34 @@ def get_daily_portfolio(
 def get_portfolio_combos(
     target_date: Optional[str] = Query(None, description="Specific YYYY-MM-DD matchday (in EAT), or None for next active matchday"),
     num_legs: int = Query(3, ge=2, le=3, description="Target number of teams in the combo (strictly 2 or 3)"),
-    min_total_odds: float = Query(2.00, ge=1.10, le=10.0, description="Minimum combined total odds"),
-    min_leg_prob: float = Query(0.85, ge=0.50, le=0.99, description="Minimum individual leg win/draw probability"),
-    min_accumulator_prob: Optional[float] = Query(None, ge=0.50, le=1.00, description="Minimum joint accumulator ticket win probability (e.g. 0.85 for 85%-100%)"),
+    selection_mode: str = Query("ev", pattern="^(ev|certainty)$", description="'ev' ranks legs by edge over the de-vigged bookmaker price; 'certainty' ranks by joint win probability"),
+    min_edge_percent: float = Query(3.0, ge=0.0, le=50.0, description="EV mode: minimum model-probability edge over the de-vigged market price (percentage points)"),
+    min_total_odds: Optional[float] = Query(None, ge=1.10, le=10.0, description="Minimum combined total odds (default 1.50 in EV mode, 2.00 in certainty mode)"),
+    min_leg_prob: Optional[float] = Query(None, ge=0.50, le=0.99, description="Minimum individual leg win probability (default 0.55 in EV mode, 0.85 in certainty mode)"),
+    min_accumulator_prob: Optional[float] = Query(None, ge=0.50, le=1.00, description="Certainty mode: minimum joint accumulator ticket win probability (e.g. 0.85 for 85%-100%)"),
     bankroll: float = Query(1000.0, ge=10.0, description="Bankroll for Kelly sizing"),
     competition: Optional[str] = Query(None, description="Optional competition filter"),
     allow_synthetic_odds: bool = Query(False, description="Allow model-derived (estimated) prices, labelled as such. Off by default: only ingested bookmaker prices are eligible."),
+    require_ratings: bool = Query(True, description="EV mode: only compare the independent team-ratings model against the market. With no ratings the model is fitted to the same 1X2 prices, so any edge would be circular."),
+    max_edge_percent: float = Query(20.0, ge=3.0, le=50.0, description="EV mode: reject legs where model and market disagree by more than this (usually stale ratings, not a real edge)."),
     db: Session = Depends(get_db),
 ):
-    """Generate same-day daily high-confidence accumulators with accumulator win prob >= 85%-100%."""
+    """Generate daily accumulators. EV mode (default) targets model edge over the bookmaker's de-vigged price; certainty mode targets joint win probability >= 85%."""
+    ev_mode = selection_mode == "ev"
     return generate_high_confidence_combos(
         db=db,
         target_date=target_date,
         num_legs=num_legs,
-        min_leg_prob=min_leg_prob,
+        min_leg_prob=min_leg_prob if min_leg_prob is not None else (0.55 if ev_mode else 0.85),
         min_accumulator_prob=min_accumulator_prob,
-        min_total_odds=min_total_odds,
+        min_total_odds=min_total_odds if min_total_odds is not None else (1.50 if ev_mode else 2.00),
         bankroll=bankroll,
         competition=competition,
         require_market_odds=not allow_synthetic_odds,
+        selection_mode=selection_mode,
+        min_edge_percent=min_edge_percent,
+        require_ratings=require_ratings,
+        max_edge_percent=max_edge_percent,
     )
 
 @app.get("/fixtures/{fixture_id}/best-odds")

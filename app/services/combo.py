@@ -140,12 +140,17 @@ def _collect_ev_candidates(
     db: Session,
     min_leg_prob: float,
     min_edge_percent: float,
+    require_ratings: bool = True,
+    max_edge_percent: float = 20.0,
 ) -> Dict[str, Any]:
     """Value path: keep legs where the model beats the de-vigged market price."""
     candidates: List[Dict[str, Any]] = []
     fixtures_with_priced_markets = 0
     fixtures_with_market_odds = 0
     priced_legs = 0
+    rated_fixtures = 0
+    unrated_skipped = 0
+    implausible_skipped = 0
 
     for f in fixtures:
         market_odds = _fixture_market_odds(f)
@@ -161,6 +166,14 @@ def _collect_ev_candidates(
         except Exception:
             continue
         probs = analysis.get("all_markets", {})
+        model_source = analysis.get("lambda_source")
+        if model_source == "team_ratings":
+            rated_fixtures += 1
+        elif require_ratings:
+            # Without ratings the model is fitted to these very 1X2 prices, so
+            # any "edge" would be circular rather than independent information.
+            unrated_skipped += 1
+            continue
         _, fair = _devigged_probabilities(market_odds)
 
         fixture_cands: List[Dict[str, Any]] = []
@@ -174,6 +187,9 @@ def _collect_ev_candidates(
             edge_pct = (prob - fair_implied) * 100.0
             ev_pct = (prob * price - 1.0) * 100.0
             if edge_pct < min_edge_percent or ev_pct <= 0:
+                continue
+            if edge_pct > max_edge_percent:
+                implausible_skipped += 1
                 continue
 
             market_type, selection = _selection_label(key, f.home_team, f.away_team)
@@ -201,6 +217,7 @@ def _collect_ev_candidates(
                 "edge_percent": round(edge_pct, 2),
                 "expected_value_percent": round(ev_pct, 2),
                 "odds_source": "market",
+                "model_source": model_source,
                 "ai_squad": squad_check,
                 "kickoff_utc": f.kickoff_utc.isoformat(),
                 "kickoff_eat": _format_eat(f.kickoff_utc),
@@ -214,6 +231,9 @@ def _collect_ev_candidates(
         "fixtures_with_priced_markets": fixtures_with_priced_markets,
         "fixtures_with_market_odds": fixtures_with_market_odds,
         "priced_legs": priced_legs,
+        "rated_fixtures": rated_fixtures,
+        "unrated_skipped": unrated_skipped,
+        "implausible_skipped": implausible_skipped,
     }
 
 
@@ -327,6 +347,8 @@ def generate_high_confidence_combos(
     require_market_odds: bool = True,
     selection_mode: str = "certainty",
     min_edge_percent: float = 3.0,
+    require_ratings: bool = True,
+    max_edge_percent: float = 20.0,
 ) -> Dict[str, Any]:
     """Generate optimal same-day multi-bet slips.
 
@@ -347,6 +369,13 @@ def generate_high_confidence_combos(
         selection_mode: ``"ev"`` ranks by edge over the de-vigged market price;
             ``"certainty"`` applies the legacy 85% probability floors.
         min_edge_percent: Minimum model-vs-market edge for a leg in EV mode.
+        require_ratings: EV mode only rated teams with an independent
+            (attack/defence) model. When a fixture has no ratings its
+            probabilities are derived from the same 1X2 prices it is compared
+            against, which would manufacture fake edges.
+        max_edge_percent: Edges this large mean the model and the market
+            disagree about team strength (usually stale ratings), not that the
+            bookmaker is wrong. Such legs are rejected as model failures.
 
     Returns:
         dict with target_matchday, best_combo, alternatives, candidate_legs,
@@ -355,14 +384,18 @@ def generate_high_confidence_combos(
     now = datetime.now(timezone.utc)
     matchdays = get_available_matchdays(db)
 
-    # If no target date provided, default to next active matchday
+    # If no target date provided, default to next active matchday.
+    # "all" is an explicit sentinel meaning every upcoming fixture.
     if not target_date and matchdays:
         target_date = matchdays[0]["date"]
 
-    target_matchday_info = next((m for m in matchdays if m["date"] == target_date), None)
-    if not target_matchday_info and matchdays:
-        target_date = matchdays[0]["date"]
-        target_matchday_info = matchdays[0]
+    if target_date != "all":
+        target_matchday_info = next((m for m in matchdays if m["date"] == target_date), None)
+        if not target_matchday_info and matchdays:
+            target_date = matchdays[0]["date"]
+            target_matchday_info = matchdays[0]
+    else:
+        target_matchday_info = None
 
     # Query ALL scheduled upcoming fixtures
     query = (
@@ -395,15 +428,26 @@ def generate_high_confidence_combos(
     fixtures_with_market_odds = 0
     fixtures_with_priced_markets = 0
     priced_legs = 0
+    rated_fixtures = 0
+    unrated_skipped = 0
+    implausible_skipped = 0
 
     if mode == "ev":
         ev_collected = _collect_ev_candidates(
-            fixtures, db, min_leg_prob=min_leg_prob, min_edge_percent=min_edge_percent
+            fixtures,
+            db,
+            min_leg_prob=min_leg_prob,
+            min_edge_percent=min_edge_percent,
+            require_ratings=require_ratings,
+            max_edge_percent=max_edge_percent,
         )
         candidates = ev_collected["candidates"]
         fixtures_with_market_odds = ev_collected["fixtures_with_market_odds"]
         fixtures_with_priced_markets = ev_collected["fixtures_with_priced_markets"]
         priced_legs = ev_collected["priced_legs"]
+        rated_fixtures = ev_collected["rated_fixtures"]
+        unrated_skipped = ev_collected["unrated_skipped"]
+        implausible_skipped = ev_collected["implausible_skipped"]
         fixtures_for_certainty: List[Fixture] = []
     else:
         fixtures_for_certainty = fixtures
@@ -653,7 +697,7 @@ def generate_high_confidence_combos(
 
     return {
         "target_date": target_date,
-        "matchday_label": target_matchday_info["label"] if target_matchday_info else (target_date or "All Matchdays"),
+        "matchday_label": target_matchday_info["label"] if target_matchday_info else ("All Upcoming Fixtures" if target_date == "all" else (target_date or "All Matchdays")),
         "matchday_matches_count": target_matchday_info["count"] if target_matchday_info else len(fixtures),
         "available_matchdays": matchdays,
         "params": {
@@ -665,6 +709,8 @@ def generate_high_confidence_combos(
             "require_market_odds": require_market_odds,
             "selection_mode": mode,
             "min_edge_percent": min_edge_percent,
+            "require_ratings": require_ratings,
+            "max_edge_percent": max_edge_percent,
         },
         "odds_policy": {
             "require_market_odds": require_market_odds,
@@ -687,6 +733,9 @@ def generate_high_confidence_combos(
             "fixtures_with_market_1x2": fixtures_with_market_odds,
             "fixtures_with_priced_markets": fixtures_with_priced_markets,
             "priced_legs": priced_legs,
+            "rated_fixtures": rated_fixtures,
+            "unrated_fixtures_skipped": unrated_skipped,
+            "implausible_edges_skipped": implausible_skipped,
             "candidate_legs": len(candidates),
             "synthetic_legs_excluded": synthetic_legs_excluded,
             "combos_generated": len(combos),

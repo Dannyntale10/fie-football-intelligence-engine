@@ -365,9 +365,8 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
                 _log_event("ℹ️ Qualifying combos already alerted previously. Skipping duplicate notification.")
         else:
             _log_event(
-                "⏳ No combo across all scanned leagues satisfies all 3 rules simultaneously "
-                "(AVG CONF >= 85%, ACCUM WIN PROB >= 85%, ODDS >= 2.00). "
-                "Non-qualifying candidates rejected. Sentinel remains active 24/7 and will keep scanning."
+                "⏳ No rated fixture produced a +EV slip this cycle (edge ≥ 3%, odds ≥ 1.50, real prices). "
+                "Unrated fixtures are skipped so edges are never circular. Sentinel stays active 24/7."
             )
 
         return {
@@ -389,7 +388,7 @@ def _sentinel_loop(interval_seconds: int = 30):
     """Continuous background loop running 24 hours a day with real-time 30-second bookmaker feeds."""
     unit_str = f"{interval_seconds}s" if interval_seconds < 60 else f"{interval_seconds//60} min(s)"
     _log_event(f"🚀 24/7 Autonomous Banker Sentinel active — auto-updating ALL 35+ leagues every {unit_str}.")
-    _log_event("📋 Strict rules: AVG CONF >= 85% AND ACCUM WIN PROB >= 85% AND Odds >= 2.00 — no fallbacks.")
+    _log_event("📋 Rules: model edge ≥ 3% over de-vigged prices AND odds ≥ 1.50 — real prices, rated teams only.")
     while not _sentinel_stop_event.is_set():
         try:
             run_sentinel_scan_now()

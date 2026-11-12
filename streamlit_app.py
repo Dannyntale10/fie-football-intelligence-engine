@@ -22,8 +22,9 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# ── Database: use /tmp on Streamlit Cloud, local fie.db elsewhere ─────────────
-_default_db = "sqlite:////tmp/fie_cloud.db"
+# ── Database: /tmp on Streamlit Cloud (no persistent disk), local fie.db elsewhere ──
+_is_hosted = Path("/mount/src").exists() or os.getenv("STREAMLIT_SHARING_MODE") is not None
+_default_db = "sqlite:////tmp/fie_cloud.db" if _is_hosted else "sqlite:///./fie.db"
 os.environ.setdefault("DATABASE_URL", _default_db)
 
 # ── Bootstrap the ORM (import order matters: config → engine → models) ────────
@@ -689,7 +690,19 @@ with tab_portfolio:
     sel_odds_floor = 1.50 if ev_mode else 2.00
 
     allow_est_odds = False
-    if not ev_mode:
+    sel_require_ratings = True
+    if ev_mode:
+        sel_require_ratings = st.checkbox(
+            "🎯 Only use teams with independent model ratings (recommended)",
+            value=True,
+            key="cloud_require_ratings",
+            help=(
+                "Fixtures without attack/defence ratings get their probabilities fitted to the very "
+                "1X2 prices they are compared against — any 'edge' there is circular. Leaving this on "
+                "means a value slip only appears when the model genuinely disagrees with the market."
+            ),
+        )
+    else:
         allow_est_odds = st.checkbox(
             "🧮 Allow estimated/derived odds (research only)",
             value=False,
@@ -723,6 +736,7 @@ with tab_portfolio:
                     require_market_odds=not allow_est_odds,
                     selection_mode="ev" if ev_mode else "certainty",
                     min_edge_percent=sel_min_edge_prob * 100.0,
+                    require_ratings=sel_require_ratings,
                 )
             finally:
                 db_combo.close()
@@ -748,12 +762,14 @@ with tab_portfolio:
                         <div class="fie-funnel">
                             <div><span>FIXTURES SCANNED</span><strong>{diag.get('fixtures_in_scope', 0)}</strong></div>
                             <div><span>WITH MULTI-MARKET PRICES</span><strong>{diag.get('fixtures_with_priced_markets', 0)}</strong></div>
-                            <div><span>PRICED LEGS CHECKED</span><strong>{diag.get('priced_legs', 0)}</strong></div>
+                            <div><span>RATED BY MODEL</span><strong>{diag.get('rated_fixtures', 0)}</strong></div>
                             <div><span>VALUE LEGS</span><strong>{diag.get('candidate_legs', 0)}</strong></div>
                         </div>
                         <p style="margin:10px 0 0;color:#64748B;font-size:12px;">
-                            Best edge seen: {diag.get('best_edge_percent', 0):+.1f}% &nbsp;·&nbsp;
-                            Slips built: {diag.get('combos_generated', 0)}
+                            Priced legs checked: {diag.get('priced_legs', 0)} &nbsp;·&nbsp;
+                            Skipped without team ratings: {diag.get('unrated_fixtures_skipped', 0)} &nbsp;·&nbsp;
+                            Rejected as implausible: {diag.get('implausible_edges_skipped', 0)} &nbsp;·&nbsp;
+                            Best edge seen: {diag.get('best_edge_percent', 0):+.1f}%
                         </p>
                     </div>
                     """
@@ -862,6 +878,7 @@ with tab_portfolio:
                         "Market Type": l["market_type"],
                         "Odds": f"{l['odds']:.2f}",
                         "Price Source": "🏦 Market" if l.get("odds_source") == "market" else "🧮 Estimate",
+                        "Model Source": "📊 Team ratings" if l.get("model_source") == "team_ratings" else ("🧮 Odds-implied" if l.get("model_source") else "—"),
                         "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
                         "Edge vs Market": f"{l['edge_percent']:+.1f}%" if l.get("edge_percent") is not None else "—",
                         "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],

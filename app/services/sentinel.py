@@ -48,7 +48,7 @@ _sentinel_state: Dict[str, Any] = {
 
 
 def _load_persisted_state():
-    """Load previously notified combo hashes from disk."""
+    """Load previously notified combo hashes and credentials from disk."""
     if _HISTORY_FILE.exists():
         try:
             with open(_HISTORY_FILE, "r") as f:
@@ -56,6 +56,10 @@ def _load_persisted_state():
                 _sentinel_state["alerts_dispatched_count"] = data.get("alerts_dispatched_count", 0)
                 _sentinel_state["notified_hashes"] = set(data.get("notified_hashes", []))
                 _sentinel_state["last_alert_eat"] = data.get("last_alert_eat")
+                if data.get("whatsapp_phone"):
+                    _sentinel_state["whatsapp_phone"] = data.get("whatsapp_phone")
+                if data.get("whatsapp_apikey"):
+                    _sentinel_state["whatsapp_apikey"] = data.get("whatsapp_apikey")
                 return
         except Exception as e:
             logger.debug(f"Failed to load sentinel state: {e}")
@@ -63,13 +67,15 @@ def _load_persisted_state():
 
 
 def _save_persisted_state():
-    """Persist notified combo hashes to disk so restarts don't spam."""
+    """Persist notified combo hashes and credentials to disk so restarts don't lose them."""
     try:
         with open(_HISTORY_FILE, "w") as f:
             json.dump({
                 "alerts_dispatched_count": _sentinel_state.get("alerts_dispatched_count", 0),
                 "notified_hashes": list(_sentinel_state.get("notified_hashes", set())),
                 "last_alert_eat": _sentinel_state.get("last_alert_eat"),
+                "whatsapp_phone": _sentinel_state.get("whatsapp_phone", os.getenv("WHATSAPP_PHONE", "")),
+                "whatsapp_apikey": _sentinel_state.get("whatsapp_apikey", os.getenv("WHATSAPP_APIKEY", "")),
             }, f, indent=2)
     except Exception as e:
         logger.debug(f"Failed to save sentinel state: {e}")
@@ -173,8 +179,8 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
     _sentinel_state["last_scan_eat"] = now_eat
     _sentinel_state["scans_count"] = _sentinel_state.get("scans_count", 0) + 1
 
-    phone    = os.getenv("WHATSAPP_PHONE", "").strip()
-    apikey   = os.getenv("WHATSAPP_APIKEY", "").strip()
+    phone    = (os.getenv("WHATSAPP_PHONE", "").strip() or _sentinel_state.get("whatsapp_phone", "").strip())
+    apikey   = (os.getenv("WHATSAPP_APIKEY", "").strip() or _sentinel_state.get("whatsapp_apikey", "").strip())
     provider = os.getenv("WHATSAPP_PROVIDER", "callmebot").strip()
     currency = os.getenv("FIE_CURRENCY", "UGX")
     bankroll = float(os.getenv("FIE_BANKROLL", "1000"))
@@ -199,7 +205,12 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
 
         notified = _sentinel_state.setdefault("notified_hashes", set())
 
-        # ── Step 3: Search every matchday until we find qualifying combos ─────
+        best_found_2: Optional[Dict[str, Any]] = None
+        best_found_3: Optional[Dict[str, Any]] = None
+        best_label_2: str = ""
+        best_label_3: str = ""
+
+        # ── Step 3: Search each matchday ─────────────────────────────────────
         for matchday in all_matchdays:
             m_date  = matchday["date"]
             m_label = matchday["label"]
@@ -207,101 +218,140 @@ def run_sentinel_scan_now() -> Dict[str, Any]:
 
             _log_event(f"🔎 Checking {m_label} ({m_count} fixtures)…")
 
-            found_2: Optional[Dict[str, Any]] = None
-            found_3: Optional[Dict[str, Any]] = None
+            # Search 2-team combo on this matchday if not already found
+            if not best_found_2:
+                res2 = generate_high_confidence_combos(
+                    db=db,
+                    target_date=m_date,
+                    num_legs=2,
+                    min_leg_prob=0.85,
+                    min_accumulator_prob=0.85,  # HARD RULE: ACCUM WIN PROB >= 85%
+                    min_total_odds=2.00,         # HARD RULE: Odds >= 2.00
+                    bankroll=bankroll,
+                )
+                b2 = res2.get("best_combo")
+                if b2:
+                    avg2  = b2.get("avg_leg_probability", 0) * 100
+                    acc2  = b2.get("combined_probability", 0) * 100
+                    odds2 = b2.get("total_odds", 0)
+                    if odds2 >= 2.00 and avg2 >= 85.0 and acc2 >= 85.0:
+                        best_found_2 = b2
+                        best_label_2 = m_label
+                        _log_event(f"  ✅ Qualifying 2-team found: Odds {odds2:.2f} | AvgConf {avg2:.1f}% | AccumProb {acc2:.1f}%")
 
-            # Search for 2-team combo on this matchday
-            res2 = generate_high_confidence_combos(
-                db=db,
-                target_date=m_date,
-                num_legs=2,
-                min_leg_prob=0.85,
-                min_accumulator_prob=0.85,  # HARD RULE: ACCUM WIN PROB >= 85%
-                min_total_odds=2.00,         # HARD RULE: Odds >= 2.00
-                bankroll=bankroll,
-            )
-            best2 = res2.get("best_combo")
-            if best2:
-                avg2   = best2.get("avg_leg_probability", 0) * 100
-                acc2   = best2.get("combined_probability", 0) * 100
-                odds2  = best2.get("total_odds", 0)
-                # Belt-and-suspenders final check
-                if odds2 >= 2.00 and avg2 >= 85.0 and acc2 >= 85.0:
-                    found_2 = best2
-                    _log_event(f"  ✅ Qualifying 2-team found: Odds {odds2:.2f} | AvgConf {avg2:.1f}% | AccumProb {acc2:.1f}%")
-                else:
-                    _log_event(f"  ⛔ 2-team rejected (Odds {odds2:.2f}, AvgConf {avg2:.1f}%, Accum {acc2:.1f}%) — not all >= threshold.")
+            # Search 3-team combo on this matchday if not already found
+            if not best_found_3:
+                res3 = generate_high_confidence_combos(
+                    db=db,
+                    target_date=m_date,
+                    num_legs=3,
+                    min_leg_prob=0.85,
+                    min_accumulator_prob=0.85,  # HARD RULE: ACCUM WIN PROB >= 85%
+                    min_total_odds=2.00,         # HARD RULE: Odds >= 2.00
+                    bankroll=bankroll,
+                )
+                b3 = res3.get("best_combo")
+                if b3:
+                    avg3  = b3.get("avg_leg_probability", 0) * 100
+                    acc3  = b3.get("combined_probability", 0) * 100
+                    odds3 = b3.get("total_odds", 0)
+                    if odds3 >= 2.00 and avg3 >= 85.0 and acc3 >= 85.0:
+                        best_found_3 = b3
+                        best_label_3 = m_label
+                        _log_event(f"  ✅ Qualifying 3-team found: Odds {odds3:.2f} | AvgConf {avg3:.1f}% | AccumProb {acc3:.1f}%")
 
-            # Search for 3-team combo on this matchday
-            res3 = generate_high_confidence_combos(
-                db=db,
-                target_date=m_date,
-                num_legs=3,
-                min_leg_prob=0.85,
-                min_accumulator_prob=0.85,  # HARD RULE: ACCUM WIN PROB >= 85%
-                min_total_odds=2.00,         # HARD RULE: Odds >= 2.00
-                bankroll=bankroll,
-            )
-            best3 = res3.get("best_combo")
-            if best3:
-                avg3   = best3.get("avg_leg_probability", 0) * 100
-                acc3   = best3.get("combined_probability", 0) * 100
-                odds3  = best3.get("total_odds", 0)
-                if odds3 >= 2.00 and avg3 >= 85.0 and acc3 >= 85.0:
-                    found_3 = best3
-                    _log_event(f"  ✅ Qualifying 3-team found: Odds {odds3:.2f} | AvgConf {avg3:.1f}% | AccumProb {acc3:.1f}%")
-                else:
-                    _log_event(f"  ⛔ 3-team rejected (Odds {odds3:.2f}, AvgConf {avg3:.1f}%, Accum {acc3:.1f}%) — not all >= threshold.")
+            # If both 2-team and 3-team have been found, we can stop searching matchdays
+            if best_found_2 and best_found_3:
+                break
 
-            # Only alert if we have AT LEAST ONE qualifying combo (2 or 3-team)
-            # Prefer days where BOTH are found — keep searching if neither found
-            if not found_2 and not found_3:
-                _log_event(f"  ↩️  No qualifying combo on {m_label}. Checking next matchday…")
-                continue
+        # ── Step 4: If either is still missing, search across ALL upcoming fixtures (Cross-League) ──
+        if not (best_found_2 and best_found_3):
+            _log_event("🔎 Checking across ALL upcoming fixtures in all 35+ leagues & divisions (Cross-League)…")
+            if not best_found_2:
+                res2_all = generate_high_confidence_combos(
+                    db=db,
+                    target_date="all",
+                    num_legs=2,
+                    min_leg_prob=0.85,
+                    min_accumulator_prob=0.85,
+                    min_total_odds=2.00,
+                    bankroll=bankroll,
+                )
+                b2_all = res2_all.get("best_combo")
+                if b2_all:
+                    avg2  = b2_all.get("avg_leg_probability", 0) * 100
+                    acc2  = b2_all.get("combined_probability", 0) * 100
+                    odds2 = b2_all.get("total_odds", 0)
+                    if odds2 >= 2.00 and avg2 >= 85.0 and acc2 >= 85.0:
+                        best_found_2 = b2_all
+                        best_label_2 = "Cross-League Upcoming"
+                        _log_event(f"  ✅ Cross-league 2-team found: Odds {odds2:.2f} | AvgConf {avg2:.1f}% | AccumProb {acc2:.1f}%")
 
-            # Build a combined signature for dedup (covers whichever combos we found)
+            if not best_found_3:
+                res3_all = generate_high_confidence_combos(
+                    db=db,
+                    target_date="all",
+                    num_legs=3,
+                    min_leg_prob=0.85,
+                    min_accumulator_prob=0.85,
+                    min_total_odds=2.00,
+                    bankroll=bankroll,
+                )
+                b3_all = res3_all.get("best_combo")
+                if b3_all:
+                    avg3  = b3_all.get("avg_leg_probability", 0) * 100
+                    acc3  = b3_all.get("combined_probability", 0) * 100
+                    odds3 = b3_all.get("total_odds", 0)
+                    if odds3 >= 2.00 and avg3 >= 85.0 and acc3 >= 85.0:
+                        best_found_3 = b3_all
+                        best_label_3 = "Cross-League Upcoming"
+                        _log_event(f"  ✅ Cross-league 3-team found: Odds {odds3:.2f} | AvgConf {avg3:.1f}% | AccumProb {acc3:.1f}%")
+
+        # ── Step 5: Dispatch WhatsApp Alert if qualifying combos found ─────────
+        if best_found_2 or best_found_3:
+            combined_label = best_label_3 or best_label_2 or "Today"
             sig_parts = []
-            if found_2:
-                sig_parts.append(_combo_signature(found_2, m_label))
-            if found_3:
-                sig_parts.append(_combo_signature(found_3, m_label))
+            if best_found_2:
+                sig_parts.append(_combo_signature(best_found_2, best_label_2))
+            if best_found_3:
+                sig_parts.append(_combo_signature(best_found_3, best_label_3))
             combined_sig = hashlib.md5("_".join(sorted(sig_parts)).encode()).hexdigest()
 
-            if combined_sig in notified:
-                _log_event(f"  ℹ️ Combos on {m_label} already alerted. Skipping duplicate.")
-                continue
+            if combined_sig not in notified:
+                msg = _format_dual_whatsapp_message(best_found_2, best_found_3, combined_label, currency)
+                teams_found = []
+                if best_found_2: teams_found.append("2-Team")
+                if best_found_3: teams_found.append("3-Team")
+                combo_summary = " & ".join(teams_found)
+                _log_event(f"🎯 QUALIFYING {combo_summary} combo(s) found! Dispatching WhatsApp alert…")
 
-            # ── Step 4: Send combined WhatsApp alert ─────────────────────────
-            msg = _format_dual_whatsapp_message(found_2, found_3, m_label, currency)
-
-            teams_found = []
-            if found_2: teams_found.append("2-team")
-            if found_3: teams_found.append("3-team")
-            combo_summary = " + ".join(teams_found)
-            _log_event(f"🎯 QUALIFYING {combo_summary} combo(s) found on {m_label}! Dispatching WhatsApp alert…")
-
-            if phone and apikey:
-                from app.services.whatsapp import send_whatsapp_message as _send_wa
-                send_res = _send_wa(msg, phone=phone, apikey=apikey, provider=provider)
-                if send_res.get("success"):
+                if phone and apikey:
+                    from app.services.whatsapp import send_whatsapp_message as _send_wa
+                    send_res = _send_wa(msg, phone=phone, apikey=apikey, provider=provider)
+                    if send_res.get("success"):
+                        notified.add(combined_sig)
+                        _sentinel_state["alerts_dispatched_count"] += 1
+                        _sentinel_state["last_alert_combo"] = best_found_3 or best_found_2
+                        _sentinel_state["last_alert_eat"] = now_eat
+                        _save_persisted_state()
+                        alerts_sent += 1
+                        _log_event(f"📲 WhatsApp alert sent to +{phone} — {combo_summary} slip(s) for {combined_label}.")
+                    else:
+                        _log_event(f"⚠️ WhatsApp send failed: {send_res.get('error')}. Will retry next cycle.")
+                else:
                     notified.add(combined_sig)
-                    _sentinel_state["alerts_dispatched_count"] += 1
-                    _sentinel_state["last_alert_combo"] = found_3 or found_2
+                    _sentinel_state["last_alert_combo"] = best_found_3 or best_found_2
                     _sentinel_state["last_alert_eat"] = now_eat
                     _save_persisted_state()
-                    alerts_sent += 1
-                    _log_event(f"📲 WhatsApp alert sent to +{phone} — {combo_summary} slip(s) for {m_label}.")
-                else:
-                    _log_event(f"⚠️ WhatsApp send failed: {send_res.get('error')}. Will retry next cycle.")
+                    _log_event(f"ℹ️ Qualifying slip found ({combo_summary}) but WhatsApp not configured. Set WHATSAPP_PHONE + WHATSAPP_APIKEY to receive alerts.")
             else:
-                # Save the combo even if WhatsApp not configured, so user can see it in the UI
-                notified.add(combined_sig)
-                _sentinel_state["last_alert_combo"] = found_3 or found_2
-                _sentinel_state["last_alert_eat"] = now_eat
-                _log_event(f"ℹ️ Qualifying slip found ({combo_summary}) but WhatsApp not configured. Set WHATSAPP_PHONE + WHATSAPP_APIKEY to receive alerts.")
-
-            # Stop searching further matchdays — found qualifying combo(s)
-            break
+                _log_event("ℹ️ Qualifying combos already alerted previously. Skipping duplicate notification.")
+        else:
+            _log_event(
+                "⏳ No combo across all scanned leagues satisfies all 3 rules simultaneously "
+                "(AVG CONF >= 85%, ACCUM WIN PROB >= 85%, ODDS >= 2.00). "
+                "Non-qualifying candidates rejected. Sentinel remains active 24/7 and will keep scanning."
+            )
 
         return {
             "success": True,
@@ -410,7 +460,7 @@ _sentinel_state: Dict[str, Any] = {
 
 
 def _load_persisted_state():
-    """Load previously notified combo hashes from disk."""
+    """Load previously notified combo hashes and credentials from disk."""
     if _HISTORY_FILE.exists():
         try:
             with open(_HISTORY_FILE, "r") as f:
@@ -418,6 +468,10 @@ def _load_persisted_state():
                 _sentinel_state["alerts_dispatched_count"] = data.get("alerts_dispatched_count", 0)
                 _sentinel_state["notified_hashes"] = set(data.get("notified_hashes", []))
                 _sentinel_state["last_alert_eat"] = data.get("last_alert_eat")
+                if data.get("whatsapp_phone"):
+                    _sentinel_state["whatsapp_phone"] = data.get("whatsapp_phone")
+                if data.get("whatsapp_apikey"):
+                    _sentinel_state["whatsapp_apikey"] = data.get("whatsapp_apikey")
                 return
         except Exception as e:
             logger.debug(f"Failed to load sentinel state: {e}")
@@ -425,13 +479,15 @@ def _load_persisted_state():
 
 
 def _save_persisted_state():
-    """Persist notified combo hashes to disk so restarts don't spam."""
+    """Persist notified combo hashes and credentials to disk so restarts don't lose them."""
     try:
         with open(_HISTORY_FILE, "w") as f:
             json.dump({
                 "alerts_dispatched_count": _sentinel_state.get("alerts_dispatched_count", 0),
                 "notified_hashes": list(_sentinel_state.get("notified_hashes", set())),
                 "last_alert_eat": _sentinel_state.get("last_alert_eat"),
+                "whatsapp_phone": _sentinel_state.get("whatsapp_phone", os.getenv("WHATSAPP_PHONE", "")),
+                "whatsapp_apikey": _sentinel_state.get("whatsapp_apikey", os.getenv("WHATSAPP_APIKEY", "")),
             }, f, indent=2)
     except Exception as e:
         logger.debug(f"Failed to save sentinel state: {e}")

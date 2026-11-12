@@ -45,6 +45,11 @@ sentinel_state.json
 *.swp
 *.swo
 
+# Xcode
+ios/**/xcuserdata/
+*.xcuserstate
+DerivedData/
+
 # Test artifacts
 .pytest_cache/
 htmlcov/

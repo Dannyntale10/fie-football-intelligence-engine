@@ -405,6 +405,22 @@ where the bot should live.
 
 Never commit `.env`, tokens or keys. Use the host's secret manager.
 
+## iOS app
+
+A native SwiftUI client lives in `ios/` and talks to the same FastAPI backend.
+
+- Open `ios/FIE.xcodeproj` in Xcode 15+ (iOS 17 deployment target) and run.
+- It ships five tabs: **Today** (the 2–3 team combos with the Analyse button and
+  the two-phase stored-prices → feed-refresh flow), **Fixtures** (with the
+  per-match dossier), **Performance**, **Sources** (provider readiness and feed
+  refresh) and **Settings**.
+- The server address is editable in Settings. The default
+  `http://localhost:8001` works in the Simulator; a physical iPhone needs the
+  Mac's LAN address and the backend bound to `0.0.0.0`:
+  `.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8001`
+- The app only reads the API. It stores no picks and never places a bet. The
+  85% gate, attribution and paper-only rules are identical to the web UI.
+
 ## Legacy Streamlit entrypoint
 
 `streamlit_app.py`/`dashboard.py` are the original single-file UI. They import

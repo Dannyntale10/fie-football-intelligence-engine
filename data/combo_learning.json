@@ -2,7 +2,7 @@
   "a": 1.239,
   "applied": true,
   "b": 0.0589,
-  "generated_at": "2026-11-12T18:12:13.870310+00:00",
+  "generated_at": "2026-11-12T18:46:32.076810+00:00",
   "improvement": 0.00301,
   "logloss_after": 0.63976,
   "logloss_before": 0.64277,

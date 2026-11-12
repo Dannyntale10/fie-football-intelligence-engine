@@ -430,6 +430,7 @@ def get_portfolio_combos(
     min_accumulator_prob: Optional[float] = Query(None, ge=0.50, le=1.00, description="Minimum joint accumulator ticket win probability (e.g. 0.85 for 85%-100%)"),
     bankroll: float = Query(1000.0, ge=10.0, description="Bankroll for Kelly sizing"),
     competition: Optional[str] = Query(None, description="Optional competition filter"),
+    allow_synthetic_odds: bool = Query(False, description="Allow model-derived (estimated) prices, labelled as such. Off by default: only ingested bookmaker prices are eligible."),
     db: Session = Depends(get_db),
 ):
     """Generate same-day daily high-confidence accumulators with accumulator win prob >= 85%-100%."""
@@ -442,6 +443,7 @@ def get_portfolio_combos(
         min_total_odds=min_total_odds,
         bankroll=bankroll,
         competition=competition,
+        require_market_odds=not allow_synthetic_odds,
     )
 
 @app.get("/fixtures/{fixture_id}/best-odds")
@@ -518,7 +520,7 @@ def sentinel_status():
 def sentinel_start(interval_minutes: int = Query(30, ge=5, le=1440)):
     """Start the 24/7 autonomous banker sentinel daemon."""
     from app.services.sentinel import start_sentinel, get_sentinel_status
-    ok = start_sentinel(interval_minutes)
+    ok = start_sentinel(interval_minutes=interval_minutes)
     return {"status": "started" if ok else "failed", "details": get_sentinel_status()}
 
 

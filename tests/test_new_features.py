@@ -200,6 +200,8 @@ def test_accumulator_win_prob_85_to_100_percent():
                     f"❌ ACCUMULATOR WIN PROB {bc['combined_probability']*100:.1f}% < 85% — REJECTED"
                 )
                 assert len(bc["legs"]) == n_legs
+                # Default policy: only ingested bookmaker prices are eligible
+                assert all(leg.get("odds_source") == "market" for leg in bc["legs"])
                 # Every alternative must also pass all 3 rules
                 for alt in res.get("alternatives", []):
                     assert alt["total_odds"] >= 2.00

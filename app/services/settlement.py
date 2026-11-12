@@ -121,6 +121,7 @@ def record_tracked_bet(
             "market_type": l.get("market_type"),
             "odds": l.get("odds"),
             "probability": l.get("probability"),
+            "odds_source": l.get("odds_source", "market"),
             "kickoff_eat": l.get("kickoff_eat"),
             "status": "PENDING",
             "final_score": None,

@@ -59,8 +59,9 @@ def format_combo_whatsapp_message(
         ai_squad = leg.get("ai_squad", {})
         injury_txt = ai_squad.get("injuries", "")
 
+        est_tag = "" if leg.get("odds_source", "market") == "market" else " (est.)"
         lines.append(f"*{idx}. {m_name}* ({comp})")
-        lines.append(f"   👉 *{sel}* @ {m_odds:.2f} (Prob: {p_val:.1f}%)")
+        lines.append(f"   👉 *{sel}* @ {m_odds:.2f}{est_tag} (Prob: {p_val:.1f}%)")
         lines.append(f"   ⏰ Kickoff: {ko_eat}")
         if injury_txt:
             lines.append(f"   🏥 Squad/Injury Check: {injury_txt[:80]}")

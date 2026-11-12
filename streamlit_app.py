@@ -340,7 +340,8 @@ with tab_portfolio:
     st.subheader("🏆 Daily High-Confidence Banker Slips & Portfolio")
     st.caption(
         "Quantitative selection engine: generate optimal 2-team or 3-team accumulators (Odds ≥ 2.00+, Confidence ≥ 85%) "
-        "with quarter-Kelly stake sizing, pre-match injury check, and automated settlement."
+        "with quarter-Kelly stake sizing, pre-match injury check, and automated settlement. "
+        "By default, slips are built only from prices ingested from bookmaker feeds — model-derived prices are excluded."
     )
 
     # ══════════════════════════════════════════════════════════════════════
@@ -377,6 +378,17 @@ with tab_portfolio:
     with combo_col4:
         sel_combo_bankroll = st.number_input("Bankroll ($)", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cloud_combo_bankroll")
 
+    allow_est_odds = st.checkbox(
+        "🧮 Allow estimated/derived odds (research only)",
+        value=False,
+        key="cloud_allow_est_odds",
+        help=(
+            "Off by default: a slip can only contain prices actually ingested from a bookmaker feed. "
+            "Turning this on lets the engine use model-derived prices (double chance, totals, DNB, handicaps). "
+            "Those legs are labelled 'Estimate' and are not real market prices."
+        ),
+    )
+
     if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Ticket Win Prob ≥ {sel_min_acc_prob*100:.0f}%)", type="primary", use_container_width=True, key="cloud_btn_combo"):
         with st.spinner("Finding optimal combinations with 85%-100% Accumulator Win Probability…"):
             db_combo = _db()
@@ -389,6 +401,7 @@ with tab_portfolio:
                     min_accumulator_prob=sel_min_acc_prob,
                     min_total_odds=2.00,  # Always enforce odds >= 2.00
                     bankroll=sel_combo_bankroll,
+                    require_market_odds=not allow_est_odds,
                 )
             finally:
                 db_combo.close()
@@ -396,6 +409,14 @@ with tab_portfolio:
             best = c_data.get("best_combo")
             matchday_hdr = c_data.get("matchday_label", "Daily")
             if not best:
+                odds_policy = c_data.get("odds_policy", {})
+                excluded_estimates = odds_policy.get("synthetic_legs_excluded", 0)
+                gate_note = ""
+                if odds_policy.get("require_market_odds"):
+                    gate_note = (
+                        f"\n\n🔒 **Market-price gate active:** only real ingested bookmaker prices are eligible. "
+                        f"{excluded_estimates} model-derived leg(s) were rejected as estimates."
+                    )
                 st.error(
                     f"🚫 **No qualifying {sel_legs}-team combo found for {matchday_hdr}.**\n\n"
                     f"All three rules must be met simultaneously — no exceptions:\n"
@@ -404,6 +425,7 @@ with tab_portfolio:
                     f"- ✅ **TOTAL ODDS ≥ 2.00**\n\n"
                     f"Today's fixture data does not contain a combination that satisfies all three. "
                     f"Try a different matchday, or wait for the next sentinel scan."
+                    f"{gate_note}"
                 )
             else:
                 st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
@@ -440,6 +462,13 @@ with tab_portfolio:
                     </div>
                     """, unsafe_allow_html=True)
 
+                    est_count = sum(1 for l in combo_obj["legs"] if l.get("odds_source") != "market")
+                    if est_count:
+                        st.warning(
+                            f"⚠️ {est_count} of {len(combo_obj['legs'])} leg(s) use model-derived **estimated** odds, "
+                            "not real bookmaker prices. Treat this slip as research only."
+                        )
+
                     # Table of Legs with Pre-Combo AI Squad & Injury Check
                     l_df = pd.DataFrame([{
                         "Leg": f"Leg #{i+1}",
@@ -447,6 +476,7 @@ with tab_portfolio:
                         "Selection": l["selection"],
                         "Market Type": l["market_type"],
                         "Odds": f"{l['odds']:.2f}",
+                        "Price Source": "🏦 Market" if l.get("odds_source") == "market" else "🧮 Estimate",
                         "Team Win/Draw Prob": f"{l['probability']*100:.1f}%",
                         "Kickoff (Ugandan Time, EAT)": l["kickoff_eat"],
                         "League": l["competition"],
@@ -468,7 +498,8 @@ with tab_portfolio:
                     # Formatted Booking Text to copy
                     s_text = f"🔥 FIE {combo_obj['legs_count']}-TEAM SLIP (Total Odds: {combo_obj['total_odds']:.2f} | Avg Win Prob: {avg_p:.1f}%)\n"
                     for i, l in enumerate(combo_obj["legs"], 1):
-                        s_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f} (Prob: {l['probability']*100:.1f}%) [{l['kickoff_eat']}]\n"
+                        est_tag = "" if l.get("odds_source") == "market" else " [ESTIMATE]"
+                        s_text += f"{i}. {l['match']} ➔ {l['selection']} @ {l['odds']:.2f}{est_tag} (Prob: {l['probability']*100:.1f}%) [{l['kickoff_eat']}]\n"
                     s_text += f"Total Odds: {combo_obj['total_odds']:.2f} | Kelly Stake: {format_stake_dual(combo_obj['kelly_stake_amount'], sel_currency)}"
                     st.text_area("📋 Copy Booking Slip Text", s_text, height=110, key=f"{prefix_key}_text")
 
@@ -525,7 +556,9 @@ with tab_portfolio:
                     acc_p = combo_obj['combined_probability'] * 100
                     team_label = "Banker" if avg_p >= 85 else "High Conf"
                     legs_inline = " • ".join(
-                        f"<strong>{l['selection']}</strong> @ {l['odds']:.2f} ({l['probability']*100:.1f}%)"
+                        f"<strong>{l['selection']}</strong> @ {l['odds']:.2f}"
+                        f"{'' if l.get('odds_source') == 'market' else ' (est.)'}"
+                        f" ({l['probability']*100:.1f}%)"
                         for l in combo_obj["legs"]
                     )
                     st.markdown(f"""

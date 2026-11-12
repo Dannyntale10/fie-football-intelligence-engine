@@ -65,6 +65,7 @@ def generate_high_confidence_combos(
     bankroll: float = 1000.0,
     kelly_fraction: float = 0.25,
     competition: Optional[str] = None,
+    require_market_odds: bool = True,
 ) -> Dict[str, Any]:
     """Generate optimal same-day high-confidence multi-bet slips.
 
@@ -85,6 +86,10 @@ def generate_high_confidence_combos(
         bankroll: Total bankroll for Kelly stake sizing.
         kelly_fraction: Kelly fraction (0.25 = quarter Kelly).
         competition: Optional competition name filter.
+        require_market_odds: When True (default) only legs whose price was
+            ingested from a bookmaker feed can enter a combo. Model-derived
+            prices (double chance formulas, totals, DNB, handicaps) are
+            excluded. When False they are allowed and labelled as estimates.
 
     Returns:
         dict with target_matchday, best_combo, alternatives, candidate_legs, and available_matchdays.
@@ -124,6 +129,7 @@ def generate_high_confidence_combos(
 
     # Individual floor to allow complementary legs that combine to >= 85% average confidence
     cand_thresh = 0.70
+    synthetic_legs_excluded = 0
 
     for f in fixtures:
         try:
@@ -132,106 +138,129 @@ def generate_high_confidence_combos(
             continue
 
         probs = analysis.get("all_markets", {})
-        h_odds = f.home_odds or (round(1.0 / max(0.05, probs.get("home_win", 0.33) * 0.92), 2) if probs.get("home_win", 0) > 0.05 else None)
-        d_odds = f.draw_odds or (round(1.0 / max(0.05, probs.get("draw", 0.27) * 0.92), 2) if probs.get("draw", 0) > 0.05 else 3.20)
-        a_odds = f.away_odds or (round(1.0 / max(0.05, probs.get("away_win", 0.30) * 0.92), 2) if probs.get("away_win", 0) > 0.05 else None)
+
+        # A price is only a market price when it came from an ingested feed.
+        # Anything computed from model probabilities is an estimate and is
+        # labelled as such (and gated out by default).
+        h_market = f.home_odds if (f.home_odds and f.home_odds > 1.0) else None
+        d_market = f.draw_odds if (f.draw_odds and f.draw_odds > 1.0) else None
+        a_market = f.away_odds if (f.away_odds and f.away_odds > 1.0) else None
+
+        h_odds = h_market or (round(1.0 / max(0.05, probs.get("home_win", 0.33) * 0.92), 2) if probs.get("home_win", 0) > 0.05 else None)
+        d_odds = d_market or (round(1.0 / max(0.05, probs.get("draw", 0.27) * 0.92), 2) if probs.get("draw", 0) > 0.05 else 3.20)
+        a_odds = a_market or (round(1.0 / max(0.05, probs.get("away_win", 0.30) * 0.92), 2) if probs.get("away_win", 0) > 0.05 else None)
 
         fixture_cands: List[Dict[str, Any]] = []
 
-        def _eval_and_add(m_key: str, m_type: str, sel_label: str, prob_v: float, odds_v: Optional[float], team_lbl: str):
-            if prob_v >= cand_thresh and odds_v and odds_v >= 1.08:
-                # Pre-combo AI squad performance & injury verification
-                squad_check = check_squad_and_injuries(
-                    home_team=f.home_team,
-                    away_team=f.away_team,
-                    competition=f.competition,
-                    selection=sel_label,
-                    db=db,
-                )
-                if squad_check.get("verdict") == "VETO":
-                    return
+        def _eval_and_add(
+            m_key: str,
+            m_type: str,
+            sel_label: str,
+            prob_v: float,
+            odds_v: Optional[float],
+            team_lbl: str,
+            odds_source: str,
+        ):
+            nonlocal synthetic_legs_excluded
+            if prob_v < cand_thresh or not odds_v or odds_v < 1.08:
+                return
+            if require_market_odds and odds_source != "market":
+                synthetic_legs_excluded += 1
+                return
 
-                fixture_cands.append({
-                    "fixture_id": f.id,
-                    "match": f"{f.home_team} vs {f.away_team}",
-                    "competition": f.competition,
-                    "team": team_lbl,
-                    "selection": sel_label,
-                    "market_key": m_key,
-                    "market_type": m_type,
-                    "odds": round(odds_v, 2),
-                    "probability": round(prob_v, 4),
-                    "ai_squad": squad_check,
-                    "kickoff_utc": f.kickoff_utc.isoformat(),
-                    "kickoff_eat": _format_eat(f.kickoff_utc),
-                })
+            # Pre-combo AI squad performance & injury verification
+            squad_check = check_squad_and_injuries(
+                home_team=f.home_team,
+                away_team=f.away_team,
+                competition=f.competition,
+                selection=sel_label,
+                db=db,
+            )
+            if squad_check.get("verdict") == "VETO":
+                return
+
+            fixture_cands.append({
+                "fixture_id": f.id,
+                "match": f"{f.home_team} vs {f.away_team}",
+                "competition": f.competition,
+                "team": team_lbl,
+                "selection": sel_label,
+                "market_key": m_key,
+                "market_type": m_type,
+                "odds": round(odds_v, 2),
+                "probability": round(prob_v, 4),
+                "odds_source": odds_source,
+                "ai_squad": squad_check,
+                "kickoff_utc": f.kickoff_utc.isoformat(),
+                "kickoff_eat": _format_eat(f.kickoff_utc),
+            })
 
         # 1. Direct Home Win
         p_hw = probs.get("home_win", 0.0)
         if h_odds and h_odds >= 1.15:
-            _eval_and_add("home_win", "Direct Win (1)", f"{f.home_team} to Win", p_hw, h_odds, f.home_team)
+            _eval_and_add("home_win", "Direct Win (1)", f"{f.home_team} to Win", p_hw, h_odds, f.home_team, "market" if h_market else "synthetic")
 
         # 2. Direct Away Win
         p_aw = probs.get("away_win", 0.0)
         if a_odds and a_odds >= 1.15:
-            _eval_and_add("away_win", "Direct Win (2)", f"{f.away_team} to Win", p_aw, a_odds, f.away_team)
+            _eval_and_add("away_win", "Direct Win (2)", f"{f.away_team} to Win", p_aw, a_odds, f.away_team, "market" if a_market else "synthetic")
 
         # 3. Double Chance 1X
         p_1x = probs.get("double_chance_1x", 0.0)
         if h_odds and d_odds:
             dc_1x_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / d_odds)), 2)
-            _eval_and_add("double_chance_1x", "Double Chance (1X)", f"{f.home_team} Win or Draw (1X)", p_1x, dc_1x_odds, f.home_team)
+            _eval_and_add("double_chance_1x", "Double Chance (1X)", f"{f.home_team} Win or Draw (1X)", p_1x, dc_1x_odds, f.home_team, "synthetic")
 
         # 4. Double Chance X2
         p_x2 = probs.get("double_chance_x2", 0.0)
         if a_odds and d_odds:
             dc_x2_odds = round(1.0 / ((1.0 / a_odds) + (1.0 / d_odds)), 2)
-            _eval_and_add("double_chance_x2", "Double Chance (X2)", f"{f.away_team} Win or Draw (X2)", p_x2, dc_x2_odds, f.away_team)
+            _eval_and_add("double_chance_x2", "Double Chance (X2)", f"{f.away_team} Win or Draw (X2)", p_x2, dc_x2_odds, f.away_team, "synthetic")
 
         # 5. Double Chance 12
         p_12 = probs.get("double_chance_12", 0.0)
         if h_odds and a_odds:
             dc_12_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / a_odds)), 2)
-            _eval_and_add("double_chance_12", "Double Chance (12)", f"{f.home_team} or {f.away_team} to Win (12)", p_12, dc_12_odds, f"{f.home_team} / {f.away_team}")
+            _eval_and_add("double_chance_12", "Double Chance (12)", f"{f.home_team} or {f.away_team} to Win (12)", p_12, dc_12_odds, f"{f.home_team} / {f.away_team}", "synthetic")
 
         # 6. Team Over 0.5 Goals
         p_ho05 = probs.get("home_over_0_5", 0.0)
         if h_odds and h_odds <= 1.65:
             t_odds = round(max(1.10, min(1.35, 1.0 / (p_ho05 * 0.94))), 2)
-            _eval_and_add("home_over_0_5", "Team Goals (Over 0.5)", f"{f.home_team} to Score (Over 0.5 Goals)", p_ho05, t_odds, f.home_team)
+            _eval_and_add("home_over_0_5", "Team Goals (Over 0.5)", f"{f.home_team} to Score (Over 0.5 Goals)", p_ho05, t_odds, f.home_team, "synthetic")
 
         p_ao05 = probs.get("away_over_0_5", 0.0)
         if a_odds and a_odds <= 1.65:
             t_odds = round(max(1.10, min(1.35, 1.0 / (p_ao05 * 0.94))), 2)
-            _eval_and_add("away_over_0_5", "Team Goals (Over 0.5)", f"{f.away_team} to Score (Over 0.5 Goals)", p_ao05, t_odds, f.away_team)
+            _eval_and_add("away_over_0_5", "Team Goals (Over 0.5)", f"{f.away_team} to Score (Over 0.5 Goals)", p_ao05, t_odds, f.away_team, "synthetic")
 
         # 7. Match Goals Over 1.5
         p_o15 = probs.get("over_1_5", 0.0)
         o15_odds = round(max(1.22, min(1.65, 1.0 / (p_o15 * 0.93))), 2)
-        _eval_and_add("over_1_5", "Total Goals (Over 1.5)", "Over 1.5 Match Goals", p_o15, o15_odds, f"{f.home_team} / {f.away_team}")
+        _eval_and_add("over_1_5", "Total Goals (Over 1.5)", "Over 1.5 Match Goals", p_o15, o15_odds, f"{f.home_team} / {f.away_team}", "synthetic")
 
         # 8. Match Goals Under 3.5
         p_u35 = probs.get("under_3_5", 0.0)
         u35_odds = round(max(1.20, min(1.60, 1.0 / (p_u35 * 0.94))), 2)
-        _eval_and_add("under_3_5", "Total Goals (Under 3.5)", "Under 3.5 Match Goals", p_u35, u35_odds, f"{f.home_team} / {f.away_team}")
+        _eval_and_add("under_3_5", "Total Goals (Under 3.5)", "Under 3.5 Match Goals", p_u35, u35_odds, f"{f.home_team} / {f.away_team}", "synthetic")
 
         # 9. Draw No Bet (DNB)
         if p_hw + p_aw > 0:
             dnb_h_p = round(p_hw / (p_hw + p_aw), 4)
             if h_odds and h_odds >= 1.25 and d_odds:
                 dnb_h_odds = round(max(1.18, min(2.10, h_odds * (1.0 - 1.0 / d_odds))), 2)
-                _eval_and_add("dnb_home", "Draw No Bet (DNB)", f"{f.home_team} Draw No Bet (DNB)", dnb_h_p, dnb_h_odds, f.home_team)
+                _eval_and_add("dnb_home", "Draw No Bet (DNB)", f"{f.home_team} Draw No Bet (DNB)", dnb_h_p, dnb_h_odds, f.home_team, "synthetic")
 
             dnb_a_p = round(p_aw / (p_hw + p_aw), 4)
             if a_odds and a_odds >= 1.25 and d_odds:
                 dnb_a_odds = round(max(1.18, min(2.10, a_odds * (1.0 - 1.0 / d_odds))), 2)
-                _eval_and_add("dnb_away", "Draw No Bet (DNB)", f"{f.away_team} Draw No Bet (DNB)", dnb_a_p, dnb_a_odds, f.away_team)
+                _eval_and_add("dnb_away", "Draw No Bet (DNB)", f"{f.away_team} Draw No Bet (DNB)", dnb_a_p, dnb_a_odds, f.away_team, "synthetic")
 
         # 10. Asian Handicap +1.5
         p_ah_a15 = probs.get("ah_away_plus_1_5", 0.0)
         if p_ah_a15 >= cand_thresh:
             ah_a15_odds = round(max(1.18, min(1.65, 1.0 / (p_ah_a15 * 0.93))), 2)
-            _eval_and_add("ah_away_plus_1_5", "Asian Handicap (+1.5)", f"{f.away_team} (+1.5 Handicap)", p_ah_a15, ah_a15_odds, f.away_team)
+            _eval_and_add("ah_away_plus_1_5", "Asian Handicap (+1.5)", f"{f.away_team} (+1.5 Handicap)", p_ah_a15, ah_a15_odds, f.away_team, "synthetic")
 
         # Keep top 3 highest probability candidates per fixture to keep combination search blazing fast
         fixture_cands.sort(key=lambda c: (c["probability"], c["odds"]), reverse=True)
@@ -342,6 +371,17 @@ def generate_high_confidence_combos(
             "min_total_odds": min_total_odds,
             "bankroll": bankroll,
             "kelly_fraction": kelly_fraction,
+            "require_market_odds": require_market_odds,
+        },
+        "odds_policy": {
+            "require_market_odds": require_market_odds,
+            "synthetic_legs_excluded": synthetic_legs_excluded,
+            "note": (
+                "Only prices ingested from a bookmaker feed are eligible. "
+                "Model-derived prices are treated as estimates and excluded."
+                if require_market_odds else
+                "Model-derived prices are allowed and labelled odds_source='synthetic'."
+            ),
         },
         "total_candidate_legs": len(candidates),
         "total_combos_generated": len(combos),

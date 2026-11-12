@@ -166,3 +166,27 @@ def test_sentinel_daemon_status_and_endpoints():
     data = res.json()
     assert "is_running" in data
 
+
+def test_accumulator_win_prob_85_to_100_percent():
+    """Verify that specifying min_accumulator_prob=0.85 guarantees ticket win prob >= 85.0%."""
+    from app.database import get_db
+    from app.services.combo import generate_high_confidence_combos
+
+    db = next(get_db())
+    try:
+        res = generate_high_confidence_combos(
+            db=db,
+            target_date="all",
+            num_legs=2,
+            min_accumulator_prob=0.85,
+        )
+        assert "best_combo" in res
+        if res["best_combo"]:
+            bc = res["best_combo"]
+            assert bc["combined_probability"] >= 0.85
+            assert bc["avg_leg_probability"] >= 0.85
+            assert len(bc["legs"]) == 2
+    finally:
+        db.close()
+
+

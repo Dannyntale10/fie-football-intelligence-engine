@@ -59,17 +59,18 @@ def generate_high_confidence_combos(
     target_date: Optional[str] = None,
     num_legs: int = 3,
     min_leg_prob: float = 0.85,
+    min_accumulator_prob: Optional[float] = None,
     min_total_odds: float = 2.00,
     max_total_odds: float = 6.00,
     bankroll: float = 1000.0,
     kelly_fraction: float = 0.25,
     competition: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Generate optimal same-day high-confidence multi-bet slips (Odds >= 2.00+).
+    """Generate optimal same-day high-confidence multi-bet slips.
 
     Strictly guarantees:
-      - Combined Odds >= 2.00
-      - AVG TEAM CONFIDENCE >= 85.0% (between 85.0% and 100.0%)
+      - ACCUMULATOR WIN PROB >= min_accumulator_prob (min 85% to 100% max)
+      - AVG TEAM CONFIDENCE >= min_leg_prob (min 85% to 100% max)
       - Comprehensive market structures (1X2, DC, DNB, Goals, BTTS, Asian Handicaps)
       - Pre-combo AI squad performance, injury & H2H verification
 
@@ -78,7 +79,8 @@ def generate_high_confidence_combos(
         target_date: Specific YYYY-MM-DD matchday (in EAT), or None for next active matchday.
         num_legs: Target number of legs (2, 3, or 4).
         min_leg_prob: Minimum individual/average leg probability (default 0.85).
-        min_total_odds: Target combined accumulator odds (e.g. 2.00).
+        min_accumulator_prob: Minimum joint accumulator ticket win probability (default 0.85 = 85%-100%).
+        min_total_odds: Target combined accumulator odds.
         max_total_odds: Cap for total accumulator odds.
         bankroll: Total bankroll for Kelly stake sizing.
         kelly_fraction: Kelly fraction (0.25 = quarter Kelly).
@@ -240,7 +242,7 @@ def generate_high_confidence_combos(
     combos: List[Dict[str, Any]] = []
     min_avg_target = max(0.85, min_leg_prob)
 
-    def _eval_combos(legs_k: int, min_odds: float, min_avg: float) -> List[Dict[str, Any]]:
+    def _eval_combos(legs_k: int, min_odds: float, min_avg: float, min_acc: float = 0.0) -> List[Dict[str, Any]]:
         found = []
         for combo_legs in itertools.combinations(candidates, legs_k):
             # Ensure distinct fixtures
@@ -259,12 +261,16 @@ def generate_high_confidence_combos(
             avg_prob = round(sum(l["probability"] for l in combo_legs) / len(combo_legs), 4)
             min_prob = round(min(l["probability"] for l in combo_legs), 4)
 
+            # Strictly enforce ACCUMULATOR WIN PROB between min_acc (min 85%) and 100%
+            if min_acc > 0.0 and tot_prob < min_acc:
+                continue
+
             # Strictly enforce AVG TEAM CONFIDENCE between min_avg (min 85%) and 100%
             if avg_prob < min_avg or avg_prob > 1.00:
                 continue
 
             # Ensure individual legs maintain strong banker profile
-            if min_prob < 0.72:
+            if min_prob < 0.70:
                 continue
 
             if tot_odds >= min_odds and tot_odds <= max_total_odds:
@@ -295,29 +301,35 @@ def generate_high_confidence_combos(
                 })
         return found
 
-    # 1. Strictly look for requested leg count (k) at target min_total_odds and target avg confidence
-    combos = _eval_combos(k, min_total_odds, min_avg=min_avg_target)
+    # Determine target odds: if searching for Ultra-Bankers (acc prob >= 85%), realistic minimum odds are ~1.15-1.30
+    target_acc = min_accumulator_prob if min_accumulator_prob is not None else 0.0
+    eff_min_odds = min_total_odds
+    if target_acc >= 0.80 and eff_min_odds > 1.40:
+        eff_min_odds = 1.15
 
-    # 2. If no combos hit at exact target avg, search with progressively relaxed avg confidence while strictly keeping requested k
-    if not combos:
-        for try_avg in [0.84, 0.82, 0.80, 0.78, 0.75]:
-            combos = _eval_combos(k, min_total_odds, min_avg=try_avg)
+    # 1. Strictly look for requested leg count (k) at target min_accumulator_prob and target avg confidence
+    combos = _eval_combos(k, eff_min_odds, min_avg=min_avg_target, min_acc=target_acc)
+
+    # 2. If no combos hit at exact min_accumulator_prob, search with slightly relaxed accumulator probability
+    if not combos and target_acc > 0:
+        for try_acc in [0.82, 0.80, 0.75, 0.70, 0.60, 0.50]:
+            combos = _eval_combos(k, eff_min_odds, min_avg=0.80, min_acc=try_acc)
             if combos:
                 break
 
-    # 3. If still no combos, try slightly relaxed total odds (e.g. >= 1.75) while strictly keeping requested k
+    # 3. If still no combos, search without min_acc constraint using standard min_total_odds
     if not combos:
-        for try_avg in [min_avg_target, 0.84, 0.82, 0.80, 0.78, 0.75]:
-            combos = _eval_combos(k, max(1.70, min_total_odds * 0.85), min_avg=try_avg)
+        for try_avg in [min_avg_target, 0.82, 0.80, 0.75]:
+            combos = _eval_combos(k, max(1.60, min_total_odds * 0.85), min_avg=try_avg, min_acc=0.0)
             if combos:
                 break
 
-    # Sort combos by highest average team confidence (85-100%), then highest joint win probability, then EV
+    # Sort combos primarily by ACCUMULATOR WIN PROB (descending), then AVG TEAM CONFIDENCE, then odds
     combos.sort(
         key=lambda x: (
-            x["avg_leg_probability"],
             x["combined_probability"],
-            x["min_leg_probability"],
+            x["avg_leg_probability"],
+            x["total_odds"],
             x["expected_value_percent"]
         ),
         reverse=True

@@ -237,22 +237,23 @@ with tab_portfolio:
         with combo_col1:
             sel_legs = st.radio("Number of Teams (Max 3)", [2, 3], index=1, horizontal=True, format_func=lambda x: f"{x}-Team Combo")
         with combo_col2:
-            sel_min_odds = st.slider("Target Min Combined Odds", min_value=2.00, max_value=4.00, value=2.00, step=0.05)
+            sel_min_acc_prob = st.slider("Min Accumulator Win Prob", min_value=0.50, max_value=0.98, value=0.85, step=0.01, format="%.0f%%", key="dash_acc_prob", help="Guarantees the overall ticket win probability is between 85% and 100%!")
         with combo_col3:
             sel_min_leg_prob = st.slider("Min Team Confidence", min_value=0.80, max_value=0.98, value=0.85, step=0.01, format="%.0f%%")
         with combo_col4:
             sel_combo_bankroll = st.number_input("Bankroll ($)", min_value=50.0, max_value=100000.0, value=1000.0, step=50.0, key="cb_bankroll")
 
-        if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Odds ≥ {sel_min_odds:.2f})", type="primary", use_container_width=True):
-            with st.spinner("Finding optimal same-day combinations of 85%+ teams…"):
+        if st.button(f"⚡ Generate {sel_legs}-Team Daily Slip (Ticket Win Prob ≥ {sel_min_acc_prob*100:.0f}%)", type="primary", use_container_width=True):
+            with st.spinner("Finding optimal combinations with 85%-100% Accumulator Win Probability…"):
                 try:
                     c_res = requests.get(
                         f"{API_BASE}/portfolio/combos",
                         params={
                             "target_date": target_date_val,
                             "num_legs": sel_legs,
-                            "min_total_odds": sel_min_odds,
+                            "min_total_odds": 1.15 if sel_min_acc_prob >= 0.80 else 2.00,
                             "min_leg_prob": sel_min_leg_prob,
+                            "min_accumulator_prob": sel_min_acc_prob,
                             "bankroll": sel_combo_bankroll,
                         },
                         timeout=15
@@ -262,7 +263,7 @@ with tab_portfolio:
                         best = c_data.get("best_combo")
                         matchday_hdr = c_data.get("matchday_label", "Daily")
                         if not best:
-                            st.warning(f"No {sel_legs}-team combos found on {matchday_hdr} with odds ≥ {sel_min_odds:.2f} at {sel_min_leg_prob*100:.0f}% confidence. Try selecting a different matchday or adjusting the Min Team Confidence slider.")
+                            st.warning(f"No {sel_legs}-team combos found on {matchday_hdr} with ticket win probability ≥ {sel_min_acc_prob*100:.0f}%. Try selecting a different matchday or adjusting the slider.")
                         else:
                             st.success(f"✅ Found **{c_data['total_combos_generated']}** valid slips for **{matchday_hdr}**!")
                             
@@ -280,7 +281,7 @@ with tab_portfolio:
                                     </div>
                                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
                                         <div><span style="color: #888; font-size: 12px;">AVG TEAM CONFIDENCE</span><br><strong style="font-size: 20px; color: #00C851;">{avg_p:.1f}% (Bankers)</strong></div>
-                                        <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #FFF;">{combo_obj['combined_probability']*100:.1f}%</strong></div>
+                                        <div><span style="color: #888; font-size: 12px;">ACCUMULATOR WIN PROB</span><br><strong style="font-size: 20px; color: #00C851;">{combo_obj['combined_probability']*100:.1f}% (Banker)</strong></div>
                                         <div><span style="color: #888; font-size: 12px;">EXPECTED VALUE (+EV)</span><br><strong style="font-size: 20px; color: #00C851;">{combo_obj['expected_value_percent']:+.1f}% EV</strong></div>
                                         <div><span style="color: #888; font-size: 12px;">QUARTER KELLY STAKE</span><br><strong style="font-size: 18px; color: #FFBB33;">{format_stake_dual(combo_obj['kelly_stake_amount'], dash_currency)} ({combo_obj['kelly_stake_percent']}%)</strong></div>
                                     </div>

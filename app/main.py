@@ -425,18 +425,20 @@ def get_daily_portfolio(
 def get_portfolio_combos(
     target_date: Optional[str] = Query(None, description="Specific YYYY-MM-DD matchday (in EAT), or None for next active matchday"),
     num_legs: int = Query(3, ge=2, le=3, description="Target number of teams in the combo (strictly 2 or 3)"),
-    min_total_odds: float = Query(2.00, ge=1.50, le=10.0, description="Minimum combined total odds"),
-    min_leg_prob: float = Query(0.80, ge=0.50, le=0.99, description="Minimum individual leg win/draw probability"),
+    min_total_odds: float = Query(2.00, ge=1.10, le=10.0, description="Minimum combined total odds"),
+    min_leg_prob: float = Query(0.85, ge=0.50, le=0.99, description="Minimum individual leg win/draw probability"),
+    min_accumulator_prob: Optional[float] = Query(None, ge=0.50, le=1.00, description="Minimum joint accumulator ticket win probability (e.g. 0.85 for 85%-100%)"),
     bankroll: float = Query(1000.0, ge=10.0, description="Bankroll for Kelly sizing"),
     competition: Optional[str] = Query(None, description="Optional competition filter"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Generate same-day daily high-confidence accumulators with combined odds >= 2.0+."""
+    """Generate same-day daily high-confidence accumulators with accumulator win prob >= 85%-100%."""
     return generate_high_confidence_combos(
         db=db,
         target_date=target_date,
         num_legs=num_legs,
         min_leg_prob=min_leg_prob,
+        min_accumulator_prob=min_accumulator_prob,
         min_total_odds=min_total_odds,
         bankroll=bankroll,
         competition=competition,

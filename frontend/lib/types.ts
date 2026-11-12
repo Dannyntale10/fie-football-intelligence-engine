@@ -97,6 +97,20 @@ export type SourcesResponse = {
   note: string;
 };
 
+export type SourcesRefreshResult = {
+  feeds: Record<
+    string,
+    {
+      provider?: string;
+      label?: string;
+      status?: string;
+      error?: string;
+    }
+  >;
+  totals: Record<string, number>;
+  synced_at?: string;
+};
+
 export type SyncLog = {
   id: number;
   provider_id: number | null;
@@ -192,6 +206,10 @@ export type AnalysisRow = {
   captured_at: string | null;
   price: number;
   probability: number | null;
+  probability_model: number | null;
+  blended: boolean;
+  blend_weight: number | null;
+  blend_temperature: number | null;
   fair_odds: number | null;
   implied_probability: number | null;
   devigged_probability: number | null;
@@ -222,6 +240,20 @@ export type MarketAnalysisResponse = {
   qualified: number;
   evaluated: number;
   message: string;
+  blend: {
+    fitted: boolean;
+    applied: boolean;
+    weight: number | null;
+    temperature?: number;
+    weight_source?: string;
+    scope: string;
+    competition: string | null;
+    verdict?: string | null;
+    generated_at?: string | null;
+    reason?: string;
+    selections_blended: number;
+    note: string;
+  };
   value_detection: {
     value_count: number;
     entries: Array<Record<string, unknown>>;
@@ -289,11 +321,81 @@ export type RankedLegRow = {
   grade: string | null;
   match: string;
   selection: string;
+  market_type?: string | null;
   odds: number;
   probability: number;
+  probability_model?: number | null;
+  blended?: boolean | null;
+  confidence?: number | null;
   edge_percent: number | null;
   expected_value_percent: number | null;
   odds_source: string;
+  structures_considered?: number | null;
+  runner_ups?: StructureRunnerUp[];
+};
+
+export type StructureRunnerUp = {
+  market_key: string;
+  market_type: string;
+  selection: string;
+  odds: number;
+  probability: number;
+  score: number;
+  blended: boolean;
+};
+
+export type TopPick = {
+  rank: number;
+  fixture_id: number;
+  match: string;
+  competition: string;
+  team: string;
+  market_key: string;
+  market_type: string;
+  selection: string;
+  odds: number;
+  odds_source: "market" | "synthetic" | string;
+  probability: number;
+  probability_model: number;
+  blended: boolean;
+  blend_weight: number | null;
+  implied_probability: number;
+  devigged_probability: number;
+  edge_percent: number;
+  expected_value_percent: number;
+  confidence: number;
+  confidence_reasons: string[];
+  model_source: string | null;
+  score: number;
+  grade: string;
+  grade_label: string;
+  structures_considered: number;
+  runner_ups: StructureRunnerUp[];
+  kickoff_utc: string | null;
+  kickoff_eat: string;
+  ai_squad?: Record<string, unknown>;
+};
+
+export type TopPicksResponse = {
+  version: string;
+  method: string;
+  scope: string;
+  threshold: number;
+  min_confidence: number;
+  evaluated_fixtures: number;
+  priced_fixtures: number;
+  estimates_skipped: number;
+  rejected: Record<string, number>;
+  vetoed_fixtures: number;
+  picks: TopPick[];
+  qualified: number;
+  message: string;
+  note: string;
+  target_date?: string | null;
+  matchday_label?: string;
+  matchday_matches_count?: number;
+  available_matchdays?: Array<{ date: string; label: string; count: number }>;
+  returned?: number;
 };
 
 export type ComboResponse = {
@@ -308,6 +410,7 @@ export type ComboResponse = {
   total_combos_generated: number;
   best_combo: Combo | null;
   alternatives: Combo[];
+  top_picks: TopPicksResponse;
   ranking: {
     version: string;
     method: string;
@@ -416,6 +519,63 @@ export type TeamForm = {
   away: Record<string, unknown>;
 };
 
+export type BlendReport = {
+  status: string;
+  scope: string;
+  method: string;
+  verdict: string;
+  weights: {
+    default: number;
+    temperature: number;
+    per_competition: Record<string, number>;
+  };
+  train: {
+    n_matches: number;
+    n_competitions: number;
+    weight: number;
+    temperature: number;
+    log_loss: number;
+    from: string | null;
+    to: string | null;
+  };
+  holdout: {
+    n_matches: number;
+    n_competitions: number;
+    from: string | null;
+    to: string | null;
+    model: BlendMetrics;
+    market: BlendMetrics;
+    blend: BlendMetrics;
+    skill: {
+      brier_improvement_over_market: number;
+      log_loss_improvement_over_market: number;
+      validated: boolean;
+    };
+  };
+  per_competition: Record<
+    string,
+    {
+      n_train: number;
+      n_holdout: number;
+      raw_weight: number;
+      weight: number;
+      model_brier: number | null;
+      market_brier: number | null;
+      blend_brier: number | null;
+    }
+  >;
+  params: Record<string, number | string>;
+  message: string;
+  generated_at: string;
+};
+
+export type BlendMetrics = {
+  n_matches: number;
+  brier: number | null;
+  log_loss: number | null;
+  accuracy_percent: number | null;
+};
+
 export type CalibrationReport = {
   verdict: string;
   n_matches: number;
@@ -439,4 +599,148 @@ export type CalibrationReport = {
     { n_matches: number; verdict: string; model_brier: number; market_brier: number }
   >;
   generated_at: string;
+};
+
+export type DailyComboLeg = {
+  fixture_id: number;
+  match: string;
+  competition: string;
+  kickoff_utc: string | null;
+  kickoff_eat: string;
+  market_key: string;
+  market_type: string;
+  selection: string;
+  odds: number;
+  probability: number;
+  market_probability: number;
+  calibrated: boolean;
+  bookmaker: string | null;
+  source: string | null;
+  source_url: string | null;
+  captured_at: string | null;
+  price_age_hours: number | null;
+};
+
+export type DailyCombo = {
+  size: number;
+  legs: DailyComboLeg[];
+  combined_probability: number;
+  total_odds: number;
+  implied_probability: number | null;
+  expected_value_percent: number | null;
+  min_leg_probability: number;
+};
+
+export type DailyComboReport = {
+  target_date: string;
+  matchday_label: string;
+  generated_at: string;
+  params: {
+    min_leg_probability: number;
+    combo_sizes: number[];
+    max_price_age_hours: number | null;
+    competition: string | null;
+  };
+  tier: {
+    label: string;
+    probability_source: string;
+    published_gate: number;
+    below_published_gate: boolean;
+    note: string;
+  };
+  scope: {
+    fixtures_on_slate: number;
+    fixtures_priced: number;
+    qualified_legs: number;
+    candidate_legs: number;
+    combos_considered: number;
+    rejected: Record<string, number>;
+  };
+  learning: {
+    applied: boolean;
+    a?: number;
+    b?: number;
+    n?: number;
+    source?: string | null;
+  };
+  legs: DailyComboLeg[];
+  combos: Record<string, DailyCombo[]>;
+  best: DailyCombo | null;
+  stale_legs: Array<{ match: string; price_age_hours: number }>;
+  message: string;
+  note: string;
+};
+
+export type ComboMetrics = {
+  count: number;
+  wins?: number;
+  losses?: number;
+  hit_rate?: number;
+  average_predicted_probability?: number;
+  calibration_gap?: number;
+  brier?: number;
+  log_loss?: number;
+  total_staked?: number;
+  total_returned?: number;
+  profit?: number;
+  roi_percent?: number | null;
+};
+
+export type ComboBacktestReport = {
+  version: string;
+  generated_at: string;
+  status: string;
+  message?: string;
+  window?: {
+    first_matchday: string | null;
+    last_matchday: string | null;
+    matchdays: number;
+    settled_matches: number;
+  };
+  params: {
+    min_leg_probability: number;
+    combo_sizes: number[];
+    stake: number;
+    price_mode: string;
+    combos_per_size: number;
+    holdout_share: number;
+  };
+  scope: {
+    settled_fixtures: number;
+    qualified_legs?: number;
+    combos?: number;
+    skipped: Record<string, number>;
+  };
+  legs?: {
+    all: ComboMetrics & { buckets?: Array<Record<string, number | string>>; ece?: number };
+    holdout: ComboMetrics & { buckets?: Array<Record<string, number | string>>; ece?: number };
+  };
+  combos?: {
+    all: Record<string, ComboMetrics>;
+    train: Record<string, ComboMetrics>;
+    holdout: Record<string, ComboMetrics>;
+  };
+  learning: {
+    applied: boolean;
+    a: number;
+    b: number;
+    n: number;
+    n_train?: number;
+    n_validation?: number;
+    logloss_before?: number;
+    logloss_after?: number;
+    improvement?: number;
+    reason?: string;
+  };
+  holdout_after_learning?: Record<string, ComboMetrics> | null;
+  holdout_fit?: {
+    applied: boolean;
+    a: number | null;
+    b: number | null;
+    n: number | null;
+    improvement?: number | null;
+    reason?: string;
+  };
+  notes: string[];
+  learning_saved?: Record<string, unknown>;
 };

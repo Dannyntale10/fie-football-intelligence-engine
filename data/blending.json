@@ -1,0 +1,161 @@
+{
+  "status": "fitted",
+  "scope": "1x2",
+  "method": "per-outcome log-opinion pool, renormalised",
+  "verdict": "blend_matches_market",
+  "weights": {
+    "default": 0.003,
+    "temperature": 0.5,
+    "per_competition": {
+      "belgian pro league": 0.001,
+      "championship": 0.001,
+      "primeira liga": 0.001,
+      "la liga": 0.038,
+      "ligue 1": 0.001,
+      "premier league": 0.001,
+      "super lig": 0.048,
+      "eredivisie": 0.008,
+      "bundesliga": 0.072,
+      "serie a": 0.101
+    }
+  },
+  "train": {
+    "n_matches": 2503,
+    "n_competitions": 12,
+    "weight": 0.003,
+    "temperature": 0.5,
+    "log_loss": 0.953619,
+    "from": "2023-08-26T15:00:00+00:00",
+    "to": "2024-03-09T17:45:00+00:00"
+  },
+  "holdout": {
+    "n_matches": 1073,
+    "n_competitions": 12,
+    "from": "2024-03-09T18:00:00+00:00",
+    "to": "2024-06-02T17:00:00+00:00",
+    "model": {
+      "n_matches": 1073,
+      "brier": 0.597938,
+      "log_loss": 0.999956,
+      "accuracy_percent": 50.7
+    },
+    "market": {
+      "n_matches": 1073,
+      "brier": 0.568637,
+      "log_loss": 0.958034,
+      "accuracy_percent": 54.33
+    },
+    "blend": {
+      "n_matches": 1073,
+      "brier": 0.568666,
+      "log_loss": 0.958062,
+      "accuracy_percent": 54.24
+    },
+    "skill": {
+      "brier_improvement_over_market": -2.9e-05,
+      "log_loss_improvement_over_market": -2.8e-05,
+      "validated": false
+    }
+  },
+  "per_competition": {
+    "championship": {
+      "n_train": 392,
+      "n_holdout": 112,
+      "raw_weight": 0.0,
+      "weight": 0.001,
+      "model_brier": 0.665522,
+      "market_brier": 0.640022,
+      "blend_brier": 0.640085
+    },
+    "la liga": {
+      "n_train": 232,
+      "n_holdout": 107,
+      "raw_weight": 0.06,
+      "weight": 0.038,
+      "model_brier": 0.576023,
+      "market_brier": 0.547677,
+      "blend_brier": 0.546727
+    },
+    "premier league": {
+      "n_train": 232,
+      "n_holdout": 107,
+      "raw_weight": 0.0,
+      "weight": 0.001,
+      "model_brier": 0.567481,
+      "market_brier": 0.518923,
+      "blend_brier": 0.518926
+    },
+    "serie a": {
+      "n_train": 213,
+      "n_holdout": 106,
+      "raw_weight": 0.17,
+      "weight": 0.101,
+      "model_brier": 0.666074,
+      "market_brier": 0.64527,
+      "blend_brier": 0.65291
+    },
+    "super lig": {
+      "n_train": 243,
+      "n_holdout": 94,
+      "raw_weight": 0.075,
+      "weight": 0.048,
+      "model_brier": 0.568183,
+      "market_brier": 0.533837,
+      "blend_brier": 0.53267
+    },
+    "primeira liga": {
+      "n_train": 180,
+      "n_holdout": 88,
+      "raw_weight": 0.0,
+      "weight": 0.001,
+      "model_brier": 0.550098,
+      "market_brier": 0.530019,
+      "blend_brier": 0.530004
+    },
+    "ligue 1": {
+      "n_train": 182,
+      "n_holdout": 88,
+      "raw_weight": 0.0,
+      "weight": 0.001,
+      "model_brier": 0.620142,
+      "market_brier": 0.589855,
+      "blend_brier": 0.589873
+    },
+    "eredivisie": {
+      "n_train": 179,
+      "n_holdout": 88,
+      "raw_weight": 0.013,
+      "weight": 0.008,
+      "model_brier": 0.544495,
+      "market_brier": 0.524667,
+      "blend_brier": 0.524628
+    },
+    "belgian pro league": {
+      "n_train": 195,
+      "n_holdout": 85,
+      "raw_weight": 0.0,
+      "weight": 0.001,
+      "model_brier": 0.619476,
+      "market_brier": 0.602799,
+      "blend_brier": 0.60278
+    },
+    "bundesliga": {
+      "n_train": 177,
+      "n_holdout": 84,
+      "raw_weight": 0.13,
+      "weight": 0.072,
+      "model_brier": 0.601544,
+      "market_brier": 0.556929,
+      "blend_brier": 0.559836
+    }
+  },
+  "params": {
+    "train_fraction": 0.7,
+    "prior_strength": 150.0,
+    "min_predictions": 200,
+    "min_holdout": 60,
+    "scope": "1x2"
+  },
+  "message": "The fitted weight is 0.003: on this history the model adds nothing to the de-vigged market price, so the blend falls back to the market. That is the honest result. Improve the model before expecting independent 1X2 edges; EV slips stay gated off.",
+  "generated_at": "2026-11-12T16:33:34.350509+00:00"
+}

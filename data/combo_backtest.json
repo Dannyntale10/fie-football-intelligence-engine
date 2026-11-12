@@ -1,0 +1,280 @@
+{
+  "combos": {
+    "all": {
+      "2_leg": {
+        "average_predicted_probability": 0.6676,
+        "brier": 0.18305,
+        "calibration_gap": 0.1144,
+        "count": 78,
+        "hit_rate": 0.7821,
+        "log_loss": 0.55409,
+        "losses": 17,
+        "profit": 41.84,
+        "roi_percent": 5.36,
+        "total_returned": 821.84,
+        "total_staked": 780.0,
+        "wins": 61
+      },
+      "3_leg": {
+        "average_predicted_probability": 0.5369,
+        "brier": 0.23383,
+        "calibration_gap": 0.1161,
+        "count": 49,
+        "hit_rate": 0.6531,
+        "log_loss": 0.66044,
+        "losses": 17,
+        "profit": 14.29,
+        "roi_percent": 2.92,
+        "total_returned": 504.29,
+        "total_staked": 490.0,
+        "wins": 32
+      },
+      "total": {
+        "average_predicted_probability": 0.6172,
+        "brier": 0.20265,
+        "calibration_gap": 0.1151,
+        "count": 127,
+        "hit_rate": 0.7323,
+        "log_loss": 0.59512,
+        "losses": 34,
+        "profit": 56.13,
+        "roi_percent": 4.42,
+        "total_returned": 1326.13,
+        "total_staked": 1270.0,
+        "wins": 93
+      }
+    },
+    "holdout": {
+      "2_leg": {
+        "average_predicted_probability": 0.6861,
+        "brier": 0.16493,
+        "calibration_gap": 0.171,
+        "count": 21,
+        "hit_rate": 0.8571,
+        "log_loss": 0.51655,
+        "losses": 3,
+        "profit": 29.79,
+        "roi_percent": 14.19,
+        "total_returned": 239.79,
+        "total_staked": 210.0,
+        "wins": 18
+      },
+      "3_leg": {
+        "average_predicted_probability": 0.5539,
+        "brier": 0.21092,
+        "calibration_gap": 0.2318,
+        "count": 14,
+        "hit_rate": 0.7857,
+        "log_loss": 0.61396,
+        "losses": 3,
+        "profit": 27.64,
+        "roi_percent": 19.74,
+        "total_returned": 167.64,
+        "total_staked": 140.0,
+        "wins": 11
+      },
+      "total": {
+        "average_predicted_probability": 0.6332,
+        "brier": 0.18333,
+        "calibration_gap": 0.1953,
+        "count": 35,
+        "hit_rate": 0.8286,
+        "log_loss": 0.55552,
+        "losses": 6,
+        "profit": 57.43,
+        "roi_percent": 16.41,
+        "total_returned": 407.43,
+        "total_staked": 350.0,
+        "wins": 29
+      }
+    },
+    "train": {
+      "2_leg": {
+        "average_predicted_probability": 0.6608,
+        "brier": 0.18973,
+        "calibration_gap": 0.0936,
+        "count": 57,
+        "hit_rate": 0.7544,
+        "log_loss": 0.56792,
+        "losses": 14,
+        "profit": 12.05,
+        "roi_percent": 2.11,
+        "total_returned": 582.05,
+        "total_staked": 570.0,
+        "wins": 43
+      },
+      "3_leg": {
+        "average_predicted_probability": 0.5302,
+        "brier": 0.24299,
+        "calibration_gap": 0.0698,
+        "count": 35,
+        "hit_rate": 0.6,
+        "log_loss": 0.67903,
+        "losses": 14,
+        "profit": -13.35,
+        "roi_percent": -3.81,
+        "total_returned": 336.65,
+        "total_staked": 350.0,
+        "wins": 21
+      },
+      "total": {
+        "average_predicted_probability": 0.6111,
+        "brier": 0.21,
+        "calibration_gap": 0.0846,
+        "count": 92,
+        "hit_rate": 0.6957,
+        "log_loss": 0.61019,
+        "losses": 28,
+        "profit": -1.3,
+        "roi_percent": -0.14,
+        "total_returned": 918.7,
+        "total_staked": 920.0,
+        "wins": 64
+      }
+    }
+  },
+  "generated_at": "2026-11-12T18:12:13.863775+00:00",
+  "holdout_after_learning": null,
+  "holdout_fit": {
+    "a": 1.2737,
+    "applied": false,
+    "b": 0.0807,
+    "improvement": 0.00031,
+    "logloss_after": 0.64167,
+    "logloss_before": 0.64198,
+    "n": 2838,
+    "n_train": 1986,
+    "n_validation": 852,
+    "raw_a": 1.3026,
+    "raw_b": 0.0892,
+    "reason": "held-out log loss did not improve enough to justify a change"
+  },
+  "learning": {
+    "a": 1.239,
+    "applied": true,
+    "b": 0.0589,
+    "improvement": 0.00301,
+    "logloss_after": 0.63976,
+    "logloss_before": 0.64277,
+    "n": 4109,
+    "n_train": 2876,
+    "n_validation": 1233,
+    "raw_a": 1.2565,
+    "raw_b": 0.0632,
+    "reason": "validated on held-out recent matches"
+  },
+  "legs": {
+    "all": {
+      "average_odds": 1.185,
+      "average_predicted_probability": 0.8005,
+      "brier": 0.12523,
+      "buckets": [
+        {
+          "average_predicted": 0.7729,
+          "count": 170,
+          "gap": 0.0742,
+          "observed_win_rate": 0.8471,
+          "range": "0.70\u20130.80"
+        },
+        {
+          "average_predicted": 0.8359,
+          "count": 127,
+          "gap": 0.0381,
+          "observed_win_rate": 0.874,
+          "range": "0.80\u20130.90"
+        },
+        {
+          "average_predicted": 0.9036,
+          "count": 2,
+          "gap": -0.4036,
+          "observed_win_rate": 0.5,
+          "range": "0.90\u20131.00"
+        }
+      ],
+      "calibration_gap": 0.0557,
+      "count": 299,
+      "ece": 0.0611,
+      "hit_rate": 0.8562,
+      "log_loss": 0.41814,
+      "wins": 256
+    },
+    "holdout": {
+      "average_odds": 1.181,
+      "average_predicted_probability": 0.8046,
+      "brier": 0.12081,
+      "buckets": [
+        {
+          "average_predicted": 0.772,
+          "count": 47,
+          "gap": 0.1004,
+          "observed_win_rate": 0.8723,
+          "range": "0.70\u20130.80"
+        },
+        {
+          "average_predicted": 0.8405,
+          "count": 40,
+          "gap": 0.0095,
+          "observed_win_rate": 0.85,
+          "range": "0.80\u20130.90"
+        },
+        {
+          "average_predicted": 0.9032,
+          "count": 1,
+          "gap": 0.0968,
+          "observed_win_rate": 1.0,
+          "range": "0.90\u20131.00"
+        }
+      ],
+      "calibration_gap": 0.059,
+      "count": 88,
+      "ece": 0.059,
+      "hit_rate": 0.8636,
+      "log_loss": 0.40688,
+      "wins": 76
+    }
+  },
+  "notes": [
+    "Historical fixtures predate per-feed attribution, so the replay cannot reproduce a specific feed's price; live legs still require attribution.",
+    "Replay prices come from one stored bookmaker trio per fixture, so the result is conservative and does not assume access to every book.",
+    "Settlement uses the stored final score. Each combo is staked flat and returns stake \u00d7 total odds only when every leg wins.",
+    "One ticket per size per matchday is settled: the engine's top-ranked combo. Evaluating several overlapping tickets per day would count the same legs more than once.",
+    "Combined probability is the product of de-vigged market probabilities, which assumes the legs are independent. Near-duplicate fixtures are collapsed to one leg before combinations are built.",
+    "The latest 30% of matchdays is the holdout; the fit is validated on its most recent slice and stored only when it reduces held-out log loss.",
+    "The after-learning holdout re-selects legs with a calibration fitted on training matchdays only, so that comparison stays out of sample.",
+    "At a bookmaker's own prices, a negative ROI is expected: the margin is already inside the price. Hit rate above the required break-even is the measure of whether the tier is worth playing.",
+    "A calibration fitted on training matchdays only did not clear its own held-out improvement bar (0.00031 < 0.002), so no after-learning holdout comparison is published."
+  ],
+  "params": {
+    "combo_sizes": [
+      2,
+      3
+    ],
+    "combos_per_size": 1,
+    "competition": null,
+    "holdout_share": 0.3,
+    "max_candidate_legs": 15,
+    "min_leg_probability": 0.75,
+    "price_mode": "flat",
+    "stake": 10.0
+  },
+  "scope": {
+    "combos": 127,
+    "holdout_matchdays": 68,
+    "matchdays": 226,
+    "qualified_legs": 299,
+    "settled_fixtures": 4109,
+    "skipped": {
+      "incomplete_1x2": 1,
+      "missing_kickoff": 0,
+      "placeholder": 0
+    }
+  },
+  "status": "ok",
+  "version": "combo-backtest-1",
+  "window": {
+    "first_matchday": "2023-07-28",
+    "last_matchday": "2026-11-12",
+    "matchdays": 226,
+    "settled_matches": 4109
+  }
+}

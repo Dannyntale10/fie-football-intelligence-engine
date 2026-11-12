@@ -6,9 +6,11 @@ price keeps its provider and timestamp, every analysis reports what it could
 not evaluate, and when nothing clears the qualification gate the platform says
 **NO QUALIFIED SELECTIONS FOUND.**
 
-- **Primary market:** BetPawa Uganda. Secondary: SportPesa, Betika, Funspot.
-- **No paid API is required.** Free provider adapters are optional; an
-  unconfigured provider is shown as unconfigured, never as live.
+- **Primary market:** BetPawa Uganda. Secondary: SportPesa, Betika
+  (betika.com/en-ug) and FANSPORT (fsportug.icu), read from the same public
+  JSON their websites use.
+- **No paid API is required.** The four bookmaker feeds need no key; optional
+  keyed providers are shown as unconfigured until a key exists, never as live.
 - **No bets are placed automatically.** Predictions are stored for paper
   trading and evaluation.
 
@@ -19,7 +21,12 @@ not evaluate, and when nothing clears the qualification gate the platform says
 | Fixtures, ratings, 1X2 analysis | Working with local/imported data |
 | Universal market discovery | Working for markets present in `market_odds_json` |
 | Accumulators, ranking, CLV, calibration | Working; gated on real settled history |
-| Free provider adapters | Implemented; require your own free keys |
+| Top structure selection (≥85%) | Working: one weighted pick per fixture from real prices |
+| Model–market blend (1X2) | Fitted and applied; on current data the market carries the weight |
+| Bookmaker feeds (BetPawa, SportPesa, Betika, FANSPORT) | Working keyless; refresh on demand or every 30 min |
+| Daily 2–3 team combos (75% tier) | Working: attributed prices, explicit exclusions, NO QUALIFIED SELECTIONS when empty |
+| Historical combo replay and calibration | Working on 4,109 settled fixtures; holdout ROI is small-sample |
+| Free provider adapters | Implemented; keyed providers need your own free keys |
 | Telegram bot | Implemented; requires a bot token and an allowlist |
 | Learned edge premiums | Need settled real legs before they exist |
 | Profit claims | None. Paper trade 4–8 weeks before trusting any ROI |
@@ -33,7 +40,7 @@ can be exercised offline. They are **not** evidence of live accuracy.
 backend/app/
   api/            FastAPI routers: fixtures, predictions, markets, performance, sources, system
   analytics/      Dixon-Coles/Poisson, ratings, calibration, backtest, match dossier
-  betting/        combo, ranking, CLV, settlement, portfolio, PDF slips
+  betting/        selection, pricing, ranking, combo, CLV, settlement, portfolio, PDF slips
   data_sources/   free provider adapters, connectors, seeder, live feed
   market_engine/  catalogue → discovery → registry models → analysis → qualification → value
   models/         SQLAlchemy tables (fixtures, markets, predictions, results, audit)
@@ -156,6 +163,7 @@ are excluded from performance reporting and must not be deleted casually.
 | Every 15 min, 05–23 | Lineup watch (60–90 min before kickoff) |
 | 02:30 | Results and settlement |
 | 23:00 | Daily analytics |
+| Sunday 23:30 | Blend refit (model–market weights) |
 
 Jobs fail soft: a missing provider logs a skip instead of inventing data.
 Because the scheduler is in-process, run a single API worker locally. For
@@ -180,12 +188,29 @@ Only allowlisted chat IDs are answered. Keys are never echoed back.
 
 ## Data providers and price attribution
 
-Configure any free keys and inspect readiness:
+BetPawa, SportPesa, Betika and FANSPORT are read from their own public JSON
+feeds, with no key and no account. Pull them on demand from the Data Sources
+page or the API, or let the 30-minute scheduler do it:
+
+```bash
+curl -X POST "http://localhost:8000/sources/refresh"
+curl -X POST "http://localhost:8000/sources/refresh?max_events=20"   # bounded probe
+```
+
+Each run records a `DataProvider` row and a `ProviderSyncLog` entry per feed, so
+coverage and failures stay visible. New fixtures are only added for
+competitions already tracked in the database; every other match can still
+refresh prices on an existing fixture. Configure any free keys and inspect
+readiness:
 
 ```bash
 python scripts/verify_providers.py          # env-only check, no requests
 python scripts/verify_providers.py --live   # real request per configured provider
 ```
+
+Feed limits are honest and bounded: SportPesa exposes a 30-game window,
+FANSPORT a 40-game window, and betPawa is paginated. A feed returning nothing
+leaves existing prices untouched — it never creates placeholder odds.
 
 Rules enforced by the engine:
 
@@ -209,11 +234,135 @@ Rules enforced by the engine:
   correlation/independence assumptions. Target odds (2.00, 2.50, 3.00) are
   goals, not guarantees.
 
+## Choosing the market structure (≥85%)
+
+`backend/app/betting/selection.py` decides *which* structure to publish for a
+fixture, rather than assuming 1X2. Every market the model can price is
+considered, but a structure is only eligible when a real bookmaker price
+exists for it (`market_odds_json` or the 1X2 columns). Model-derived prices are
+labelled `synthetic` and excluded unless the caller opts in.
+
+Two floors are hard-coded and cannot be lowered by an API parameter:
+
+- **probability ≥ 85%** — the published qualification gate;
+- **data confidence ≥ 0.60** — ratings-driven or current, cross-verified prices.
+
+Eligible structures are weighted with a probability-first composite: win
+probability 60 points (scaled 80%→100%), price edge 15 (capped at 10%), EV 10
+(uncapped edge is not rewarded), and data evidence 15. The highest-scoring
+structure per fixture is the pick; the next two are kept as `runner_ups` so the
+choice can be audited. A verified squad `VETO` falls through to the next
+eligible structure; an advisory reading never blocks a priced pick.
+
+De-vigging is per settlement group. Double chance is derived from the de-vigged
+1X2 group (`P(1X) = P(H) + P(D)`) instead of being normalised on its own,
+because its three outcomes overlap and are not a one-sum set.
+
+The 85% joint-probability accumulator rule and the 2.00 minimum total odds are
+rarely satisfied at fair prices. Rather than relax either, the engine publishes
+`top_picks` separately and reports `NO QUALIFIED SELECTIONS FOUND.` when no
+accumulator survives.
+
+```bash
+curl "http://127.0.0.1:8000/portfolio/top-picks"                    # next matchday
+curl "http://127.0.0.1:8000/portfolio/top-picks?target_date=all&limit=25"
+curl "http://127.0.0.1:8000/portfolio/combos?selection_mode=certainty"
+```
+
+The Accumulators page renders the top-picks table above the slip result: rank,
+match, structure, selection and runner-ups, price with its source, win
+probability with the 85% marker, data confidence, and the weighted score/grade.
+
+## Model–market blending (1X2)
+
+The model is not allowed to overrule the market by default. For the 1X2
+settlement group, `backend/app/analytics/blending.py` pools the model and the
+de-vigged price in log-odds space:
+
+```
+logit(blend) = w · logit(model) / τ + (1 − w) · logit(market)
+```
+
+then renormalises the three outcomes. `τ` is a temperature fitted on a
+chronological 70/30 train/holdout split, `w` is chosen by log-loss grid search
+on the training split, and per-competition weights are shrunk toward the global
+weight (`k = 150`). Nothing about the fit looks at the holdout.
+
+- Only 1X2 is blended. Other market families remain pure model output, and a
+  price estimated from the model is never blended — only a real de-vigged
+  bookmaker price.
+- The market prior dominates because the model does not beat it: on the current
+  local history the fitted global weight is **0.003** with `τ = 0.50`, and the
+  holdout Brier is 0.568666 blended versus 0.568637 for the market alone
+  (model alone 0.597938). The report verdict is `blend_matches_market`, which
+  is not a win.
+- Because the blend does not beat the market out of sample, EV slips stay gated
+  off. The gate is not lowered to make the blend look useful.
+
+Refit and inspect:
+
+```bash
+source .venv/bin/activate
+python scripts/fit_blend.py              # fit, save data/blending.json, print JSON
+python scripts/fit_blend.py --no-save    # dry run
+curl http://127.0.0.1:8000/evaluation/blend          # saved report
+curl -X POST http://127.0.0.1:8000/evaluation/blend  # refit now
+```
+
+The scheduler refits weekly (Sunday 23:30 EAT). The Performance page shows the
+report, including the near-zero weight, so the result is visible rather than
+implied.
+
+## Daily 2–3 team combos and the historical replay
+
+The Overview page has an **Analyse today's slate** button. It builds 2- and
+3-team combos from the matches on today's EAT matchday:
+
+- one selection per fixture (the highest de-vigged 1X2 outcome);
+- only legs whose de-vigged market probability is **≥ 75%**, an exploratory
+  tier that sits *below* the unchanged 85% published gate;
+- each leg priced by the exact attributed bookmaker quote, so the price shown is
+  the price whose bookmaker, source and capture time are shown;
+- feed placeholder rows (`Home (Special bets)`), stale prices, unattributed
+  flat columns and near-duplicate fixtures collapsed to a single leg;
+- when nothing qualifies the response is `NO QUALIFIED SELECTIONS FOUND.`
+
+The report lists the top combo, the full leg pool, the learning note, and the
+rejection counts, so an empty slate explains itself. A feed refresh runs after
+the report renders: an unreachable bookmaker slows the refresh, never the
+report, and the refresh line reports exactly which feeds responded.
+
+**Test on history** replays the same rule on every settled fixture with stored
+prices (single-book `flat` prices by default; `price_mode=best` is also
+available). The latest 30% of matchdays is a holdout. A Platt calibration
+(`logit p → a·logit p + b`, L2-shrunk) is fitted on a chronological 70/30 split
+and stored in `data/combo_learning.json` only when it reduces held-out log
+loss; the live engine applies it to every leg. The after-learning holdout is
+computed with a calibration fitted on training matchdays only, and is withheld
+entirely when that training-only fit does not clear its own bar — so a
+published improvement is never in-sample.
+
+```bash
+curl "http://127.0.0.1:8000/combos/daily"                    # today's slate, EAT
+curl "http://127.0.0.1:8000/combos/daily?min_leg_probability=0.8&competition=UEFA"
+curl -X POST http://127.0.0.1:8000/combos/backtest \
+     -H 'Content-Type: application/json' \
+     -d '{"price_mode": "flat", "limit_per_size": 1}'
+curl http://127.0.0.1:8000/combos/backtest                   # last saved report
+```
+
+The replay is honest about its limits: one top ticket per size per matchday
+(overlapping tickets would double-count legs), historical prices are one
+bookmaker trio rather than per-feed attribution, and the holdout is only a few
+dozen tickets. On the current 4,109-match history the holdout hit rate is
+82.9% over 35 tickets at 63.3% predicted, and all-history ROI is +4.42% — small
+samples, not a profit claim.
+
 ## Tests and backtests
 
 ```bash
 source .venv/bin/activate
-python -m pytest                 # 157 tests
+python -m pytest                 # 196 tests
 python scripts/backtest.py --strategy walkforward
 python scripts/backtest.py --strategy legacy   # explicitly lookahead-biased
 ```
@@ -278,8 +427,23 @@ only interface you use.
 ## Limitations
 
 - Free providers have quotas, delays and gaps. Verify current limits yourself.
-- Historical prices cover 1X2; other markets may be unbacktestable.
+- Historical prices cover 1X2; other markets may be unbacktestable, so the
+  model–market blend is fitted for 1X2 only.
+- The fitted 1X2 blend gives the model almost no weight (0.003) because the
+  model does not beat the de-vigged market out of sample. That is the honest
+  output, and it keeps EV slips switched off.
 - The learning loop only learns from settled real legs. With none settled,
   there is no learned edge — by design.
+- A top pick means "the highest weighted structure that cleared 85%", not a
+  guaranteed winner. At fair prices such picks usually carry negative EV once
+  the bookmaker margin is included; the EV column reports that honestly.
+- Requiring every leg ≥85%, an 85% joint probability and total odds ≥2.00 makes
+  accumulators mathematically rare. The engine therefore shows the qualified
+  individual picks instead of loosening any rule.
+- The 75% combo replay is measured on a small holdout (tens of tickets). Its ROI
+  is an observation about the stored prices, not an expected return.
+- A bookmaker host that stops responding slows a feed refresh (the sync retries
+  per request) but never blocks the combo report, which renders from stored
+  prices first.
 - This is research and paper trading. It is not betting advice, and it does not
   guarantee profit.

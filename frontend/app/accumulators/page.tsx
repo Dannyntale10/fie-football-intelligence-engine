@@ -8,6 +8,7 @@ import {
   Empty,
   ErrorNote,
   Loading,
+  NoQualified,
   Note,
   PageHeader,
   ProbabilityBar,
@@ -243,6 +244,105 @@ export default function AccumulatorsPage() {
                 ? `Blocked: ${data.blocked_reason}`
                 : data.odds_policy.note}
             </Note>
+          </div>
+
+          <div className="mt-6">
+            <Card
+              title="Top qualifying market structures"
+              subtitle={`${data.top_picks.method}. One structure per fixture, weighted so probability carries the largest budget.`}
+              actions={
+                <Badge tone={data.top_picks.qualified > 0 ? "good" : "muted"}>
+                  {data.top_picks.qualified} qualified
+                </Badge>
+              }
+            >
+              <div className="mb-3 flex flex-wrap gap-2">
+                <Badge tone="good">Win probability ≥ {fmtPercent(data.top_picks.threshold, 0)}</Badge>
+                <Badge tone="muted">Confidence ≥ {fmtPercent(data.top_picks.min_confidence, 0)}</Badge>
+                <Badge tone="muted">{data.top_picks.evaluated_fixtures} fixtures evaluated</Badge>
+                <Badge tone="muted">{data.top_picks.priced_fixtures} with real prices</Badge>
+                {data.top_picks.estimates_skipped > 0 && (
+                  <Badge tone="warn">{data.top_picks.estimates_skipped} estimated prices excluded</Badge>
+                )}
+              </div>
+
+              {data.top_picks.picks.length === 0 ? (
+                <NoQualified message={data.top_picks.message} />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className={tableClass}>
+                    <thead className={theadClass}>
+                      <tr>
+                        <th className={thClass}>Rank</th>
+                        <th className={thClass}>Match</th>
+                        <th className={thClass}>Structure</th>
+                        <th className={thClass}>Selection</th>
+                        <th className={thClass}>Odds</th>
+                        <th className={thClass}>Win probability</th>
+                        <th className={thClass}>Confidence</th>
+                        <th className={thClass}>Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.top_picks.picks.map((pick) => (
+                        <tr key={`${pick.fixture_id}-${pick.market_key}`} className={rowClass}>
+                          <td className={`${tdClass} tabular-nums`}>#{pick.rank}</td>
+                          <td className={tdClass}>
+                            <p className="text-mist/90">{pick.match}</p>
+                            <p className="text-[11px] text-mist/40">
+                              {pick.competition} · {pick.kickoff_eat}
+                            </p>
+                          </td>
+                          <td className={tdClass}>{pick.market_type}</td>
+                          <td className={tdClass}>
+                            <p>{pick.selection}</p>
+                            {pick.runner_ups.length > 0 && (
+                              <p className="mt-1 text-[11px] text-mist/40">
+                                next:{" "}
+                                {pick.runner_ups
+                                  .map(
+                                    (runner) =>
+                                      `${runner.market_type} ${fmtPercent(runner.probability)} @ ${fmtOdds(runner.odds)}`,
+                                  )
+                                  .join(" · ")}
+                              </p>
+                            )}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            <div className="flex items-center gap-2">
+                              <span>{fmtOdds(pick.odds)}</span>
+                              <Badge tone={pick.odds_source === "market" ? "good" : "warn"}>
+                                {pick.odds_source === "market" ? "bookmaker" : "estimate"}
+                              </Badge>
+                            </div>
+                          </td>
+                          <td className={tdClass}>
+                            <ProbabilityBar value={pick.probability} threshold={data.top_picks.threshold} />
+                            {pick.blended && (
+                              <p className="mt-1 text-[11px] text-mist/40">
+                                blend w {((pick.blend_weight ?? 0) * 100).toFixed(1)}%
+                              </p>
+                            )}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>{fmtPercent(pick.confidence)}</td>
+                          <td className={tdClass}>
+                            <span className="font-semibold tabular-nums text-mist">{pick.score.toFixed(1)}</span>
+                            <span className="ml-1 text-[11px] text-mist/45">{pick.grade}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="mt-3">
+                <Note>
+                  {data.top_picks.note} A high probability is not a guarantee, and EV is shown as
+                  measured — these picks are not automatically +EV.
+                </Note>
+              </div>
+            </Card>
           </div>
 
           {!data.blocked_reason && combos.length === 0 && (

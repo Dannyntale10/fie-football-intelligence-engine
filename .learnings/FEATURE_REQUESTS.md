@@ -55,3 +55,32 @@ A learning service that (1) harvests leak-free predictions plus settled real leg
 ### Resolution
 - **Resolved**: 2026-11-12T19:40:00+03:00
 - **Notes**: `app/services/learning.py` fits per-market Platt scaling on leak-free walk-forward pairs plus settled real legs (synthetic slips excluded), shrinks toward the identity, and applies a market only when held-out log loss improves by ≥0.002. Per-market edge premiums need ≥25 settled legs and are capped at 2.0. `combo.py` applies calibration and premiums in EV mode and reports the learning block; `GET /learning/summary` and `POST /learning/train` expose the loop, with a retrain button in the Engine Scorecard. `data/learning.json` is versioned (`learn-1`) from 3576 walk-forward matches; home_win and away_win calibrated, draw rejected by the validation gate, no edge premiums yet because there are no settled real slips.
+
+---
+
+## [FEAT-20261112-003] daily_betika_combos_with_history_learning
+
+**Logged**: 2026-11-12T23:55:00+03:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Requested Capability
+A one-click home-page button that searches the day's bookmaker prices (including Betika), builds 2- and 3-team combos from selections with at least a 75% win probability, explains the report, and replays the same rule on historical data so the bot can learn from the result and improve itself.
+
+### User Context
+The user wants a practical daily ticket from real, attributed prices rather than a research table, plus evidence of how the rule has performed and a learning step that is not a claim.
+
+### Complexity Estimate
+complex
+
+### Suggested Implementation
+Keyless Betika adapter alongside the other public feeds; a daily combo engine that de-vigs attributed 1X2 prices, enforces the 75% per-leg tier, collapses duplicate fixtures and placeholder rows, and returns NO QUALIFIED SELECTIONS FOUND when empty; a chronological historical replay with a holdout; Platt calibration stored only when held-out log loss improves; home-page card with Analyse and Test on history actions.
+
+### Metadata
+- Frequency: first_time
+- Related Features: bookmaker feeds, calibration, qualification gate
+
+### Resolution
+- **Resolved**: 2026-11-12T23:55:00+03:00
+- **Notes**: `betika_feed.py` reads Betika's public match JSON. `GET /combos/daily` and `POST /combos/backtest` back the Overview card. The 75% tier is labelled as below the untouched 85% gate. The replay uses single-book prices, one top ticket per size per matchday, and a 30% matchday holdout. The live calibration is fitted on 4,109 settled fixtures and stored in `data/combo_learning.json` (a=1.239, b=0.0589, holdout log loss 0.6428→0.6398). A training-only fit failed its own bar, so the after-learning holdout comparison is withheld rather than shown in-sample.

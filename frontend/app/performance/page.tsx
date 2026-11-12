@@ -29,7 +29,7 @@ import {
   theadClass,
 } from "@/components/ui";
 import { eatDateTime, fmtPercent, fmtSignedPercent, titleCase } from "@/lib/format";
-import type { CalibrationReport, PerformanceSummary } from "@/lib/types";
+import type { BlendReport, CalibrationReport, PerformanceSummary } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
 type PredictionAccuracy = {
@@ -75,6 +75,7 @@ export default function PerformancePage() {
   const accuracy = useApi<PredictionAccuracy>("/performance/predictions?days=30");
   const clv = useApi<ClvSummary>("/evaluation/clv?days=90");
   const calibration = useApi<CalibrationReport>("/evaluation/calibration");
+  const blend = useApi<BlendReport>("/evaluation/blend");
 
   const reliability = (calibration.data?.reliability ?? [])
     .filter((row) => row.predictions > 0)
@@ -87,6 +88,7 @@ export default function PerformancePage() {
 
   const calibrationMissing =
     calibration.error?.toLowerCase().includes("no calibration") ?? false;
+  const blendMissing = blend.error?.toLowerCase().includes("no fitted blend") ?? false;
 
   return (
     <div>
@@ -443,6 +445,116 @@ export default function PerformancePage() {
                     : "The model did not beat the de-vigged market out of sample. Until it does, EV slips should stay gated off regardless of how confident the model looks."}
                 </Note>
               </div>
+            </>
+          )}
+        </Card>
+      </div>
+
+      <div className="mt-6">
+        <Card
+          title="Model–market blend (1X2)"
+          subtitle="Log-odds pooling of the Dixon-Coles model and the de-vigged price. The weight is fitted on the earliest 70% of walk-forward predictions and scored on the latest 30%."
+        >
+          {blend.loading && <Loading label="Loading blend report" />}
+          {blendMissing && (
+            <Empty>
+              No blend has been fitted yet. Run POST /evaluation/blend on the backend; until
+              then 1X2 probabilities are pure model output.
+            </Empty>
+          )}
+          {blend.error && !blendMissing && <ErrorNote message={blend.error} />}
+          {blend.data && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={blend.data.weights.default > 0.05 ? "good" : "muted"}>
+                  {blend.data.weights.default > 0.05
+                    ? `model weight ${(blend.data.weights.default * 100).toFixed(1)}%`
+                    : "market-anchored: model weight ~0"}
+                </Badge>
+                <Badge tone="muted">
+                  temperature {blend.data.weights.temperature.toFixed(2)}
+                </Badge>
+                <Badge tone="muted">{blend.data.holdout.n_matches} holdout matches</Badge>
+                <Badge tone="muted">generated {eatDateTime(blend.data.generated_at)}</Badge>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <Stat
+                  label="Model Brier (holdout)"
+                  value={blend.data.holdout.model.brier?.toFixed(4) ?? "—"}
+                  hint={`log loss ${blend.data.holdout.model.log_loss?.toFixed(4) ?? "—"}`}
+                />
+                <Stat
+                  label="Market Brier (holdout)"
+                  value={blend.data.holdout.market.brier?.toFixed(4) ?? "—"}
+                  hint={`log loss ${blend.data.holdout.market.log_loss?.toFixed(4) ?? "—"}`}
+                />
+                <Stat
+                  label="Blend Brier (holdout)"
+                  value={blend.data.holdout.blend.brier?.toFixed(4) ?? "—"}
+                  hint={`log loss ${blend.data.holdout.blend.log_loss?.toFixed(4) ?? "—"}`}
+                  tone={blend.data.holdout.skill.validated ? "good" : "default"}
+                />
+                <Stat
+                  label="Blend skill vs market"
+                  value={
+                    Math.abs(blend.data.holdout.skill.brier_improvement_over_market) < 0.00005
+                      ? "0.0000"
+                      : blend.data.holdout.skill.brier_improvement_over_market.toFixed(4)
+                  }
+                  hint={
+                    blend.data.holdout.skill.validated
+                      ? "beats the market out of sample"
+                      : "no measured edge over the market"
+                  }
+                  tone={blend.data.holdout.skill.validated ? "good" : "muted"}
+                />
+              </div>
+
+              <div className="mt-4">
+                <Note tone={blend.data.holdout.skill.validated ? "good" : "warn"}>
+                  {blend.data.message}
+                </Note>
+              </div>
+
+              {Object.keys(blend.data.per_competition).length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <table className={tableClass}>
+                    <thead className={theadClass}>
+                      <tr>
+                        <th className={thClass}>Competition</th>
+                        <th className={thClass}>Train / holdout</th>
+                        <th className={thClass}>Weight</th>
+                        <th className={thClass}>Model Brier</th>
+                        <th className={thClass}>Market Brier</th>
+                        <th className={thClass}>Blend Brier</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(blend.data.per_competition).map(([name, row]) => (
+                        <tr key={name} className={rowClass}>
+                          <td className={tdClass}>{name}</td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            {row.n_train} / {row.n_holdout}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            {(row.weight * 100).toFixed(1)}%
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            {row.model_brier?.toFixed(4) ?? "—"}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            {row.market_brier?.toFixed(4) ?? "—"}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            {row.blend_brier?.toFixed(4) ?? "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           )}
         </Card>

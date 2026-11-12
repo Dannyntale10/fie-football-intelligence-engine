@@ -15,15 +15,17 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import requests
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.fixture import Fixture
-from app.data_sources.fixtures import clean_team_name, make_dedupe_key
+from app.data_sources.bookmaker_common import (
+    BookmakerEvent,
+    apply_bookmaker_events,
+    competition_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,58 +71,10 @@ _HEADERS = {
     ),
 }
 
-# (betPawa region, betPawa competition) -> competition name already used in the
-# FIE database. Keyed by region as well because names repeat across countries
-# (e.g. "Premier League" exists in England, Russia, Kenya and Jamaica).
-# Ambiguous names are omitted rather than guessed.
-_KNOWN_COMPETITIONS = {
-    ("England", "Premier League"): "Premier League",
-    ("England", "Championship"): "Championship",
-    ("Spain", "LaLiga"): "La Liga",
-    ("Italy", "Serie A"): "Serie A",
-    ("Germany", "Bundesliga"): "Bundesliga",
-    ("France", "Ligue 1"): "Ligue 1",
-    ("International", "UEFA Nations League"): "UEFA Nations League",
-    ("Brazil", "Brasileiro Serie A"): "Serie A Brazil",
-    ("USA", "MLS"): "MLS",
-    ("Mexico", "Liga MX"): "Liga MX",
-    ("Africa", "CAF Champions League"): "CAF Champions League",
-    ("International", "CAF Champions League"): "CAF Champions League",
-}
-
-# Tokens that vary between providers but do not identify the club itself.
-_TEAM_NOISE = {
-    "fc", "cf", "afc", "sc", "ac", "club", "de", "cd", "ca", "cp", "cr",
-    "sv", "ss", "us", "as", "sp", "mg", "rj", "ce", "pr", "go", "ba",
-    "and", "the", "of",
-}
-
-def _utc_date(dt: datetime) -> str:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
-
-
 def _competition_label(event: Dict[str, Any]) -> Optional[str]:
     raw = ((event.get("competition") or {}).get("name") or "").strip()
     region = ((event.get("region") or {}).get("name") or "").strip()
-    if not raw or not region:
-        return None
-    return _KNOWN_COMPETITIONS.get((region, raw))
-
-
-def _team_key(name: str) -> str:
-    base = clean_team_name(name)
-    tokens = [t for t in base.split() if t not in _TEAM_NOISE and not t.isdigit()]
-    return " ".join(tokens) or base
-
-
-def _same_team(left: str, right: str) -> bool:
-    if left == right:
-        return True
-    shorter, longer = sorted((left, right), key=len)
-    # Guard against one-word keys like "united" matching half the league.
-    return len(shorter) >= 7 and shorter in longer
+    return competition_label(region, raw)
 
 
 def _extract_match_winner(event: Dict[str, Any]) -> Optional[Tuple[float, float, float]]:
@@ -309,122 +263,40 @@ def fetch_upcoming_events(max_events: int = MAX_EVENTS_CAP, timeout: float = 15.
     return events[:max_events]
 
 
-def _find_existing(
-    record: Dict[str, Any],
-    fixtures_by_date: Dict[str, List[Fixture]],
-) -> Optional[Fixture]:
-    home_key = _team_key(record["home_team"])
-    away_key = _team_key(record["away_team"])
-    kickoff = record["kickoff_utc"]
-    for delta in (0, -1, 1):
-        day = _utc_date(kickoff + timedelta(days=delta))
-        for fixture in fixtures_by_date.get(day, []):
-            if _same_team(home_key, _team_key(fixture.home_team)) and _same_team(
-                away_key, _team_key(fixture.away_team)
-            ):
-                return fixture
-    return None
-
-
 def ingest_betpawa_odds(db: Session, max_events: int = MAX_EVENTS_CAP) -> Dict[str, Any]:
     """Refresh tracked fixtures with betPawa prices and add new fixtures for covered leagues."""
-    now = datetime.now(timezone.utc)
     events = fetch_upcoming_events(max_events=max_events)
-
-    stats: Dict[str, Any] = {
-        "fetched_events": len(events),
-        "parsed_with_1x2": 0,
-        "matched_existing": 0,
-        "odds_updated": 0,
-        "inserted_new": 0,
-        "skipped_past": 0,
-        "skipped_no_odds": 0,
-        "skipped_unknown_competition": 0,
-        "inserted_competitions": {},
-    }
+    captured_at = datetime.now(timezone.utc)
 
     records: List[Dict[str, Any]] = []
     for event in events:
         record = _parse_event(event)
-        if not record:
-            stats["skipped_no_odds"] += 1
-            continue
-        if record["kickoff_utc"] <= now:
-            stats["skipped_past"] += 1
-            continue
-        records.append(record)
-    stats["parsed_with_1x2"] = len(records)
-    stats["with_extra_markets"] = sum(1 for r in records if len(r["market_odds"]) > 3)
+        if record:
+            records.append(record)
 
-    upcoming = db.scalars(select(Fixture).where(Fixture.kickoff_utc >= now)).all()
-    fixtures_by_date: Dict[str, List[Fixture]] = {}
-    for fixture in upcoming:
-        fixtures_by_date.setdefault(_utc_date(fixture.kickoff_utc), []).append(fixture)
-
-    tracked_competitions = {
-        str(name) for name in db.scalars(select(Fixture.competition).distinct()).all() if name
-    }
-    inserted_keys: Set[str] = set()
-
-    for record in records:
-        odds_json = (
-            json.dumps(record["market_odds"], sort_keys=True)
-            if record["market_odds"] else None
-        )
-        match = _find_existing(record, fixtures_by_date)
-        if match:
-            stats["matched_existing"] += 1
-            changed = False
-            for attr in ("home_odds", "draw_odds", "away_odds"):
-                value = record[attr]
-                if getattr(match, attr) != value:
-                    setattr(match, attr, value)
-                    changed = True
-            if getattr(match, "market_odds_json", None) != odds_json:
-                match.market_odds_json = odds_json
-                changed = True
-            if changed:
-                match.odds_updated_at = now
-                stats["odds_updated"] += 1
-            continue
-
-        competition = record["known_competition"]
-        if not competition or competition not in tracked_competitions:
-            stats["skipped_unknown_competition"] += 1
-            continue
-
-        dedupe_key = make_dedupe_key(
-            record["kickoff_utc"], record["home_team"], record["away_team"], competition
-        )
-        if dedupe_key in inserted_keys or db.scalar(
-            select(Fixture.id).where(Fixture.dedupe_key == dedupe_key)
-        ):
-            continue
-
-        fixture = Fixture(
-            dedupe_key=dedupe_key,
+    feed_events = [
+        BookmakerEvent(
+            source="BETPAWA",
+            bookmaker="BetPawa",
+            source_url=f"{BETPAWA_BASE}/",
+            event_id=record["event_id"] or None,
             kickoff_utc=record["kickoff_utc"],
             home_team=record["home_team"],
             away_team=record["away_team"],
-            competition=competition,
+            competition=record["competition"],
             country=record["country"],
-            source="BETPAWA",
-            external_fixture_id=record["event_id"] or None,
-            home_odds=record["home_odds"],
-            draw_odds=record["draw_odds"],
-            away_odds=record["away_odds"],
-            odds_updated_at=now,
-            market_odds_json=odds_json,
-            status="scheduled",
+            known_competition=record["known_competition"],
+            market_odds=record["market_odds"],
+            captured_at=captured_at,
         )
-        db.add(fixture)
-        inserted_keys.add(dedupe_key)
-        stats["inserted_new"] += 1
-        stats["inserted_competitions"][competition] = (
-            stats["inserted_competitions"].get(competition, 0) + 1
-        )
+        for record in records
+    ]
 
-    db.commit()
+    stats = apply_bookmaker_events(db, feed_events)
+    stats["fetched_events"] = len(events)
+    stats["skipped_no_odds"] += len(events) - len(records)
+    stats["with_extra_markets"] = sum(1 for record in records if len(record["market_odds"]) > 3)
+
     logger.info(
         "betPawa ingest: %d events, %d matched, %d new, %d skipped (competition)",
         stats["fetched_events"],

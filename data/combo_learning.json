@@ -1,0 +1,22 @@
+{
+  "a": 1.239,
+  "applied": true,
+  "b": 0.0589,
+  "generated_at": "2026-11-12T18:12:13.870310+00:00",
+  "improvement": 0.00301,
+  "logloss_after": 0.63976,
+  "logloss_before": 0.64277,
+  "n": 4109,
+  "n_train": 2876,
+  "n_validation": 1233,
+  "reason": "validated on held-out recent matches",
+  "source": "de-vigged 1X2 market probability of the highest-probability outcome per settled fixture",
+  "tier": 0.75,
+  "version": "combo-backtest-1",
+  "window": {
+    "first_matchday": "2023-07-28",
+    "last_matchday": "2026-11-12",
+    "matchdays": 226,
+    "settled_matches": 4109
+  }
+}

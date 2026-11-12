@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -166,7 +167,11 @@ def test_ingest_updates_match_inserts_tracked_and_skips_untracked(monkeypatch, d
     db.refresh(existing)
     assert (existing.home_odds, existing.draw_odds, existing.away_odds) == (2.1, 3.4, 3.5)
     assert existing.source == "ESPN_DraftKings"
-    assert '"over_2_5": 2.2' in existing.market_odds_json
+    payload = json.loads(existing.market_odds_json)
+    assert payload["over_2_5"]["price"] == 2.2
+    assert payload["over_2_5"]["source"] == "BETPAWA"
+    assert payload["over_2_5"]["bookmaker"] == "BetPawa"
+    assert payload["over_2_5"]["source_url"].startswith("https://www.betpawa.ug")
 
     inserted = db.query(Fixture).filter(Fixture.home_team == "Bayern Munich").one()
     assert inserted.source == "BETPAWA"

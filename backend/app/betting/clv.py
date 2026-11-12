@@ -31,10 +31,11 @@ def _market_prices(fixture: Fixture) -> Dict[str, float]:
         except (TypeError, ValueError):
             parsed = {}
         if isinstance(parsed, dict):
-            prices.update({
-                str(k): float(v) for k, v in parsed.items()
-                if isinstance(v, (int, float)) and v > 1.0
-            })
+            for key, value in parsed.items():
+                if isinstance(value, dict):
+                    value = value.get("price", value.get("odds"))
+                if isinstance(value, (int, float)) and value > 1.0:
+                    prices[str(key)] = float(value)
     for key, value in (
         ("home_win", fixture.home_odds),
         ("draw", fixture.draw_odds),

@@ -41,7 +41,7 @@ from app.data_sources.seeder import (
 from app.data_sources.live_feed import fetch_live_upcoming_fixtures_espn
 from app.analytics.backtest import run_backtest
 from app.betting.portfolio import build_daily_portfolio
-from app.betting.combo import generate_high_confidence_combos
+from app.betting.combo import generate_high_confidence_combos, top_picks_for_matchday
 
 Base.metadata.create_all(bind=engine)
 
@@ -136,15 +136,24 @@ def health(db: Session = Depends(get_db)):
 
 @app.get("/bookmakers")
 def bookmakers():
-    return [{"name": name, "connector_status": "not_configured"} for name in BOOKMAKERS]
+    return [
+        {
+            "name": c.bookmaker_name,
+            "connector_status": "configured" if getattr(c, "configured", False) else "not_configured",
+            "source": getattr(c, "source", None),
+        }
+        for c in get_connectors()
+    ]
 
 @app.get("/connectors/status")
-def connector_status():
+def connector_status(db: Session = Depends(get_db)):
+    counts = dict(db.execute(select(Fixture.source, func.count()).group_by(Fixture.source)).all())
     return [
         {
             "bookmaker": c.bookmaker_name,
-            "configured": False,
-            "fixtures_available": len(c.fetch_fixtures())
+            "configured": getattr(c, "configured", False),
+            "fixtures_available": counts.get(getattr(c, "source", None), 0),
+            "notes": getattr(c, "notes", None),
         }
         for c in get_connectors()
     ]
@@ -473,6 +482,31 @@ def get_portfolio_combos(
         allow_unvalidated_ev=allow_unvalidated_ev,
     )
 
+@app.get("/portfolio/top-picks")
+def get_top_picks(
+    target_date: Optional[str] = Query(None, description="YYYY-MM-DD matchday in EAT, 'all', or None for the next matchday"),
+    competition: Optional[str] = Query(None, description="Optional competition filter"),
+    threshold: float = Query(0.85, ge=0.85, le=0.99, description="Probability floor; never below the published 85% gate"),
+    allow_synthetic_odds: bool = Query(False, description="Allow model-derived prices, labelled as such. Off by default."),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Choose the highest weighted market structure per fixture at >=85% win probability.
+
+    One structure per fixture is selected from everything the model can price
+    and a real bookmaker price exists for. The 85% probability floor and the
+    0.60 data-confidence floor cannot be lowered by this endpoint.
+    """
+    return top_picks_for_matchday(
+        db=db,
+        target_date=target_date,
+        competition=competition,
+        threshold=threshold,
+        require_market_odds=not allow_synthetic_odds,
+        limit=limit,
+    )
+
+
 @app.get("/evaluation/calibration")
 def get_calibration_report():
     """Return the last saved walk-forward calibration report (cheap, no recompute)."""
@@ -504,6 +538,39 @@ def run_calibration(
         return report
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Calibration error: {exc}") from exc
+
+@app.get("/evaluation/blend")
+def get_blend_report():
+    """Return the last fitted model-market blend (cheap, no recompute)."""
+    from app.analytics.blending import load_report
+    report = load_report()
+    if not report or report.get("status") != "fitted":
+        raise HTTPException(
+            status_code=404,
+            detail="No fitted blend report yet. POST /evaluation/blend to fit it.",
+        )
+    return report
+
+@app.post("/evaluation/blend")
+def fit_blend(
+    competition: Optional[str] = Query(None, description="Optional competition filter"),
+    refit_days: int = Query(14, ge=1, le=60, description="Days between refits; shorter is stricter but slower"),
+    db: Session = Depends(get_db),
+):
+    """Fit the 1X2 model-market blend on a chronological walk-forward holdout.
+
+    The weight is chosen on the earliest 70% of predictions and scored on the
+    latest 30%. It is deliberately an explicit action because it replays the
+    rating model hundreds of times.
+    """
+    from app.analytics.blending import fit_report, save_report
+    try:
+        report = fit_report(db, competition=competition, refit_days=refit_days)
+        if report.get("status") == "fitted":
+            save_report(report)
+        return report
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Blend fit error: {exc}") from exc
 
 @app.post("/evaluation/backtest")
 def run_walkforward_backtest_api(

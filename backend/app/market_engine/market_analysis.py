@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app.analytics.blending import OUTCOMES as BLEND_OUTCOMES
+from app.analytics.blending import blend_1x2, blend_status
 from app.market_engine.catalogue import ENGINE_VERSION, get_definition
 from app.market_engine.discovery import (
     DiscoveryResult,
@@ -82,12 +84,60 @@ def analyse_discovery(
         groups.setdefault(key, []).append(market.as_dict())
     devigged = _devig(groups)
 
+    override = context.get("blend_weight")
+    if override is not None:
+        weight = min(1.0, max(0.0, float(override)))
+        temperature = float(context.get("blend_temperature", 1.0))
+        blend_context: Dict[str, Any] = {
+            "fitted": True,
+            "weight": weight,
+            "temperature": temperature,
+            "weight_source": "context_override",
+            "scope": "1x2",
+            "competition": context.get("competition"),
+            "verdict": "override",
+            "generated_at": None,
+        }
+    else:
+        blend_context = blend_status(context.get("competition"))
+        weight = blend_context.get("weight")
+        temperature = float(blend_context.get("temperature", 1.0))
+
+    # Only real de-vigged prices become a prior. Each bookmaker's 1X2 triple is
+    # pooled once so the three selections stay coherent with each other.
+    blend_cache: Dict[Tuple[Any, ...], Dict[str, float]] = {}
+    if weight is not None:
+        for key, group_rows in groups.items():
+            definition = get_definition(group_rows[0].get("family") or "")
+            if definition is None or definition.settlement_group != "1x2":
+                continue
+            model_triple = {
+                row["model_key"]: probabilities.get(row["model_key"])
+                for row in group_rows
+                if row.get("model_key") in BLEND_OUTCOMES
+            }
+            market_triple = {
+                row["model_key"]: devigged[key]["fair"].get(row["selection"])
+                for row in group_rows
+                if row.get("model_key") in BLEND_OUTCOMES
+            }
+            if not all(model_triple.get(outcome) is not None for outcome in BLEND_OUTCOMES):
+                continue
+            if not all(market_triple.get(outcome) for outcome in BLEND_OUTCOMES):
+                continue
+            blend_cache[key] = blend_1x2(
+                model_triple, market_triple, weight, temperature
+            )
+
     rows: List[AnalysisRow] = []
     for market in discovery.markets:
         definition = get_definition(market.family) if market.family else None
         model_state = _model_state(market.family, market.model_key, probabilities, statuses)
-        probability = probabilities.get(market.model_key) if market.model_key else None
-        group = devigged[(market.bookmaker, market.family, market.line)]
+        group_key = (market.bookmaker, market.family, market.line)
+        model_probability = probabilities.get(market.model_key) if market.model_key else None
+        blended_probability = blend_cache.get(group_key, {}).get(market.model_key)
+        probability = blended_probability if blended_probability is not None else model_probability
+        group = devigged[group_key]
         fair_market_probability = group["fair"].get(market.selection)
         implied = _implied(market.price)
         confidence = data_confidence(market, context, now=now)
@@ -118,6 +168,10 @@ def analyse_discovery(
                 "captured_at": market.captured_at,
                 "price": market.price,
                 "probability": probability,
+                "probability_model": model_probability,
+                "blended": blended_probability is not None,
+                "blend_weight": weight if blended_probability is not None else None,
+                "blend_temperature": temperature if blended_probability is not None else None,
                 "fair_odds": round(1.0 / probability, 3) if probability else None,
                 "implied_probability": round(implied, 4) if implied is not None else None,
                 "devigged_probability": round(fair_market_probability, 4) if fair_market_probability is not None else None,
@@ -155,12 +209,22 @@ def analyse_discovery(
         "qualified": result_summary["qualified_count"],
         "evaluated": result_summary["evaluated"],
         "message": result_summary["message"],
+        "blend": {
+            **blend_context,
+            "applied": bool(weight is not None),
+            "selections_blended": sum(1 for row in rows if row["blended"]),
+            "note": (
+                "1X2 probabilities pool the model with the de-vigged price in log-odds space. "
+                "Other families remain pure model output, and estimated prices are never blended."
+            ),
+        },
         "value_detection": value,
     }
 
 
 def _context_for_fixture(fixture: Any, overrides: Optional[Dict[str, Any]], db: Any) -> Dict[str, Any]:
     context = dict(overrides or {})
+    context.setdefault("competition", getattr(fixture, "competition", None))
     if context.get("home_lambda") is None or context.get("away_lambda") is None:
         from app.analytics.probabilities import analyze_fixture
 

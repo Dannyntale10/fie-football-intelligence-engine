@@ -18,6 +18,16 @@ LEG_WEIGHTS = {
     "evidence": (10.0, 1.0),       # real price + learned calibration + ratings
 }
 
+# Structure choice is probability-first: an 85% floor is already enforced before
+# scoring, and the 60-point probability budget keeps a high-probability
+# structure ahead of a lower-probability one that merely carries a bigger edge.
+TOP_PICK_WEIGHTS = {
+    "probability": (60.0, 0.80, 0.20),  # 80% -> 0 points, 100% -> full budget
+    "edge": (15.0, 10.0),               # model edge over the de-vigged price
+    "expected_value": (10.0, 30.0),
+    "evidence": (15.0, 1.0),            # data-confidence score
+}
+
 COMBO_WEIGHTS = {
     "ev": {
         "edge": (40.0, 20.0),
@@ -96,6 +106,41 @@ def leg_score(leg: Dict[str, Any]) -> Dict[str, Any]:
             2,
         ),
         "evidence": round(_leg_evidence(leg) * LEG_WEIGHTS["evidence"][0], 2),
+    }
+    score = round(min(100.0, sum(components.values())), 1)
+    return {
+        "score": score,
+        "grade": _grade(score),
+        "grade_label": _GRADE_LABELS[_grade(score)],
+        "components": components,
+    }
+
+
+def top_pick_score(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Score one already-qualified structure, probability first.
+
+    The caller is responsible for the 85% probability and confidence floors;
+    this score only decides which qualified structure is the better pick.
+    """
+    probability = float(row.get("probability") or 0.0)
+    edge = float(row.get("edge_percent") or 0.0)
+    ev = float(row.get("expected_value_percent") or 0.0)
+    confidence = float(row.get("confidence") or 0.0)
+
+    probability_budget, probability_floor, probability_span = TOP_PICK_WEIGHTS["probability"]
+    edge_budget, edge_cap = TOP_PICK_WEIGHTS["edge"]
+    ev_budget, ev_cap = TOP_PICK_WEIGHTS["expected_value"]
+    evidence_budget, evidence_cap = TOP_PICK_WEIGHTS["evidence"]
+
+    components = {
+        "probability": round(
+            _clamp01((probability - probability_floor) / probability_span)
+            * probability_budget,
+            2,
+        ),
+        "edge": round(_clamp01(edge / edge_cap) * edge_budget, 2),
+        "expected_value": round(_clamp01(ev / ev_cap) * ev_budget, 2),
+        "evidence": round(_clamp01(confidence / evidence_cap) * evidence_budget, 2),
     }
     score = round(min(100.0, sum(components.values())), 1)
     return {
@@ -192,11 +237,17 @@ def leg_row(leg: Dict[str, Any]) -> Dict[str, Any]:
         "grade": leg.get("grade"),
         "match": leg.get("match"),
         "selection": leg.get("selection"),
+        "market_type": leg.get("market_type"),
         "odds": leg.get("odds"),
         "probability": leg.get("probability"),
+        "probability_model": leg.get("probability_raw"),
+        "blended": leg.get("blended"),
+        "confidence": leg.get("confidence"),
         "edge_percent": leg.get("edge_percent"),
         "expected_value_percent": leg.get("expected_value_percent"),
         "odds_source": leg.get("odds_source"),
+        "structures_considered": leg.get("structures_considered"),
+        "runner_ups": leg.get("runner_ups", []),
     }
 
 

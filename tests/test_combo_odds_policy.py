@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.fixture import Fixture
 from app.betting import combo as combo_mod
+from app.betting import selection as selection_mod
 
 
 @pytest.fixture()
@@ -61,6 +62,7 @@ def _add_fixture(db, suffix, home_odds=None, draw_odds=None, away_odds=None, mar
         draw_odds=draw_odds,
         away_odds=away_odds,
         market_odds_json=json.dumps(market_odds) if market_odds else None,
+        odds_updated_at=datetime.now(timezone.utc),
         status="scheduled",
     )
     db.add(fixture)
@@ -87,7 +89,21 @@ def _fake_analysis(fixture, **kwargs):
         "value_bets": [],
         "qualifying_markets": [],
         "data_quality": {"score": 90, "grade": "A"},
+        "lambda_source": "team_ratings",
+        "estimated_lambdas": {"home_lambda": 1.5, "away_lambda": 1.1},
+        "probability_blend": {"applied": False},
     }
+
+
+@pytest.fixture(autouse=True)
+def _selection_engine(monkeypatch):
+    """The combo engine always runs the structure selector; keep it deterministic."""
+    monkeypatch.setattr(selection_mod, "analyze_fixture", _fake_analysis)
+    monkeypatch.setattr(
+        selection_mod,
+        "check_squad_and_injuries",
+        lambda **kwargs: {"verdict": "APPROVED", "source": "local"},
+    )
 
 
 @pytest.fixture()
@@ -130,6 +146,7 @@ def test_market_gate_excludes_estimated_legs(db, stub_engine):
 def test_estimated_legs_are_allowed_and_labelled_when_opted_in(db, stub_engine):
     _add_fixture(db, "1", home_odds=1.80, draw_odds=3.60, away_odds=7.00)
     _add_fixture(db, "2", home_odds=1.80, draw_odds=3.60, away_odds=7.00)
+    _add_fixture(db, "3")  # no prices: only a model-derived estimate is available
 
     res = _generate(db, require_market_odds=False)
     best = res["best_combo"]
@@ -153,6 +170,25 @@ def test_devig_removes_bookmaker_overround():
     raw_total = sum(implied.values())
     assert raw_total > 1.0
     assert fair["home_win"] == pytest.approx(implied["home_win"] / raw_total)
+
+
+def test_devig_derives_double_chance_from_the_1x2_group():
+    _, fair = combo_mod._devigged_probabilities(
+        {
+            "home_win": 25.52,
+            "draw": 8.89,
+            "away_win": 1.11,
+            "double_chance_1x": 5.03,
+            "double_chance_x2": 1.03,
+            "double_chance_12": 1.08,
+        }
+    )
+
+    # DC outcomes overlap, so they cannot be normalised as a one-sum group.
+    assert fair["double_chance_x2"] == pytest.approx(fair["draw"] + fair["away_win"])
+    assert fair["double_chance_1x"] == pytest.approx(fair["home_win"] + fair["draw"])
+    assert fair["double_chance_12"] == pytest.approx(fair["home_win"] + fair["away_win"])
+    assert fair["double_chance_x2"] > 0.9
 
 
 def test_ev_mode_selects_legs_that_beat_the_market(db, monkeypatch):

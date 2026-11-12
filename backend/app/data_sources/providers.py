@@ -379,6 +379,177 @@ class EspnProvider(BaseProvider):
         return True
 
 
+class BetPawaProvider(BaseProvider):
+    """betPawa Uganda's public event feed. No key; bounded polling only."""
+
+    config = ProviderConfig(
+        name="betpawa",
+        base_url="https://www.betpawa.ug",
+        key_env="",
+        cache_ttl_seconds=300,
+        free_plan="public JSON feed, no key; capped polling",
+        docs_url="https://www.betpawa.ug/",
+    )
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def fetch_fixtures(self, target_date: date, league: Optional[str] = None) -> ProviderResult:
+        from app.data_sources.betpawa_feed import _parse_event, fetch_upcoming_events
+
+        records = []
+        for event in fetch_upcoming_events():
+            record = _parse_event(event)
+            if not record or record["kickoff_utc"].date() != target_date:
+                continue
+            if league and record["known_competition"] != league:
+                continue
+            records.append(
+                {
+                    "external_fixture_id": record["event_id"],
+                    "kickoff_utc": record["kickoff_utc"].isoformat(),
+                    "home_team": record["home_team"],
+                    "away_team": record["away_team"],
+                    "competition": record["known_competition"] or record["competition"],
+                    "country": record["country"],
+                    "status": "scheduled",
+                    "source": "BETPAWA",
+                    "market_odds": record["market_odds"],
+                }
+            )
+        return self._result(records, False)
+
+
+class SportPesaProvider(BaseProvider):
+    """SportPesa's public upcoming-games feed. No key; 30-game window."""
+
+    config = ProviderConfig(
+        name="sportpesa",
+        base_url="https://www.sportpesa.com",
+        key_env="",
+        cache_ttl_seconds=300,
+        free_plan="public JSON feed, no key; 30-game window",
+        docs_url="https://www.sportpesa.com/en/sports-betting/football/",
+    )
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def fetch_fixtures(self, target_date: date, league: Optional[str] = None) -> ProviderResult:
+        from app.data_sources.sportpesa_feed import fetch_markets, fetch_upcoming_games, parse_game
+
+        games = fetch_upcoming_games()
+        ids = [str(game["id"]) for game in games if game.get("id") is not None]
+        markets = fetch_markets(ids)
+        records = []
+        for game in games:
+            event = parse_game(game, markets.get(str(game.get("id"))))
+            if not event or event.kickoff_utc.date() != target_date:
+                continue
+            if league and event.known_competition != league:
+                continue
+            records.append(
+                {
+                    "external_fixture_id": event.event_id,
+                    "kickoff_utc": event.kickoff_utc.isoformat(),
+                    "home_team": event.home_team,
+                    "away_team": event.away_team,
+                    "competition": event.known_competition or event.competition,
+                    "country": event.country,
+                    "status": "scheduled",
+                    "source": event.source,
+                    "market_odds": event.market_odds,
+                }
+            )
+        return self._result(records, False)
+
+
+class FansportProvider(BaseProvider):
+    """FANSPORT's public main-line feed (used by fsportug.icu). No key."""
+
+    config = ProviderConfig(
+        name="fansport",
+        base_url="https://fsportug.icu",
+        key_env="",
+        cache_ttl_seconds=300,
+        free_plan="public JSON feed, no key; 40-game window",
+        docs_url="https://fsportug.icu/en",
+    )
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def fetch_fixtures(self, target_date: date, league: Optional[str] = None) -> ProviderResult:
+        from app.data_sources.fansport_feed import fetch_upcoming_games, parse_game
+
+        records = []
+        for game in fetch_upcoming_games():
+            event = parse_game(game)
+            if not event or event.kickoff_utc.date() != target_date:
+                continue
+            if league and event.known_competition != league:
+                continue
+            records.append(
+                {
+                    "external_fixture_id": event.event_id,
+                    "kickoff_utc": event.kickoff_utc.isoformat(),
+                    "home_team": event.home_team,
+                    "away_team": event.away_team,
+                    "competition": event.known_competition or event.competition,
+                    "country": event.country,
+                    "status": "scheduled",
+                    "source": event.source,
+                    "market_odds": event.market_odds,
+                }
+            )
+        return self._result(records, False)
+
+
+class BetikaProvider(BaseProvider):
+    """Betika Uganda's public match feed. No key; today's 56-match slate."""
+
+    config = ProviderConfig(
+        name="betika",
+        base_url="https://www.betika.com/en-ug/",
+        key_env="",
+        cache_ttl_seconds=300,
+        free_plan="public JSON feed, no key; daily slate with bounded pages",
+        docs_url="https://www.betika.com/en-ug/",
+    )
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def fetch_fixtures(self, target_date: date, league: Optional[str] = None) -> ProviderResult:
+        from app.data_sources.betika_feed import fetch_upcoming_matches, parse_match
+
+        records = []
+        for match in fetch_upcoming_matches():
+            event = parse_match(match)
+            if not event or event["kickoff_utc"].date() != target_date:
+                continue
+            if league and event["known_competition"] != league:
+                continue
+            records.append(
+                {
+                    "external_fixture_id": event["event_id"],
+                    "kickoff_utc": event["kickoff_utc"].isoformat(),
+                    "home_team": event["home_team"],
+                    "away_team": event["away_team"],
+                    "competition": event["known_competition"] or event["competition"],
+                    "country": event["country"],
+                    "status": "scheduled",
+                    "source": "BETIKA",
+                    "market_odds": event["market_odds"],
+                }
+            )
+        return self._result(records, False)
+
+
 class ApifootballComProvider(BaseProvider):
     """APIFootball.com. Free plan limits vary; verify before relying on it."""
 
@@ -528,6 +699,10 @@ def provider_catalogue() -> List[Dict[str, Any]]:
             "docs_url": cls.config.docs_url,
         }
         for cls in (
+            BetPawaProvider,
+            SportPesaProvider,
+            FansportProvider,
+            BetikaProvider,
             ApiFootballProvider,
             FootballDataOrgProvider,
             EspnProvider,
@@ -552,6 +727,10 @@ def is_configured(entry: Dict[str, Any]) -> bool:
 
 def build_provider(name: str, **kwargs: Any) -> BaseProvider:
     providers = {
+        "betpawa": BetPawaProvider,
+        "sportpesa": SportPesaProvider,
+        "fansport": FansportProvider,
+        "betika": BetikaProvider,
         "api_football": ApiFootballProvider,
         "football_data_org": FootballDataOrgProvider,
         "espn": EspnProvider,
@@ -562,7 +741,8 @@ def build_provider(name: str, **kwargs: Any) -> BaseProvider:
         return ManualOddsProvider(Path(kwargs.pop("csv_path")), **kwargs)
     if name not in providers:
         raise ProviderError(f"unknown provider: {name}")
-    return providers[name](**kwargs)
+    cls = providers[name]
+    return cls(kwargs.pop("config", cls.config), **kwargs)
 
 
 # ── dedupe, cross-verification and missing-data checks ───────────────────

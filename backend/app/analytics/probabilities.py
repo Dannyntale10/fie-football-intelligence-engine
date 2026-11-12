@@ -378,7 +378,13 @@ def _market_json(fixture: Any) -> Dict[str, float]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    return {str(k): float(v) for k, v in parsed.items() if isinstance(v, (int, float)) and v > 1.0}
+    prices: Dict[str, float] = {}
+    for key, value in parsed.items():
+        if isinstance(value, dict):
+            value = value.get("price", value.get("odds"))
+        if isinstance(value, (int, float)) and value > 1.0:
+            prices[str(key)] = float(value)
+    return prices
 
 
 def estimate_lambdas_from_market(fixture: Any) -> tuple[float, float, str]:
@@ -493,8 +499,60 @@ def analyze_fixture(
     d_odds = getattr(fixture, "draw_odds", None)
     a_odds = getattr(fixture, "away_odds", None)
 
+    from app.analytics.blending import OUTCOMES as BLEND_OUTCOMES
+    from app.analytics.blending import blend_1x2, blend_status
+
+    model_1x2 = {key: float(markets.get(key, 0.0)) for key in BLEND_OUTCOMES}
+    blend_note = (
+        "Only 1X2 and its derived double chance / DNB splits are blended; "
+        "correct scores and other families remain pure model output."
+    )
+    blend_info: Dict[str, Any] = {
+        "applied": False,
+        "scope": "1x2",
+        "weight": None,
+        "competition": getattr(fixture, "competition", None),
+        "reason": "no_market_prices",
+        "note": blend_note,
+    }
+
     if h_odds and d_odds and a_odds and h_odds > 1.0 and d_odds > 1.0 and a_odds > 1.0:
         margin_info = calculate_bookmaker_margin(h_odds, d_odds, a_odds)
+
+        status = blend_status(getattr(fixture, "competition", None))
+        weight = status.get("weight")
+        temperature = float(status.get("temperature", 1.0))
+        if weight is None:
+            blend_info["reason"] = status.get("reason") or "no_fitted_blend_report"
+        else:
+            market_1x2 = {
+                "home_win": margin_info["fair_implied"]["home"],
+                "draw": margin_info["fair_implied"]["draw"],
+                "away_win": margin_info["fair_implied"]["away"],
+            }
+            blended = blend_1x2(model_1x2, market_1x2, weight, temperature)
+            markets.update(blended)
+            markets["double_chance_1x"] = round(blended["home_win"] + blended["draw"], 4)
+            markets["double_chance_x2"] = round(blended["draw"] + blended["away_win"], 4)
+            markets["double_chance_12"] = round(blended["home_win"] + blended["away_win"], 4)
+            decisive = blended["home_win"] + blended["away_win"]
+            if decisive > 0:
+                markets["dnb_home"] = round(blended["home_win"] / decisive, 4)
+                markets["dnb_away"] = round(blended["away_win"] / decisive, 4)
+            blend_info = {
+                "applied": True,
+                "scope": "1x2",
+                "weight": weight,
+                "temperature": temperature,
+                "weight_source": status.get("weight_source"),
+                "competition": getattr(fixture, "competition", None),
+                "verdict": status.get("verdict"),
+                "generated_at": status.get("generated_at"),
+                "model": {key: round(model_1x2[key], 4) for key in BLEND_OUTCOMES},
+                "market": {key: round(market_1x2[key], 4) for key in BLEND_OUTCOMES},
+                "blended": blended,
+                "note": blend_note,
+            }
 
         # 1X2 EV Analysis
         market_mapping = [
@@ -514,10 +572,19 @@ def analyze_fixture(
             ev_data["market"] = label
             ev_data["market_key"] = m_key
             ev_data["fair_odds"] = fair_odds_val
+            ev_data["model_probability"] = round(model_1x2.get(m_key, prob_val), 4)
+            ev_data["blended"] = bool(blend_info.get("applied"))
             value_bets.append(ev_data)
 
     # Sort value bets by EV descending
     value_bets.sort(key=lambda x: x["expected_value_percent"], reverse=True)
+
+    qualifying_markets = [
+        {"market": name, "probability": p}
+        for name, p in markets.items()
+        if p >= qualification_threshold
+    ]
+    qualifying_markets.sort(key=lambda x: x["probability"], reverse=True)
 
     # Also compute fixture data quality, enriched if team ratings exist
     from app.analytics.quality import evaluate_fixture_signals, grade_data_quality
@@ -552,7 +619,8 @@ def analyze_fixture(
         "qualification_threshold": qualification_threshold,
         "bookmaker_margin": margin_info,
         "value_bets": value_bets,
-        "qualifying_markets": poisson_res["qualifying_markets"],
+        "probability_blend": blend_info,
+        "qualifying_markets": qualifying_markets,
         "correct_score_top5": poisson_res.get("correct_score_top5", []),
         "all_markets": markets,
         "data_quality": quality,

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import {
   Badge,
   Card,
@@ -15,6 +17,7 @@ import {
   thClass,
   theadClass,
 } from "@/components/ui";
+import { apiPost } from "@/lib/api";
 import { ageLabel, eatDateTime } from "@/lib/format";
 import type { SourcesResponse, SyncLog } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
@@ -23,36 +26,149 @@ type ConnectorRow = {
   bookmaker: string;
   configured: boolean;
   fixtures_available: number;
+  notes?: string | null;
+};
+
+type FeedResult = {
+  provider: string;
+  label: string;
+  status: string;
+  fetched_events?: number;
+  matched_existing?: number;
+  odds_updated?: number;
+  inserted_new?: number;
+  skipped_unknown_competition?: number;
+  error?: string;
+};
+
+type RefreshResponse = {
+  feeds: Record<string, FeedResult>;
+  totals: {
+    fetched_events: number;
+    matched_existing: number;
+    odds_updated: number;
+    inserted_new: number;
+  };
+  synced_at: string;
 };
 
 export default function SourcesPage() {
   const sources = useApi<SourcesResponse>("/sources");
   const logs = useApi<SyncLog[]>("/sources/sync-logs?limit=50");
   const connectors = useApi<ConnectorRow[]>("/connectors/status");
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState<RefreshResponse | null>(null);
 
   const configured = sources.data?.configured_count ?? 0;
   const total = sources.data?.providers.length ?? 0;
+
+  async function runRefresh() {
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const result = await apiPost<RefreshResponse>("/sources/refresh");
+      setRefresh(result);
+      sources.reload();
+      logs.reload();
+      connectors.reload();
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <div>
       <PageHeader
         eyebrow="Data sources"
         title="Providers and provenance"
-        description="Free-plan adapters only. Unconfigured providers are shown as unconfigured — never simulated. Quota limits are recorded for planning and must be re-verified with each provider before relying on them."
+        description="Fixtures and real prices are pulled from BetPawa, SportPesa and FANSPORT public feeds, plus any keyed provider you configure. Unconfigured providers are shown as unconfigured — never simulated. Quota limits are recorded for planning and must be re-verified with each provider before relying on them."
         actions={
-          <button
-            type="button"
-            onClick={() => {
-              sources.reload();
-              logs.reload();
-              connectors.reload();
-            }}
-            className="border border-edge bg-panel text-mist/80 hover:border-lime/40 hover:text-lime"
-          >
-            Refresh
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={runRefresh}
+              disabled={syncing}
+              className="border border-lime/40 bg-lime/10 text-lime hover:bg-lime/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {syncing ? "Pulling prices…" : "Refresh from bookmakers"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                sources.reload();
+                logs.reload();
+                connectors.reload();
+              }}
+              className="border border-edge bg-panel text-mist/80 hover:border-lime/40 hover:text-lime"
+            >
+              Refresh
+            </button>
+          </div>
         }
       />
+
+      {syncError && <div className="mt-4"><ErrorNote message={syncError} /></div>}
+
+      {refresh && (
+        <div className="mt-4">
+          <Card
+            title="Last bookmaker pull"
+            subtitle={`${refresh.totals.fetched_events} events read · ${refresh.totals.matched_existing} matched · ${refresh.totals.inserted_new} new · ${refresh.totals.odds_updated} price updates`}
+          >
+            <div className="overflow-x-auto">
+              <table className={tableClass}>
+                <thead className={theadClass}>
+                  <tr>
+                    <th className={thClass}>Feed</th>
+                    <th className={thClass}>Status</th>
+                    <th className={thClass}>Fetched</th>
+                    <th className={thClass}>Matched</th>
+                    <th className={thClass}>New</th>
+                    <th className={thClass}>Untracked</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.values(refresh.feeds).map((feed) => (
+                    <tr key={feed.provider} className={rowClass}>
+                      <td className={tdClass}>{feed.label}</td>
+                      <td className={tdClass}>
+                        <Badge
+                          tone={
+                            feed.status === "success"
+                              ? "good"
+                              : feed.status === "failed"
+                                ? "bad"
+                                : "warn"
+                          }
+                        >
+                          {feed.status}
+                        </Badge>
+                      </td>
+                      <td className={`${tdClass} tabular-nums`}>{feed.fetched_events ?? "—"}</td>
+                      <td className={`${tdClass} tabular-nums`}>{feed.matched_existing ?? "—"}</td>
+                      <td className={`${tdClass} tabular-nums`}>{feed.inserted_new ?? "—"}</td>
+                      <td className={`${tdClass} tabular-nums`}>
+                        {feed.skipped_unknown_competition ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {Object.values(refresh.feeds)
+              .filter((feed) => feed.error)
+              .map((feed) => (
+                <p key={feed.provider} className="mt-3 text-xs text-mist/60">
+                  <span className="font-medium text-mist/80">{feed.label} failed:</span>{" "}
+                  {feed.error}
+                </p>
+              ))}
+          </Card>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
@@ -151,7 +267,7 @@ export default function SourcesPage() {
         <Card
           className="xl:col-span-3"
           title="Bookmaker connectors"
-          subtitle="BetPawa Uganda is the primary source; the rest are secondary."
+          subtitle="BetPawa, SportPesa and FANSPORT read their own public feeds; unconfigured bookmakers return nothing."
         >
           {connectors.loading && <Loading label="Checking connectors" />}
           {connectors.error && <ErrorNote message={connectors.error} />}
@@ -165,7 +281,7 @@ export default function SourcesPage() {
                   <tr>
                     <th className={thClass}>Bookmaker</th>
                     <th className={thClass}>Configured</th>
-                    <th className={thClass}>Fixtures available offline</th>
+                    <th className={thClass}>Tracked fixtures</th>
                   </tr>
                 </thead>
                 <tbody>

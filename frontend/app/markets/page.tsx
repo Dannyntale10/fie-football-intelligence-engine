@@ -259,7 +259,7 @@ export default function MarketsPage() {
         <div className="mt-6">
           <Card
             title="Market analysis"
-            subtitle="Probability is the model output; confidence is evidence quality. They are separate. EV only appears when a real price exists."
+            subtitle="Probability is the model output, blended with the de-vigged price for 1X2 when a fitted blend exists. Confidence is evidence quality; EV only appears when a real price exists."
             actions={
               analysis.data ? (
                 <Badge tone={analysis.data.qualified > 0 ? "good" : "muted"}>
@@ -277,6 +277,17 @@ export default function MarketsPage() {
               </div>
             )}
 
+            {analysis.data && analysis.data.blend.applied && (
+              <div className="mb-4">
+                <Note>
+                  1X2 probabilities pool the model with the de-vigged price (model weight{" "}
+                  {((analysis.data.blend.weight ?? 0) * 100).toFixed(1)}%, temperature{" "}
+                  {(analysis.data.blend.temperature ?? 1).toFixed(2)}).{" "}
+                  {analysis.data.blend.note}
+                </Note>
+              </div>
+            )}
+
             {analysis.data && offered.length > 0 && (
               <div className="overflow-x-auto">
                 <table className={tableClass}>
@@ -287,7 +298,7 @@ export default function MarketsPage() {
                       <th className={thClass}>Price</th>
                       <th className={thClass}>Implied</th>
                       <th className={thClass}>De-vig</th>
-                      <th className={thClass}>Model</th>
+                      <th className={thClass}>Probability</th>
                       <th className={thClass}>EV</th>
                       <th className={thClass}>Confidence</th>
                       <th className={thClass}>Status</th>
@@ -318,6 +329,12 @@ export default function MarketsPage() {
                             value={row.probability}
                             threshold={analysis.data?.threshold ?? 0.85}
                           />
+                          {row.blended && row.probability_model !== null && (
+                            <p className="mt-1 text-[11px] text-mist/40">
+                              pure model {fmtPercent(row.probability_model)} · blend w{" "}
+                              {((row.blend_weight ?? 0) * 100).toFixed(1)}%
+                            </p>
+                          )}
                         </td>
                         <td
                           className={`${tdClass} tabular-nums ${

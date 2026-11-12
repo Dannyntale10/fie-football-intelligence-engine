@@ -70,15 +70,15 @@ def scan_fixtures() -> Dict[str, Any]:
 
 def refresh_odds() -> Dict[str, Any]:
     try:
-        from app.data_sources.betpawa_feed import ingest_betpawa_odds
+        from app.data_sources.bookmaker_sync import sync_bookmakers
 
-        db = _session()
-        result = ingest_betpawa_odds(db)
-        db.close()
+        result = sync_bookmakers()
+        totals = result.get("totals") or {}
         logger.info(
-            "[Scheduler] odds refreshed: %s matched, %s new",
-            result.get("matched_existing"),
-            result.get("inserted_new"),
+            "[Scheduler] odds refreshed: %s matched, %s new across %s feeds",
+            totals.get("matched_existing"),
+            totals.get("inserted_new"),
+            len(result.get("feeds") or {}),
         )
         return result
     except Exception as error:
@@ -190,6 +190,38 @@ def daily_analytics() -> Dict[str, Any]:
         return {"status": "error", "error": str(error)}
 
 
+def refit_blend() -> Dict[str, Any]:
+    """Refit the 1X2 model-market blend on leak-free history (weekly)."""
+    try:
+        from app.analytics.blending import fit_report, save_report
+
+        db = _session()
+        report = fit_report(db)
+        db.close()
+    except Exception as error:
+        logger.error("[Scheduler] blend refit failed: %s", error)
+        return {"status": "error", "error": str(error)}
+
+    if report.get("status") != "fitted":
+        logger.info("[Scheduler] blend refit skipped: %s", report.get("message"))
+        return {"status": "skipped", "reason": report.get("message")}
+
+    save_report(report)
+    holdout = report.get("holdout") or {}
+    _notify(
+        "Model blend refitted",
+        f"Weight {report['weights']['default']:.3f} · holdout Brier "
+        f"{holdout.get('blend', {}).get('brier')} vs market "
+        f"{holdout.get('market', {}).get('brier')} · {report.get('verdict')}",
+        related_type="blend",
+    )
+    return {
+        "status": "fitted",
+        "weight": report["weights"]["default"],
+        "verdict": report.get("verdict"),
+    }
+
+
 def start_scheduler() -> Optional[object]:
     """Start APScheduler with the published EAT schedule."""
     global _started
@@ -212,6 +244,7 @@ def start_scheduler() -> Optional[object]:
         scheduler.add_job(monitor_lineups, CronTrigger(minute="*/15", hour="5-23", timezone=EAT_TZ), id="lineups")
         scheduler.add_job(update_results, CronTrigger(hour=2, minute=30, timezone=EAT_TZ), id="results")
         scheduler.add_job(daily_analytics, CronTrigger(hour=23, minute=0, timezone=EAT_TZ), id="analytics")
+        scheduler.add_job(refit_blend, CronTrigger(day_of_week="sun", hour=23, minute=30, timezone=EAT_TZ), id="blend_refit")
         scheduler.start()
         _started = True
         logger.info("[Scheduler] EAT schedule active.")

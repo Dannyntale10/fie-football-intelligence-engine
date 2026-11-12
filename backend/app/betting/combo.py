@@ -24,7 +24,6 @@ Neither mode uses model-derived prices unless the caller explicitly opts in;
 by default only prices ingested from a bookmaker feed are eligible.
 """
 import itertools
-import json
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -34,124 +33,19 @@ from sqlalchemy.orm import Session
 from app.models.fixture import Fixture
 from app.analytics.probabilities import analyze_fixture, calculate_kelly_stake
 from app.ai.ai_squad_checker import check_squad_and_injuries
+from app.betting.labels import selection_label as _selection_label, team_label as _team_label
+from app.betting.pricing import (
+    devigged_probabilities as _devigged_probabilities,
+    fixture_market_odds as _fixture_market_odds,
+)
 from app.betting.ranking import leg_score, payload as ranking_payload, rank_combos, rank_legs
+from app.betting.selection import select_top_picks
 
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 
 # Bumped whenever the selection/scoring pipeline changes materially, so a
 # recorded slip can be attributed to the model that produced it.
-MODEL_VERSION = "fie-ev-5"
-
-# Markets whose prices sum to one outcome set and can therefore be de-vigged
-# together. Asian handicap pairs are complementary for the listed half lines.
-_DEVIG_GROUPS = (
-    ("home_win", "draw", "away_win"),
-    ("double_chance_1x", "double_chance_x2", "double_chance_12"),
-    ("btts_yes", "btts_no"),
-    ("over_0_5", "under_0_5"),
-    ("over_1_5", "under_1_5"),
-    ("over_2_5", "under_2_5"),
-    ("over_3_5", "under_3_5"),
-    ("dnb_home", "dnb_away"),
-    ("ah_home_minus_0_5", "ah_away_plus_0_5"),
-    ("ah_home_minus_1_5", "ah_away_plus_1_5"),
-    ("ah_home_minus_2_5", "ah_away_plus_2_5"),
-)
-
-
-def _fixture_market_odds(fixture: Fixture) -> Dict[str, float]:
-    """Real bookmaker prices for a fixture, keyed by model market name."""
-    odds: Dict[str, float] = {}
-    raw = getattr(fixture, "market_odds_json", None)
-    if raw:
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, ValueError):
-            parsed = {}
-        if isinstance(parsed, dict):
-            for key, value in parsed.items():
-                if isinstance(value, (int, float)) and value > 1.0:
-                    odds[str(key)] = float(value)
-
-    for key, value in (
-        ("home_win", fixture.home_odds),
-        ("draw", fixture.draw_odds),
-        ("away_win", fixture.away_odds),
-    ):
-        if key not in odds and value and value > 1.0:
-            odds[key] = float(value)
-
-    # Use the best price available across ingested books when one exists.
-    for key, best in (
-        ("home_win", getattr(fixture, "max_home_odds", None)),
-        ("draw", getattr(fixture, "max_draw_odds", None)),
-        ("away_win", getattr(fixture, "max_away_odds", None)),
-    ):
-        if best and best > odds.get(key, 0.0):
-            odds[key] = float(best)
-    return odds
-
-
-def _devigged_probabilities(
-    market_odds: Dict[str, float],
-) -> tuple[Dict[str, float], Dict[str, float]]:
-    """Return (raw implied, vig-free implied) probabilities from decimal prices."""
-    implied = {key: 1.0 / price for key, price in market_odds.items()}
-    fair = dict(implied)
-    for group in _DEVIG_GROUPS:
-        if not all(key in implied for key in group):
-            continue
-        overround = sum(implied[key] for key in group)
-        if overround <= 1.0:  # arbitrage or bad data; leave raw prices untouched
-            continue
-        for key in group:
-            fair[key] = implied[key] / overround
-    return implied, fair
-
-
-def _selection_label(key: str, home: str, away: str) -> tuple[str, str]:
-    """Human-readable (market type, selection) for a model market key."""
-    fixed = {
-        "home_win": ("Match Result (1)", f"{home} to Win"),
-        "draw": ("Match Result (X)", "Draw"),
-        "away_win": ("Match Result (2)", f"{away} to Win"),
-        "double_chance_1x": ("Double Chance (1X)", f"{home} Win or Draw (1X)"),
-        "double_chance_x2": ("Double Chance (X2)", f"{away} Win or Draw (X2)"),
-        "double_chance_12": ("Double Chance (12)", f"{home} or {away} to Win (12)"),
-        "btts_yes": ("Both Teams To Score", "Both Teams To Score - Yes"),
-        "btts_no": ("Both Teams To Score", "Both Teams To Score - No"),
-        "dnb_home": ("Draw No Bet (DNB)", f"{home} Draw No Bet (DNB)"),
-        "dnb_away": ("Draw No Bet (DNB)", f"{away} Draw No Bet (DNB)"),
-    }
-    if key in fixed:
-        return fixed[key]
-
-    for prefix, under in (("over_", False), ("under_", True)):
-        if key.startswith(prefix):
-            line = key[len(prefix):].replace("_", ".")
-            label = f"{'Under' if under else 'Over'} {line} Match Goals"
-            return "Total Goals", label
-
-    for prefix, side in (("ah_home_minus_", "home"), ("ah_away_plus_", "away")):
-        if key.startswith(prefix):
-            line = key[len(prefix):].replace("_", ".")
-            if side == "home":
-                return "Asian Handicap", f"{home} -{line} Handicap"
-            return "Asian Handicap", f"{away} +{line} Handicap"
-
-    return "Market", key.replace("_", " ").title()
-
-
-def _team_label(key: str, home: str, away: str) -> str:
-    if key.startswith("home") or key.startswith("ah_home") or key.startswith("dnb_home"):
-        return home
-    if key.startswith("double_chance_1x"):
-        return home
-    if key.startswith("away") or key.startswith("ah_away") or key.startswith("dnb_away"):
-        return away
-    if key.startswith("double_chance_x2"):
-        return away
-    return f"{home} / {away}"
+MODEL_VERSION = "fie-ev-6"
 
 
 def _collect_ev_candidates(
@@ -355,6 +249,39 @@ def _format_eat(dt: Optional[datetime]) -> str:
     return dt.astimezone(EAT_TZ).strftime("%a %d %b, %H:%M EAT")
 
 
+def _pick_to_leg(pick: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a qualified top structure into a combo leg."""
+    return {
+        "fixture_id": pick["fixture_id"],
+        "match": pick["match"],
+        "competition": pick["competition"],
+        "team": pick.get("team"),
+        "selection": pick["selection"],
+        "market_key": pick["market_key"],
+        "market_type": pick["market_type"],
+        "odds": pick["odds"],
+        "probability": pick["probability"],
+        "probability_raw": pick.get("probability_model", pick["probability"]),
+        "calibrated": False,
+        "implied_probability": pick.get("implied_probability"),
+        "edge_percent": pick.get("edge_percent"),
+        "expected_value_percent": pick.get("expected_value_percent"),
+        "odds_source": pick["odds_source"],
+        "model_source": pick.get("model_source"),
+        "blended": pick.get("blended", False),
+        "blend_weight": pick.get("blend_weight"),
+        "confidence": pick.get("confidence"),
+        "structures_considered": pick.get("structures_considered"),
+        "runner_ups": pick.get("runner_ups", []),
+        "ai_squad": pick.get("ai_squad"),
+        "kickoff_utc": pick.get("kickoff_utc"),
+        "kickoff_eat": pick.get("kickoff_eat"),
+        "rank": pick.get("rank"),
+        "score": pick.get("score"),
+        "grade": pick.get("grade"),
+    }
+
+
 def get_available_matchdays(db: Session) -> List[Dict[str, Any]]:
     """Return a list of all active upcoming matchdays in Ugandan Time (EAT) with match counts."""
     now = datetime.now(timezone.utc)
@@ -379,6 +306,62 @@ def get_available_matchdays(db: Session) -> List[Dict[str, Any]]:
         counts[day_key]["count"] += 1
 
     return list(counts.values())
+
+
+def top_picks_for_matchday(
+    db: Session,
+    target_date: Optional[str] = None,
+    competition: Optional[str] = None,
+    threshold: float = 0.85,
+    require_market_odds: bool = True,
+    limit: int = 25,
+) -> Dict[str, Any]:
+    """Highest weighted structure per fixture for the chosen matchday."""
+    now = datetime.now(timezone.utc)
+    matchdays = get_available_matchdays(db)
+    resolved_date = target_date
+    if not resolved_date and matchdays:
+        resolved_date = matchdays[0]["date"]
+    matchday_info = next((m for m in matchdays if m["date"] == resolved_date), None)
+    if resolved_date != "all" and matchday_info is None and matchdays:
+        resolved_date = matchdays[0]["date"]
+        matchday_info = matchdays[0]
+
+    query = (
+        select(Fixture)
+        .where(Fixture.status == "scheduled")
+        .where(Fixture.kickoff_utc > now)
+        .order_by(Fixture.kickoff_utc)
+    )
+    if competition:
+        query = query.where(Fixture.competition.ilike(f"%{competition}%"))
+    fixtures = db.scalars(query).all()
+    if resolved_date and resolved_date != "all":
+        fixtures = [
+            fixture
+            for fixture in fixtures
+            if fixture.kickoff_utc.astimezone(EAT_TZ).strftime("%Y-%m-%d") == resolved_date
+        ]
+
+    result = select_top_picks(
+        fixtures,
+        db,
+        threshold=threshold,
+        require_market_odds=require_market_odds,
+    )
+    result.update(
+        {
+            "target_date": resolved_date,
+            "matchday_label": matchday_info["label"]
+            if matchday_info
+            else ("All Upcoming Fixtures" if resolved_date == "all" else resolved_date),
+            "matchday_matches_count": len(fixtures),
+            "available_matchdays": matchdays,
+            "returned": min(len(result["picks"]), limit),
+        }
+    )
+    result["picks"] = result["picks"][:limit]
+    return result
 
 
 def generate_high_confidence_combos(
@@ -489,9 +472,6 @@ def generate_high_confidence_combos(
     calibrated_legs = 0
 
     candidates: List[Dict[str, Any]] = []
-
-    # Individual floor to allow complementary legs that combine to >= 85% average confidence
-    cand_thresh = 0.70
     synthetic_legs_excluded = 0
     fixtures_with_market_odds = 0
     fixtures_with_priced_markets = 0
@@ -499,6 +479,16 @@ def generate_high_confidence_combos(
     rated_fixtures = 0
     unrated_skipped = 0
     implausible_skipped = 0
+
+    # One weighted structure per fixture, already gated at >=85% probability
+    # and >=0.60 data confidence. EV mode still lists these for inspection but
+    # builds its slips from measured edges instead.
+    selection = select_top_picks(
+        fixtures,
+        db,
+        threshold=min_leg_prob,
+        require_market_odds=require_market_odds,
+    )
 
     if mode == "ev":
         ev_collected = _collect_ev_candidates(
@@ -520,149 +510,15 @@ def generate_high_confidence_combos(
         stale_rated_fixtures = ev_collected["stale_rated_fixtures"]
         unrated_skipped = ev_collected["unrated_skipped"]
         implausible_skipped = ev_collected["implausible_skipped"]
-        fixtures_for_certainty: List[Fixture] = []
     else:
-        fixtures_for_certainty = fixtures
-
-    for f in fixtures_for_certainty:
-        try:
-            analysis = analyze_fixture(f, db=db)
-        except Exception:
-            continue
-
-        probs = analysis.get("all_markets", {})
-
-        # A price is only a market price when it came from an ingested feed.
-        # Anything computed from model probabilities is an estimate and is
-        # labelled as such (and gated out by default).
-        h_market = f.home_odds if (f.home_odds and f.home_odds > 1.0) else None
-        d_market = f.draw_odds if (f.draw_odds and f.draw_odds > 1.0) else None
-        a_market = f.away_odds if (f.away_odds and f.away_odds > 1.0) else None
-
-        h_odds = h_market or (round(1.0 / max(0.05, probs.get("home_win", 0.33) * 0.92), 2) if probs.get("home_win", 0) > 0.05 else None)
-        d_odds = d_market or (round(1.0 / max(0.05, probs.get("draw", 0.27) * 0.92), 2) if probs.get("draw", 0) > 0.05 else 3.20)
-        a_odds = a_market or (round(1.0 / max(0.05, probs.get("away_win", 0.30) * 0.92), 2) if probs.get("away_win", 0) > 0.05 else None)
-
-        if h_market and a_market:
-            fixtures_with_market_odds += 1
-
-        fixture_cands: List[Dict[str, Any]] = []
-
-        def _eval_and_add(
-            m_key: str,
-            m_type: str,
-            sel_label: str,
-            prob_v: float,
-            odds_v: Optional[float],
-            team_lbl: str,
-            odds_source: str,
-        ):
-            nonlocal synthetic_legs_excluded
-            if prob_v < cand_thresh or not odds_v or odds_v < 1.08:
-                return
-            if require_market_odds and odds_source != "market":
-                synthetic_legs_excluded += 1
-                return
-
-            # Pre-combo AI squad performance & injury verification
-            squad_check = check_squad_and_injuries(
-                home_team=f.home_team,
-                away_team=f.away_team,
-                competition=f.competition,
-                selection=sel_label,
-                db=db,
-            )
-            if squad_check.get("verdict") == "VETO":
-                return
-
-            fixture_cands.append({
-                "fixture_id": f.id,
-                "match": f"{f.home_team} vs {f.away_team}",
-                "competition": f.competition,
-                "team": team_lbl,
-                "selection": sel_label,
-                "market_key": m_key,
-                "market_type": m_type,
-                "odds": round(odds_v, 2),
-                "probability": round(prob_v, 4),
-                "odds_source": odds_source,
-                "ai_squad": squad_check,
-                "kickoff_utc": f.kickoff_utc.isoformat(),
-                "kickoff_eat": _format_eat(f.kickoff_utc),
-            })
-
-        # 1. Direct Home Win
-        p_hw = probs.get("home_win", 0.0)
-        if h_odds and h_odds >= 1.15:
-            _eval_and_add("home_win", "Direct Win (1)", f"{f.home_team} to Win", p_hw, h_odds, f.home_team, "market" if h_market else "synthetic")
-
-        # 2. Direct Away Win
-        p_aw = probs.get("away_win", 0.0)
-        if a_odds and a_odds >= 1.15:
-            _eval_and_add("away_win", "Direct Win (2)", f"{f.away_team} to Win", p_aw, a_odds, f.away_team, "market" if a_market else "synthetic")
-
-        # 3. Double Chance 1X
-        p_1x = probs.get("double_chance_1x", 0.0)
-        if h_odds and d_odds:
-            dc_1x_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / d_odds)), 2)
-            _eval_and_add("double_chance_1x", "Double Chance (1X)", f"{f.home_team} Win or Draw (1X)", p_1x, dc_1x_odds, f.home_team, "synthetic")
-
-        # 4. Double Chance X2
-        p_x2 = probs.get("double_chance_x2", 0.0)
-        if a_odds and d_odds:
-            dc_x2_odds = round(1.0 / ((1.0 / a_odds) + (1.0 / d_odds)), 2)
-            _eval_and_add("double_chance_x2", "Double Chance (X2)", f"{f.away_team} Win or Draw (X2)", p_x2, dc_x2_odds, f.away_team, "synthetic")
-
-        # 5. Double Chance 12
-        p_12 = probs.get("double_chance_12", 0.0)
-        if h_odds and a_odds:
-            dc_12_odds = round(1.0 / ((1.0 / h_odds) + (1.0 / a_odds)), 2)
-            _eval_and_add("double_chance_12", "Double Chance (12)", f"{f.home_team} or {f.away_team} to Win (12)", p_12, dc_12_odds, f"{f.home_team} / {f.away_team}", "synthetic")
-
-        # 6. Team Over 0.5 Goals
-        p_ho05 = probs.get("home_over_0_5", 0.0)
-        if h_odds and h_odds <= 1.65:
-            t_odds = round(max(1.10, min(1.35, 1.0 / (p_ho05 * 0.94))), 2)
-            _eval_and_add("home_over_0_5", "Team Goals (Over 0.5)", f"{f.home_team} to Score (Over 0.5 Goals)", p_ho05, t_odds, f.home_team, "synthetic")
-
-        p_ao05 = probs.get("away_over_0_5", 0.0)
-        if a_odds and a_odds <= 1.65:
-            t_odds = round(max(1.10, min(1.35, 1.0 / (p_ao05 * 0.94))), 2)
-            _eval_and_add("away_over_0_5", "Team Goals (Over 0.5)", f"{f.away_team} to Score (Over 0.5 Goals)", p_ao05, t_odds, f.away_team, "synthetic")
-
-        # 7. Match Goals Over 1.5
-        p_o15 = probs.get("over_1_5", 0.0)
-        o15_odds = round(max(1.22, min(1.65, 1.0 / (p_o15 * 0.93))), 2)
-        _eval_and_add("over_1_5", "Total Goals (Over 1.5)", "Over 1.5 Match Goals", p_o15, o15_odds, f"{f.home_team} / {f.away_team}", "synthetic")
-
-        # 8. Match Goals Under 3.5
-        p_u35 = probs.get("under_3_5", 0.0)
-        u35_odds = round(max(1.20, min(1.60, 1.0 / (p_u35 * 0.94))), 2)
-        _eval_and_add("under_3_5", "Total Goals (Under 3.5)", "Under 3.5 Match Goals", p_u35, u35_odds, f"{f.home_team} / {f.away_team}", "synthetic")
-
-        # 9. Draw No Bet (DNB)
-        if p_hw + p_aw > 0:
-            dnb_h_p = round(p_hw / (p_hw + p_aw), 4)
-            if h_odds and h_odds >= 1.25 and d_odds:
-                dnb_h_odds = round(max(1.18, min(2.10, h_odds * (1.0 - 1.0 / d_odds))), 2)
-                _eval_and_add("dnb_home", "Draw No Bet (DNB)", f"{f.home_team} Draw No Bet (DNB)", dnb_h_p, dnb_h_odds, f.home_team, "synthetic")
-
-            dnb_a_p = round(p_aw / (p_hw + p_aw), 4)
-            if a_odds and a_odds >= 1.25 and d_odds:
-                dnb_a_odds = round(max(1.18, min(2.10, a_odds * (1.0 - 1.0 / d_odds))), 2)
-                _eval_and_add("dnb_away", "Draw No Bet (DNB)", f"{f.away_team} Draw No Bet (DNB)", dnb_a_p, dnb_a_odds, f.away_team, "synthetic")
-
-        # 10. Asian Handicap +1.5
-        p_ah_a15 = probs.get("ah_away_plus_1_5", 0.0)
-        if p_ah_a15 >= cand_thresh:
-            ah_a15_odds = round(max(1.18, min(1.65, 1.0 / (p_ah_a15 * 0.93))), 2)
-            _eval_and_add("ah_away_plus_1_5", "Asian Handicap (+1.5)", f"{f.away_team} (+1.5 Handicap)", p_ah_a15, ah_a15_odds, f.away_team, "synthetic")
-
-        # Keep top 3 highest-ranked candidates per fixture to keep combination search blazing fast
-        fixture_cands.sort(
-            key=lambda c: (leg_score(c)["score"], c["probability"], c["odds"]), reverse=True
+        candidates = [_pick_to_leg(pick) for pick in selection["picks"]]
+        priced_legs = len(candidates)
+        fixtures_with_market_odds = selection["priced_fixtures"]
+        fixtures_with_priced_markets = selection["priced_fixtures"]
+        rated_fixtures = sum(
+            1 for pick in selection["picks"] if pick.get("model_source") == "team_ratings"
         )
-        candidates.extend(fixture_cands[:3])
+        synthetic_legs_excluded = selection["estimates_skipped"]
 
     # Search combinations for requested leg count (strictly 2 or 3 teams)
     k = max(2, min(3, num_legs))
@@ -811,6 +667,8 @@ def generate_high_confidence_combos(
             "require_ratings": require_ratings,
             "max_edge_percent": max_edge_percent,
             "allow_unvalidated_ev": allow_unvalidated_ev,
+            "selection_threshold": selection["threshold"],
+            "min_data_confidence": selection["min_confidence"],
         },
         "calibration": calibration,
         "learning": {
@@ -839,9 +697,12 @@ def generate_high_confidence_combos(
         },
         "total_candidate_legs": len(candidates),
         "total_combos_generated": len(combos),
+        "top_picks": selection,
         "ranking": ranking_payload(
             ranked_combos,
-            [] if blocked_reason else rank_legs(candidates),
+            []
+            if blocked_reason
+            else (candidates if mode == "certainty" else rank_legs(candidates)),
         ),
         "diagnostics": {
             "mode": mode,
@@ -858,6 +719,8 @@ def generate_high_confidence_combos(
             "calibrated_legs": calibrated_legs,
             "candidate_legs": len(candidates),
             "synthetic_legs_excluded": synthetic_legs_excluded,
+            "top_picks_qualified": selection["qualified"],
+            "top_pick_rejections": selection["rejected"],
             "combos_generated": len(combos),
             "best_edge_percent": round(
                 max((c.get("edge_percent", 0.0) for c in candidates), default=0.0), 2

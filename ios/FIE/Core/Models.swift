@@ -34,12 +34,22 @@ struct Fixture: Decodable, Identifiable {
     let homeOdds: Double?
     let drawOdds: Double?
     let awayOdds: Double?
+    let homeScore: Int?
+    let awayScore: Int?
+    let liveClock: String?
     let status: String?
     let dataQualityScore: Double?
     let dataQualityGrade: String?
     let eligibleForAnalysis: Bool?
 
     var matchLabel: String { "\(homeTeam) vs \(awayTeam)" }
+}
+
+struct LiveFixturesResponse: Decodable {
+    let asOf: String?
+    let refreshed: Bool
+    let warning: String?
+    let fixtures: [Fixture]
 }
 
 struct PredictionList: Decodable {

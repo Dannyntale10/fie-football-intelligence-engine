@@ -14,6 +14,7 @@
 		1C0000000000000000000005 /* Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000005 /* Formatting.swift */; };
 		1C0000000000000000000011 /* ReportCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000011 /* ReportCache.swift */; };
 		1C0000000000000000000012 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000012 /* Haptics.swift */; };
+		1C0000000000000000000013 /* EngineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000013 /* EngineStore.swift */; };
 		1C0000000000000000000006 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000006 /* Theme.swift */; };
 		1C0000000000000000000007 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000007 /* Components.swift */; };
 		1C0000000000000000000008 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000008 /* TodayView.swift */; };
@@ -35,6 +36,7 @@
 		1B0000000000000000000005 /* Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatting.swift; sourceTree = "<group>"; };
 		1B0000000000000000000011 /* ReportCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportCache.swift; sourceTree = "<group>"; };
 		1B0000000000000000000012 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
+		1B0000000000000000000013 /* EngineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineStore.swift; sourceTree = "<group>"; };
 		1B0000000000000000000006 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		1B0000000000000000000007 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		1B0000000000000000000008 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
@@ -97,6 +99,7 @@
 				1B0000000000000000000005 /* Formatting.swift */,
 				1B0000000000000000000011 /* ReportCache.swift */,
 				1B0000000000000000000012 /* Haptics.swift */,
+				1B0000000000000000000013 /* EngineStore.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -200,6 +203,7 @@
 				1C0000000000000000000005 /* Formatting.swift in Sources */,
 				1C0000000000000000000011 /* ReportCache.swift in Sources */,
 				1C0000000000000000000012 /* Haptics.swift in Sources */,
+				1C0000000000000000000013 /* EngineStore.swift in Sources */,
 				1C0000000000000000000006 /* Theme.swift in Sources */,
 				1C0000000000000000000007 /* Components.swift in Sources */,
 				1C0000000000000000000008 /* TodayView.swift in Sources */,

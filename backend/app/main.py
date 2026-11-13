@@ -946,6 +946,15 @@ def get_clv(
     from app.betting.settlement import synthetic_slip_ids
     return clv_summary(db, days=days, exclude_slip_ids=synthetic_slip_ids(db))
 
+@app.get("/evaluation/scorecard")
+def get_scorecard(
+    days: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    """One window of settled slips: results, CLV, Brier versus the market and hit rate by tier."""
+    from app.betting.scorecard import build_scorecard
+    return build_scorecard(db, days=days)
+
 @app.get("/ratings/freshness")
 def ratings_freshness(db: Session = Depends(get_db)):
     """How old is the evidence behind each competition's ratings?"""

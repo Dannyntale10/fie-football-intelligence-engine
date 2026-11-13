@@ -6,6 +6,7 @@ struct PerformanceView: View {
     private var health: Health? { store.health }
     private var summary: PerformanceSummary? { store.summary }
     private var clv: ClvSummary? { store.clv }
+    private var scorecard: Scorecard? { store.scorecard }
     private var learning: LearningSummary? { store.learning }
     private var sweep: ComboSweep? { store.sweep }
     private var loading: Bool { !store.isBootstrapped }
@@ -32,6 +33,9 @@ struct PerformanceView: View {
                             .font(TypeScale.caption)
                             .foregroundStyle(Palette.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let scorecard {
+                        scorecardCard(scorecard)
                     }
                     if let clv {
                         clvCard(clv)
@@ -132,6 +136,57 @@ struct PerformanceView: View {
                             .foregroundStyle((row.bucket.roi ?? 0) >= 0 ? Palette.accent : Palette.danger)
                     }
                 }
+            }
+        }
+    }
+
+    private func scorecardCard(_ card: Scorecard) -> some View {
+        Card {
+            Eyebrow(text: "Weekly scorecard")
+            if card.status != "ok" {
+                Text(card.message ?? "NO SETTLED SELECTIONS IN THIS WINDOW.")
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: 12) {
+                    StatTile(
+                        label: "Settled slips",
+                        value: Fmt.count(card.results.slips),
+                        caption: "\(card.results.won)W · \(card.results.lost)L"
+                    )
+                    StatTile(
+                        label: "Legs hit",
+                        value: card.selections.hitRatePercent.map { String(format: "%.1f%%", $0) } ?? "—",
+                        caption: "\(card.selections.wonLegs) of \(card.selections.legs)"
+                    )
+                }
+                HStack(spacing: 12) {
+                    StatTile(
+                        label: "Mean CLV",
+                        value: Fmt.signedPercent(card.clv.meanClvPercent, digits: 2),
+                        caption: "\(card.clv.nSelections) matched"
+                    )
+                    StatTile(
+                        label: "Brier skill",
+                        value: card.brier.vsMarket.skill.map { String(format: "%.4f", $0) } ?? "—",
+                        caption: card.brier.vsMarket.market.map {
+                            String(format: "model %.4f · market %.4f", card.brier.vsMarket.model ?? 0, $0)
+                        } ?? "no 1X2 reference"
+                    )
+                }
+                ForEach(card.hitRateByTier) { row in
+                    DividerLine()
+                    LabeledRow(
+                        label: row.tier.map { String(format: "%.0f%% tier", $0 * 100) } ?? "Unrated",
+                        value: "\(row.won)W · \(row.lost)L · \(String(format: "%.1f%%", row.winRate))",
+                        mono: true
+                    )
+                }
+                Text("Closing-line value and Brier skill move before profit does. The market side is de-vigged 1X2 only; a positive skill means the model scored better than the market.")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

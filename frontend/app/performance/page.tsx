@@ -30,7 +30,12 @@ import {
   theadClass,
 } from "@/components/ui";
 import { eatDateTime, fmtPercent, fmtSignedPercent, titleCase } from "@/lib/format";
-import type { BlendReport, CalibrationReport, PerformanceSummary } from "@/lib/types";
+import type {
+  BlendReport,
+  CalibrationReport,
+  PerformanceSummary,
+  Scorecard,
+} from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
 type PredictionAccuracy = {
@@ -75,6 +80,7 @@ export default function PerformancePage() {
   const summary = useApi<PerformanceSummary>("/performance/summary?days=90");
   const accuracy = useApi<PredictionAccuracy>("/performance/predictions?days=30");
   const clv = useApi<ClvSummary>("/evaluation/clv?days=90");
+  const scorecard = useApi<Scorecard>("/evaluation/scorecard?days=7");
   const calibration = useApi<CalibrationReport>("/evaluation/calibration");
   const blend = useApi<BlendReport>("/evaluation/blend");
 
@@ -185,6 +191,107 @@ export default function PerformancePage() {
           )}
         </>
       )}
+
+      <div className="mt-6">
+        <Card
+          title="Weekly scorecard"
+          subtitle="Settled slips from the last 7 days. Closing-line value and Brier skill move before profit does."
+        >
+          {scorecard.loading && <Loading label="Scoring the week" />}
+          {scorecard.error && <ErrorNote message={scorecard.error} />}
+          {scorecard.data && scorecard.data.status === "insufficient_sample" && (
+            <Empty>{scorecard.data.message}</Empty>
+          )}
+          {scorecard.data && scorecard.data.status === "ok" && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <Stat
+                  label="Settled slips"
+                  value={scorecard.data.results.slips}
+                  hint={`${scorecard.data.results.won}W · ${scorecard.data.results.lost}L`}
+                />
+                <Stat
+                  label="Selection hit rate"
+                  value={
+                    scorecard.data.selections.hit_rate_percent === null
+                      ? "—"
+                      : `${scorecard.data.selections.hit_rate_percent.toFixed(1)}%`
+                  }
+                  hint={`${scorecard.data.selections.won_legs} of ${scorecard.data.selections.legs} legs`}
+                />
+                <Stat
+                  label="Mean CLV"
+                  value={
+                    scorecard.data.clv.mean_clv_percent === null
+                      ? "—"
+                      : `${scorecard.data.clv.mean_clv_percent.toFixed(2)}%`
+                  }
+                  hint={
+                    scorecard.data.clv.beat_close_percent === null
+                      ? `${scorecard.data.clv.n_selections} matched`
+                      : `${scorecard.data.clv.beat_close_percent}% beat the close`
+                  }
+                  tone={
+                    scorecard.data.clv.mean_clv_percent !== null &&
+                    scorecard.data.clv.mean_clv_percent > 0
+                      ? "good"
+                      : "bad"
+                  }
+                />
+                <Stat
+                  label="Brier skill"
+                  value={
+                    scorecard.data.brier.vs_market.skill === null
+                      ? "—"
+                      : scorecard.data.brier.vs_market.skill.toFixed(4)
+                  }
+                  hint={
+                    scorecard.data.brier.vs_market.market === null
+                      ? scorecard.data.brier.vs_market.note ?? undefined
+                      : `model ${scorecard.data.brier.vs_market.model?.toFixed(4)} · market ${scorecard.data.brier.vs_market.market.toFixed(4)}`
+                  }
+                  tone={
+                    scorecard.data.brier.vs_market.skill === null
+                      ? "muted"
+                      : scorecard.data.brier.vs_market.skill > 0
+                        ? "good"
+                        : "bad"
+                  }
+                />
+              </div>
+
+              {scorecard.data.hit_rate_by_tier.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <table className={tableClass}>
+                    <thead className={theadClass}>
+                      <tr>
+                        <th className={thClass}>Tier</th>
+                        <th className={thClass}>Slips</th>
+                        <th className={thClass}>W / L</th>
+                        <th className={thClass}>Hit rate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scorecard.data.hit_rate_by_tier.map((row) => (
+                        <tr key={row.tier ?? "unrated"} className={rowClass}>
+                          <td className={tdClass}>
+                            {row.tier === null ? "Unrated" : `${Math.round(row.tier * 100)}% tier`}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>{row.slips}</td>
+                          <td className={`${tdClass} tabular-nums`}>
+                            {row.won} / {row.lost}
+                          </td>
+                          <td className={`${tdClass} tabular-nums`}>{row.win_rate.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+      </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
         <Card

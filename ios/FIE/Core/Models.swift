@@ -587,6 +587,62 @@ struct ClvSummary: Decodable {
     }
 }
 
+// MARK: - Weekly scorecard
+
+struct Scorecard: Decodable {
+    let status: String
+    let message: String?
+    let windowDays: Int
+    let since: String?
+    let results: Results
+    let selections: Selections
+    let clv: ClvSummary
+    let brier: Brier
+    let hitRateByTier: [TierRow]
+
+    struct Results: Decodable {
+        let slips: Int
+        let won: Int
+        let lost: Int
+        let winRate: Double?
+        let stakedUsd: Double
+        let profitUsd: Double
+        let roiPercent: Double?
+    }
+
+    struct Selections: Decodable {
+        let legs: Int
+        let scoredLegs: Int
+        let wonLegs: Int
+        let hitRatePercent: Double?
+    }
+
+    struct Brier: Decodable {
+        let n: Int
+        let model: Double?
+        let note: String?
+        let vsMarket: VersusMarket
+
+        struct VersusMarket: Decodable {
+            let n: Int
+            let model: Double?
+            let market: Double?
+            let skill: Double?
+            let note: String?
+        }
+    }
+
+    struct TierRow: Decodable, Identifiable {
+        let tier: Double?
+        let slips: Int
+        let won: Int
+        let lost: Int
+        let winRate: Double
+
+        var id: String { tier.map { String(format: "%.2f", $0) } ?? "unrated" }
+    }
+}
+
 struct LearningSummary: Decodable {
     let trained: Bool
     let version: String?

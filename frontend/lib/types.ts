@@ -60,6 +60,53 @@ export type PerformanceSummary = {
   note: string;
 };
 
+export type Scorecard = {
+  status: "ok" | "insufficient_sample";
+  message: string | null;
+  window_days: number;
+  since: string;
+  results: {
+    slips: number;
+    won: number;
+    lost: number;
+    win_rate: number | null;
+    staked_usd: number;
+    profit_usd: number;
+    roi_percent: number | null;
+  };
+  selections: {
+    legs: number;
+    scored_legs: number;
+    won_legs: number;
+    hit_rate_percent: number | null;
+  };
+  clv: {
+    n_selections: number;
+    mean_clv_percent: number | null;
+    beat_close_percent: number | null;
+    note?: string;
+  };
+  brier: {
+    n: number;
+    model: number | null;
+    note: string | null;
+    vs_market: {
+      n: number;
+      model: number | null;
+      market: number | null;
+      skill: number | null;
+      note: string | null;
+    };
+  };
+  hit_rate_by_tier: Array<{
+    tier: number | null;
+    slips: number;
+    won: number;
+    lost: number;
+    win_rate: number;
+  }>;
+};
+
 export type Prediction = {
   id: number;
   fixture_id: number | null;
@@ -263,6 +310,43 @@ export type MarketAnalysisResponse = {
     entries: Array<Record<string, unknown>>;
     note?: string;
   };
+};
+
+export type ValueTip = {
+  fixture_id: number;
+  match: string;
+  competition: string;
+  kickoff_utc: string | null;
+  family: string;
+  label: string | null;
+  selection: string;
+  line: number | null;
+  bookmaker: string | null;
+  source: string;
+  captured_at: string | null;
+  price: number;
+  probability: number;
+  market_probability: number;
+  edge_percent: number;
+  ev_percent: number;
+};
+
+export type ValueTipsResponse = {
+  engine_version: string;
+  status: string;
+  message: string | null;
+  days_ahead: number;
+  families: string[];
+  fixtures_scanned: number;
+  fixtures_with_markets: number;
+  failed_fixtures: number;
+  thresholds: {
+    min_edge_percent: number;
+    max_edge_percent: number;
+    per_fixture: number;
+  };
+  dropped: Record<string, number>;
+  tips: ValueTip[];
 };
 
 export type ComboLeg = {

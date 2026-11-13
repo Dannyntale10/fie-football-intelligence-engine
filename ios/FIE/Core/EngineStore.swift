@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 enum EngineSection: String, CaseIterable, Identifiable {
-    case health, report, fixtures, gate, summary, clv, learning, sweep, backtest, sources, live
+    case health, report, fixtures, gate, summary, clv, scorecard, learning, sweep, backtest, sources, live
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum EngineSection: String, CaseIterable, Identifiable {
         case .gate: return "85% gate"
         case .summary: return "Ledger"
         case .clv: return "Closing line"
+        case .scorecard: return "Weekly scorecard"
         case .learning: return "Learning"
         case .sweep: return "Tier sweep"
         case .backtest: return "Historical replay"
@@ -41,6 +42,7 @@ final class EngineStore: ObservableObject {
     @Published private(set) var health: Health?
     @Published private(set) var summary: PerformanceSummary?
     @Published private(set) var clv: ClvSummary?
+    @Published private(set) var scorecard: Scorecard?
     @Published private(set) var learning: LearningSummary?
     @Published private(set) var sweep: ComboSweep?
     @Published private(set) var sources: SourcesResponse?
@@ -175,6 +177,7 @@ final class EngineStore: ObservableObject {
         health = nil
         summary = nil
         clv = nil
+        scorecard = nil
         learning = nil
         sweep = nil
         sources = nil
@@ -226,6 +229,12 @@ final class EngineStore: ObservableObject {
                     "/evaluation/clv",
                     query: [URLQueryItem(name: "days", value: "90")],
                     as: ClvSummary.self
+                )
+            case .scorecard:
+                scorecard = try await client.get(
+                    "/evaluation/scorecard",
+                    query: [URLQueryItem(name: "days", value: "7")],
+                    as: Scorecard.self
                 )
             case .learning:
                 learning = try await client.get("/learning/summary", as: LearningSummary.self)

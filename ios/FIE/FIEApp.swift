@@ -45,17 +45,13 @@ struct RootView: View {
                     .tag(2)
                     .tabItem { Label("Performance", systemImage: "chart.bar.xaxis") }
 
-                SourcesView()
+                LiveView()
                     .tag(3)
-                    .tabItem { Label("Sources", systemImage: "antenna.radiowaves.left.and.right") }
+                    .tabItem { Label("Live", systemImage: "dot.radiowaves.left.and.right") }
 
                 SettingsView()
                     .tag(4)
                     .tabItem { Label("Settings", systemImage: "gearshape") }
-
-                LiveView()
-                    .tag(5)
-                    .tabItem { Label("Live", systemImage: "dot.radiowaves.left.and.right") }
             }
 
             if showSplash {
@@ -68,6 +64,12 @@ struct RootView: View {
             }
         }
         .task { await loadUntilReady() }
+        .onAppear {
+            // iOS 17 only shows five tabs; a sixth would push Live and Settings
+            // behind "More". Sources now lives inside Settings.
+            if selectedTab == 5 { selectedTab = 3 }
+            if selectedTab > 4 { selectedTab = 0 }
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:

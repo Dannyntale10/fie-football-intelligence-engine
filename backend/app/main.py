@@ -284,14 +284,18 @@ def _live_prediction_payload(
             "away_win": row.prematch_away,
         }
 
+    # A negative bucket is the internal "clock unknown" sentinel; exposing its
+    # minute as 0 would read as kickoff to every client.
+    minute = row.minute if row.minute_bucket >= 0 else None
+
     return {
         "status": status,
         # SQLite hands back naive datetimes; emit UTC so every client can parse it.
         "observed_at": _as_utc(row.observed_at) if row.observed_at is not None else None,
-        "minute": row.minute,
+        "minute": minute,
         "freshness": freshness,
         "score": {"home": row.home_score, "away": row.away_score},
-        "remaining_minutes": max(0, 90 - row.minute),
+        "remaining_minutes": max(0, 90 - minute) if minute is not None else None,
         "probabilities": probabilities,
         "prematch_probabilities": prematch,
         "lambda": {"home": row.lambda_home, "away": row.lambda_away},
@@ -320,7 +324,7 @@ def _live_history_row(row: LivePrediction) -> dict:
             "away_win": row.prob_away,
         }
     return {
-        "minute": row.minute,
+        "minute": row.minute if row.minute_bucket >= 0 else None,
         "minute_bucket": row.minute_bucket,
         "observed_at": _as_utc(row.observed_at) if row.observed_at is not None else None,
         "score": {"home": row.home_score, "away": row.away_score},

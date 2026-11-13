@@ -65,7 +65,8 @@ function LiveCard({ fixture }: { fixture: LiveFixture }) {
             {fixture.home_score ?? "–"} : {fixture.away_score ?? "–"}
           </p>
           <p className="text-sm tabular-nums text-mist/60">
-            {fixture.live_clock ?? (prediction ? `${prediction.minute}'` : "—")}
+            {fixture.live_clock ??
+              (prediction?.minute != null ? `${prediction.minute}'` : "—")}
           </p>
         </div>
         {prediction ? <Probabilities prediction={prediction} /> : null}

@@ -95,7 +95,7 @@ private struct LiveFixtureCard: View {
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(Palette.textPrimary)
                 Spacer()
-                Text(fixture.liveClock ?? prediction.map { "\($0.minute)'" } ?? "—")
+                Text(fixture.liveClock ?? (prediction?.minute.map { "\($0)'" } ?? "—"))
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(Palette.textSecondary)
             }

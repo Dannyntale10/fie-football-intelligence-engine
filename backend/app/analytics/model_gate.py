@@ -22,12 +22,12 @@ DEFAULT_HALF_LIFE = 150.0
 PROMOTION_MARGIN = 0.002
 COMPETITION_FLOOR = 0.005
 MIN_COMPETITION_SAMPLE = 150
+# A partial cache or a season boundary can leave a window with a handful of
+# matches; a small Brier gap on that is noise, not evidence. Refuse to promote
+# anything evaluated on less than this, including the bootstrap.
+PROMOTION_MIN_SAMPLE = 300
 
 CHAMPION_PATH = Path(__file__).resolve().parents[3] / "data" / "model_champion.json"
-
-
-def _utc(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def evaluate_config(
@@ -48,11 +48,8 @@ def evaluate_config(
     )
 
     for prediction in iter_walkforward_predictions(
-        db, refit_days=refit_days, half_life_days=half_life_days
+        db, refit_days=refit_days, half_life_days=half_life_days, since=cutoff
     ):
-        kickoff = prediction["fixture"].kickoff_utc
-        if kickoff is None or _utc(kickoff) < cutoff:
-            continue
         probabilities.append(prediction["model"])
         labels.append(prediction["label"])
         bucket = per_competition[prediction["competition"]]
@@ -92,6 +89,16 @@ def gate_decision(
     usable = [row for row in results if row["n_matches"]]
     if not usable:
         return {"promote": False, "reason": "no_evaluation_data", "challenger": None, "champion": None}
+
+    evaluated = min(int(row["n_matches"]) for row in usable)
+    if evaluated < PROMOTION_MIN_SAMPLE:
+        return {
+            "promote": False,
+            "reason": "sample_too_small",
+            "challenger": None,
+            "champion": None,
+            "n_matches": evaluated,
+        }
 
     if champion_config is None:
         challenger = min(usable, key=lambda row: row["brier"])

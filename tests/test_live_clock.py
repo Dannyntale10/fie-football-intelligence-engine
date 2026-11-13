@@ -32,6 +32,16 @@ def test_missing_clock_derives_from_kickoff_and_removes_the_break():
     assert elapsed_minutes(None, _kickoff(70), "live", NOW) == 55
 
 
+def test_the_derived_minute_never_walks_backwards_across_the_break():
+    minutes = [44, 45, 46, 50, 59, 60, 61, 70]
+
+    derived = [elapsed_minutes(None, _kickoff(m), "live", NOW) for m in minutes]
+
+    assert derived == sorted(derived)
+    assert derived[:5] == [44, 45, 45, 45, 45]
+    assert derived[5:] == [45, 46, 55]
+
+
 def test_derived_minute_is_clamped():
     assert elapsed_minutes(None, _kickoff(-5), "live", NOW) == 1
     assert elapsed_minutes(None, _kickoff(600), "live", NOW) == 90

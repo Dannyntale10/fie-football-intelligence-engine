@@ -1,6 +1,7 @@
 """The nightly run refreshes only the newest seasons it needs."""
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 from app.data_sources.seeder import seasons_to_refresh
@@ -35,3 +36,35 @@ def test_a_bad_export_is_recorded_without_its_message():
         "error": "RuntimeError",
     }
     assert "api-key-should-not-leak" not in json.dumps(payload)
+
+
+ARTIFACTS = ("ratings.json", "blending.json", "learning.json",
+             "live_calibration.json", "model_champion.json")
+
+
+def test_a_dry_run_writes_no_model_artifacts(tmp_path, monkeypatch):
+    trainer = _trainer()
+    monkeypatch.delenv("FIE_ENGINE_URL", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_nightly",
+            "--dry-run",
+            "--skip-ingest",
+            "--out-dir",
+            str(tmp_path),
+            "--window-days",
+            "30",
+            "--seasons",
+            "1",
+        ],
+    )
+
+    assert trainer.main() == 0
+
+    report = json.loads((tmp_path / "nightly_report.json").read_text())
+    assert report["dry_run"] is True
+    assert isinstance(report["decision"]["reason"], str)
+    for name in ARTIFACTS:
+        assert not (tmp_path / name).exists(), name

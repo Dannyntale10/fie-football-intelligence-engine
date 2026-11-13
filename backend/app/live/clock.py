@@ -52,6 +52,10 @@ def elapsed_minutes(
     if kickoff is None or now is None:
         return None
     raw = int((_aware(now) - _aware(kickoff)).total_seconds() // 60)
-    if raw > HALF_TIME_MINUTES:
-        raw -= HALF_TIME_BREAK
-    return max(1, min(REGULATION_MINUTES, raw))
+    if raw <= HALF_TIME_MINUTES:
+        return max(1, raw)
+    if raw < HALF_TIME_MINUTES + HALF_TIME_BREAK:
+        # First-half stoppage or the interval itself: the break has not been
+        # played yet, so subtracting it here would walk the minute backwards.
+        return HALF_TIME_MINUTES
+    return min(REGULATION_MINUTES, raw - HALF_TIME_BREAK)

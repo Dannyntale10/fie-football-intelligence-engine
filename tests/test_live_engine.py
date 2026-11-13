@@ -20,6 +20,23 @@ def test_probabilities_sum_to_one_and_favour_the_leader():
     assert probs["home_win"] > probs["draw"] > probs["away_win"]
 
 
+def test_minute_zero_reproduces_the_pre_match_view():
+    """The design's acceptance check: 0-0 at kickoff is the pre-match 1X2."""
+    from app.analytics.probabilities import poisson_market_probabilities
+
+    for home_lambda, away_lambda in ((1.6, 1.1), (1.9, 0.9), (1.2, 1.3)):
+        live = outcome_probabilities(0, 0, home_lambda, away_lambda, remaining_fraction=1.0)
+        prematch = poisson_market_probabilities(home_lambda, away_lambda)["markets"]
+        for key in ("home_win", "draw", "away_win"):
+            assert abs(live[key] - prematch[key]) < 0.01, (home_lambda, away_lambda, key)
+
+
+def test_a_two_goal_lead_at_85_minutes_is_nearly_certain():
+    probs = outcome_probabilities(2, 0, 1.4, 1.1, remaining_fraction=5 / 90)
+
+    assert probs["home_win"] >= 0.98
+
+
 def test_a_finished_match_is_certain():
     probs = outcome_probabilities(2, 1, 1.4, 1.1, remaining_fraction=0.0)
 

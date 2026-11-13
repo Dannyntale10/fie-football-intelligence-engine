@@ -267,6 +267,9 @@ def build_report(db: Session) -> Dict[str, Any]:
 
     return {
         "version": LEARNING_VERSION,
+        # The nightly trainer only publishes this artifact when it fitted
+        # something; a report built from no evidence must stay unsaved.
+        "status": "fitted" if (matches or legs) else "insufficient_sample",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "sources": {
             "walkforward_matches": matches,

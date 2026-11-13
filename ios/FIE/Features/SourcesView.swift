@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SourcesView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: EngineStore
     @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
 
@@ -65,6 +66,11 @@ struct SourcesView: View {
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Sources")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .task {
                 if !store.isBootstrapped { await store.bootstrap() }
                 await loadLogs()

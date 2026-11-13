@@ -97,10 +97,10 @@ struct LivePrediction: Decodable {
 
     let status: String
     let observedAt: String?
-    let minute: Int
+    let minute: Int?
     let freshness: String
     let score: Score
-    let remainingMinutes: Int
+    let remainingMinutes: Int?
     let probabilities: Probabilities?
     let prematchProbabilities: Probabilities?
     let lambda: LambdaPair
@@ -113,7 +113,7 @@ struct LivePrediction: Decodable {
 
 struct LiveHistoryResponse: Decodable {
     struct Snapshot: Decodable, Identifiable {
-        let minute: Int
+        let minute: Int?
         let minuteBucket: Int
         let observedAt: String?
         let score: LivePrediction.Score

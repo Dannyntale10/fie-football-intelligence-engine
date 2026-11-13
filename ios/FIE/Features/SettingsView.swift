@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var keyNote: String?
     @State private var notifications: [DeliveryNotification] = []
     @State private var deliveryError: String?
+    @State private var showSources = false
 
     private var trimmedURL: String {
         serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,6 +41,7 @@ struct SettingsView: View {
                         NoteRow(text: testError, tone: .danger)
                     }
                     delivery
+                    sourcesLink
                     policy
                     about
                 }
@@ -48,6 +50,7 @@ struct SettingsView: View {
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Settings")
+            .sheet(isPresented: $showSources) { SourcesView() }
             .task {
                 apiKey = AppSettings.apiKey
                 await loadDelivery()
@@ -232,6 +235,25 @@ struct SettingsView: View {
                     .foregroundStyle(Palette.accent)
                 }
             }
+        }
+    }
+
+    private var sourcesLink: some View {
+        Card {
+            Eyebrow(text: "Data sources")
+            Text("Bookmaker feed readiness and the latest sync log. Every price keeps its bookmaker and capture time; a feed returning nothing never creates placeholder odds.")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                showSources = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                    Text("Open data sources")
+                }
+            }
+            .buttonStyle(SecondaryButtonStyle())
         }
     }
 

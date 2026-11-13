@@ -15,6 +15,7 @@ from app.betting.daily_combos import build_daily_combos
 from app.betting.high_odds import build_high_odds
 from app.database import SessionLocal
 from app.models.fixture import Fixture
+from app.notifications.telegram import format_daily_report
 
 PREFIX = "live-exclusion-"
 NOW = datetime.now(timezone.utc)
@@ -118,3 +119,48 @@ def test_live_fixture_is_absent_from_every_selection(fixtures):
             assert live_id not in found
     finally:
         db.close()
+
+
+def test_the_digest_never_names_a_live_match():
+    """The push quotes the combo, so an in-play match must not reach it either.
+
+    Two scheduled controls are seeded so a 2-leg ticket exists; a single
+    control plus the live match would produce no ticket at all.
+    """
+    db = SessionLocal()
+    controls = [_fixture("digest-a", "scheduled"), _fixture("digest-b", "scheduled")]
+    live = _fixture("digest-live", "live")
+    db.add_all([*controls, live])
+    db.commit()
+    for row in [*controls, live]:
+        db.refresh(row)
+    competition = controls[0].competition
+    target_date = dc.as_utc(controls[0].kickoff_utc).astimezone(dc.EAT_TZ).strftime(
+        "%Y-%m-%d"
+    )
+    ids = [row.id for row in [*controls, live]]
+    db.close()
+
+    try:
+        db = SessionLocal()
+        try:
+            report = build_daily_combos(
+                db, target_date=target_date, competition=competition, now=NOW
+            )
+            digest = format_daily_report(report)
+        finally:
+            db.close()
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(Fixture).filter(Fixture.id.in_(ids)).delete(
+                synchronize_session=False
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    assert "2-leg" in digest, digest
+    assert "Exclusion digest-a Home" in digest
+    assert "Exclusion digest-b Home" in digest
+    assert "Exclusion digest-live Home" not in digest

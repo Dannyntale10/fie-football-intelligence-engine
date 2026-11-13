@@ -998,10 +998,10 @@ export type LiveProbabilities = {
 export type LivePrediction = {
   status: string;
   observed_at: string | null;
-  minute: number;
+  minute: number | null;
   freshness: "fresh" | "stale" | "expired";
   score: { home: number | null; away: number | null };
-  remaining_minutes: number;
+  remaining_minutes: number | null;
   probabilities: LiveProbabilities | null;
   prematch_probabilities: LiveProbabilities | null;
   lambda: { home: number | null; away: number | null };
@@ -1027,7 +1027,7 @@ export type LiveHistoryResponse = {
   fixture_id: number;
   latest: LivePrediction | null;
   history: Array<{
-    minute: number;
+    minute: number | null;
     minute_bucket: number;
     observed_at: string | null;
     score: { home: number | null; away: number | null };

@@ -4,10 +4,10 @@ import json
 from app.analytics.model_gate import gate_decision, save_champion
 
 
-def _result(half_life, brier, log_loss=0.70, comps=None):
+def _result(half_life, brier, log_loss=0.70, comps=None, n=1000):
     return {
         "half_life_days": half_life,
-        "n_matches": 1000,
+        "n_matches": n,
         "brier": brier,
         "log_loss": log_loss,
         "per_competition": comps or {},
@@ -70,6 +70,34 @@ def test_the_champion_config_alone_is_not_a_challenger():
 
     assert decision["promote"] is False
     assert decision["reason"] == "config_unchanged"
+
+
+def test_a_thin_evaluation_cannot_bootstrap_a_champion():
+    results = [_result(90, 0.590, n=40), _result(120, 0.600, n=40)]
+
+    decision = gate_decision(results, None)
+
+    assert decision["promote"] is False
+    assert decision["reason"] == "sample_too_small"
+    assert decision["n_matches"] == 40
+
+
+def test_a_thin_window_cannot_replace_a_champion():
+    results = [_result(90, 0.590, n=120), _result(150, 0.601, n=120)]
+
+    decision = gate_decision(results, {"half_life_days": 150.0})
+
+    assert decision["promote"] is False
+    assert decision["reason"] == "sample_too_small"
+
+
+def test_the_sample_floor_is_inclusive():
+    results = [_result(90, 0.590, n=300), _result(120, 0.600, n=300)]
+
+    decision = gate_decision(results, None)
+
+    assert decision["promote"] is True
+    assert decision["reason"] == "bootstrap"
 
 
 def test_a_champion_can_be_staged_to_an_explicit_path(tmp_path):

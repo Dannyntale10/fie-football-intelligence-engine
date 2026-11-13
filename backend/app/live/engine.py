@@ -13,9 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Tuple
 
+from app.analytics.probabilities import _dixon_coles_tau
+
 REGULATION_MINUTES = 90
 MAX_REMAINING_GOALS = 10
 INTENSITY_BOUNDS = (0.5, 2.0)
+# The same low-score correction the pre-match grid applies, so a 0-0 forecast
+# at minute 0 reproduces the pre-match 1X2 rather than a plain Poisson.
+DIXON_COLES_RHO = -0.10
 
 CALIBRATION_PATH = Path(__file__).resolve().parents[3] / "data" / "live_calibration.json"
 
@@ -45,6 +50,7 @@ def outcome_probabilities(
     away_lambda: float,
     remaining_fraction: float,
     intensity: float = 1.0,
+    rho: float = DIXON_COLES_RHO,
 ) -> Dict[str, float]:
     """Home/draw/away probabilities after conditioning on the current score."""
     fraction = max(0.0, min(1.0, float(remaining_fraction)))
@@ -59,10 +65,18 @@ def outcome_probabilities(
     home_win = draw = away_win = total = 0.0
     for extra_home, p_home in enumerate(home_pmf):
         for extra_away, p_away in enumerate(away_pmf):
-            probability = p_home * p_away
-            total += probability
             final_home = home_goals + extra_home
             final_away = away_goals + extra_away
+            # Tau is defined on the full-match means, exactly as the pre-match
+            # grid uses them, so the minute-0 forecast matches it bit for bit.
+            probability = (
+                p_home
+                * p_away
+                * _dixon_coles_tau(
+                    final_home, final_away, home_lambda, away_lambda, rho
+                )
+            )
+            total += probability
             if final_home > final_away:
                 home_win += probability
             elif final_home == final_away:

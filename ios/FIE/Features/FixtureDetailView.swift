@@ -231,7 +231,7 @@ struct FixtureDetailView: View {
             Eyebrow(text: "Settled snapshots")
             ForEach(history.history) { row in
                 HStack {
-                    Text("\(row.minute)'")
+                    Text(row.minute.map { "\($0)'" } ?? "—")
                         .font(.caption.monospacedDigit())
                         .frame(width: 44, alignment: .leading)
                     Text(snapshotScore(row))

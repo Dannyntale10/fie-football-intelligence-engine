@@ -23,6 +23,8 @@ npm-debug.log*
 
 # SQLite databases (local only — cloud uses fresh DB)
 *.db
+*.db-shm
+*.db-wal
 
 # Environment / secrets
 .env
@@ -64,6 +66,9 @@ models/*.pkl
 
 # Historical CSV cache (downloaded data, not source)
 data/historical_cache/
+
+# Nightly run log; the artifacts beside it are committed, this is not
+data/nightly_report.json
 
 # Isolated feature worktrees
 .worktrees/

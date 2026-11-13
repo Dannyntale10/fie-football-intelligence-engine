@@ -175,10 +175,25 @@ def test_build_report_uses_out_of_sample_predictions(db, monkeypatch):
 
     report = learning.build_report(db)
     assert report["version"] == learning.LEARNING_VERSION
+    assert report["status"] == "fitted"
     assert report["sources"]["walkforward_matches"] == 400
     assert report["sources"]["settled_legs"] == 0
     assert set(report["markets"]) >= {"home_win", "draw", "away_win"}
     assert "No settled real slips yet" in " ".join(report["notes"])
+
+
+def test_build_report_without_evidence_is_not_fitted(db, monkeypatch):
+    from app.analytics import calibration as calibration_mod
+
+    monkeypatch.setattr(
+        calibration_mod, "iter_walkforward_predictions", lambda _db, **_kwargs: iter(())
+    )
+
+    report = learning.build_report(db)
+
+    assert report["status"] == "insufficient_sample"
+    assert report["sources"] == {"walkforward_matches": 0, "settled_legs": 0}
+    assert report["markets"] == {}
 
 
 def _add_finished(db, home, away, home_goals, away_goals, days_ago):

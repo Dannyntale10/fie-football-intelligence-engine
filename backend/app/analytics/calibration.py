@@ -40,6 +40,12 @@ def _utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def _ns(dt: datetime) -> int:
+    """Exact epoch nanoseconds; a truncated second would admit a match up to 1s early."""
+    aware = _utc(dt)
+    return int(aware.timestamp()) * 1_000_000_000 + aware.microsecond * 1_000
+
+
 def brier_score(probabilities: Iterable[Dict[str, float]], labels: Iterable[str]) -> Optional[float]:
     """Multiclass Brier score: mean squared error across the probability vector."""
     total, count = 0.0, 0
@@ -114,12 +120,17 @@ def _walkforward_for_competition(
     min_weighted_matches: float,
     rho: float,
     half_life_days: float = RATING_HALF_LIFE_DAYS,
+    since: Optional[datetime] = None,
 ):
     """Yield out-of-sample predictions for one competition, in kickoff order.
 
     Matches are held as arrays so each 14-day window costs a few vector
     operations rather than a Python loop over the whole history. The model
     fitted for a window only ever sees matches that kicked off before it.
+
+    ``since`` only limits which windows and matches are *scored*: the fit for
+    each window still sees the same history it would without it, so a caller
+    filtering by date gets identical numbers for a fraction of the work.
     """
     team_keys = sorted(
         {rating_key(m.home_team) for m in matches}
@@ -141,7 +152,7 @@ def _walkforward_for_competition(
         (int(m.away_score) for m in matches), dtype=np.float64, count=len(matches)
     )
     kick_ns = np.fromiter(
-        (int(_utc(m.kickoff_utc).timestamp()) * 1_000_000_000 for m in matches),
+        (_ns(m.kickoff_utc) for m in matches),
         dtype=np.int64,
         count=len(matches),
     )
@@ -149,11 +160,13 @@ def _walkforward_for_competition(
     step_ns = int(refit_days * _NANOS_PER_DAY)
     window_start = int(kick_ns.min())
     last_kick = int(kick_ns.max())
+    since_ns = _ns(since) if since is not None else None
 
     while window_start <= last_kick:
         window_end = window_start + step_ns
         past = kick_ns < window_start
-        window = (kick_ns >= window_start) & (kick_ns < window_end)
+        floor = window_start if since_ns is None else max(window_start, since_ns)
+        window = (kick_ns >= floor) & (kick_ns < window_end)
         window_start = window_end
 
         if int(past.sum()) < 30 or not bool(window.any()):
@@ -237,12 +250,17 @@ def iter_walkforward_predictions(
     min_weighted_matches: float = 3.0,
     rho: float = -0.10,
     half_life_days: float = RATING_HALF_LIFE_DAYS,
+    since: Optional[datetime] = None,
 ):
     """Yield out-of-sample predictions with ratings that only know the past.
 
     Each item is a dict with the fixture, model probabilities, de-vigged market
     probabilities, the realized label and the 1X2 prices. Both the calibration
     report and the backtest consume this so they cannot drift apart.
+
+    ``since`` drops predictions for matches that kicked off before it; the
+    ratings behind each window are unchanged, so results are identical to
+    filtering the full replay.
     """
     query = select(Fixture).where(
         Fixture.home_score.isnot(None),
@@ -273,6 +291,7 @@ def iter_walkforward_predictions(
             min_weighted_matches=min_weighted_matches,
             rho=rho,
             half_life_days=half_life_days,
+            since=since,
         )
 
 

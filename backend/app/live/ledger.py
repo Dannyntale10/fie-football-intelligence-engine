@@ -1,6 +1,7 @@
 """Write and settle the append-only live forecast ledger."""
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Optional
@@ -26,6 +27,8 @@ BUCKET_MINUTES = 5
 MODEL_VERSION = "live-dc-1"
 OUTCOMES = ("home_win", "draw", "away_win")
 
+logger = logging.getLogger(__name__)
+
 
 def _utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
@@ -50,11 +53,34 @@ def _populate(
     if minute is None:
         return "no_clock"
 
-    analysis = analyze_fixture(fixture, db=db, as_of=fixture.kickoff_utc)
-    lambdas = analysis.get("estimated_lambdas") or {}
-    home_lambda = _number(lambdas.get("home_lambda"))
-    away_lambda = _number(lambdas.get("away_lambda"))
-    source = analysis.get("lambda_source")
+    prior = db.scalar(
+        select(LivePrediction)
+        .where(LivePrediction.fixture_id == fixture.id)
+        .where(LivePrediction.status == "ok")
+        .where(LivePrediction.lambda_home.isnot(None))
+        .where(LivePrediction.lambda_away.isnot(None))
+        .order_by(LivePrediction.minute_bucket.asc(), LivePrediction.id.asc())
+    )
+    if prior is not None:
+        # The prior is frozen at kickoff. Team ratings are rebuilt from every
+        # finished match, so recomputing mid-match would let results that
+        # landed after this kickoff change the numbers beside the live score.
+        home_lambda = prior.lambda_home
+        away_lambda = prior.lambda_away
+        source = prior.lambda_source
+        prematch_home = prior.prematch_home
+        prematch_draw = prior.prematch_draw
+        prematch_away = prior.prematch_away
+    else:
+        analysis = analyze_fixture(fixture, db=db, as_of=fixture.kickoff_utc)
+        lambdas = analysis.get("estimated_lambdas") or {}
+        home_lambda = _number(lambdas.get("home_lambda"))
+        away_lambda = _number(lambdas.get("away_lambda"))
+        source = analysis.get("lambda_source")
+        markets = analysis.get("all_markets") or {}
+        prematch_home = _number(markets.get("home_win"))
+        prematch_draw = _number(markets.get("draw"))
+        prematch_away = _number(markets.get("away_win"))
     row.lambda_source = source
 
     if (
@@ -97,10 +123,9 @@ def _populate(
     row.prob_draw = probabilities["draw"]
     row.prob_away = probabilities["away_win"]
 
-    markets = analysis.get("all_markets") or {}
-    row.prematch_home = _number(markets.get("home_win"))
-    row.prematch_draw = _number(markets.get("draw"))
-    row.prematch_away = _number(markets.get("away_win"))
+    row.prematch_home = prematch_home
+    row.prematch_draw = prematch_draw
+    row.prematch_away = prematch_away
     return "ok"
 
 
@@ -122,36 +147,39 @@ def record_live_snapshots(
 
     written = skipped = 0
     for fixture in fixtures:
-        minute = elapsed_minutes(
-            fixture.live_clock, fixture.kickoff_utc, fixture.status, now
-        )
-        bucket = -1 if minute is None else (minute // BUCKET_MINUTES) * BUCKET_MINUTES
-        exists = db.scalar(
-            select(LivePrediction.id).where(
-                LivePrediction.fixture_id == fixture.id,
-                LivePrediction.minute_bucket == bucket,
-            )
-        )
-        if exists is not None:
-            skipped += 1
-            continue
-
-        row = LivePrediction(
-            fixture_id=fixture.id,
-            minute=minute if minute is not None else 0,
-            minute_bucket=bucket,
-            observed_at=fixture.live_observed_at or now,
-            home_score=fixture.home_score,
-            away_score=fixture.away_score,
-            status="ok",
-            model_version=MODEL_VERSION,
-        )
-        row.status = _populate(db, row, fixture, minute, provider)
         try:
+            minute = elapsed_minutes(
+                fixture.live_clock, fixture.kickoff_utc, fixture.status, now
+            )
+            bucket = -1 if minute is None else (minute // BUCKET_MINUTES) * BUCKET_MINUTES
+            exists = db.scalar(
+                select(LivePrediction.id).where(
+                    LivePrediction.fixture_id == fixture.id,
+                    LivePrediction.minute_bucket == bucket,
+                )
+            )
+            if exists is not None:
+                skipped += 1
+                continue
+
+            row = LivePrediction(
+                fixture_id=fixture.id,
+                minute=minute if minute is not None else 0,
+                minute_bucket=bucket,
+                observed_at=fixture.live_observed_at or now,
+                home_score=fixture.home_score,
+                away_score=fixture.away_score,
+                status="ok",
+                model_version=MODEL_VERSION,
+            )
+            row.status = _populate(db, row, fixture, minute, provider)
             with db.begin_nested():
                 db.add(row)
         except IntegrityError:  # scheduler and HTTP racing on the same bucket
             skipped += 1
+            continue
+        except Exception as error:  # one malformed fixture must not cost the slate
+            logger.warning("live snapshot failed for fixture %s: %s", fixture.id, error)
             continue
         written += 1
 

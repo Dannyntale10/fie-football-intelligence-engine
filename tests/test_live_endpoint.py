@@ -142,6 +142,51 @@ def _utc_offset(value):
     return parsed.utcoffset()
 
 
+def test_an_unknown_clock_is_not_reported_as_kickoff(monkeypatch):
+    from app.models.live import LivePrediction
+
+    fixture_id = _insert_live_fixture()
+    db = SessionLocal()
+    try:
+        db.add(
+            LivePrediction(
+                fixture_id=fixture_id,
+                minute=0,
+                minute_bucket=-1,
+                observed_at=datetime.now(timezone.utc),
+                home_score=2,
+                away_score=1,
+                status="no_clock",
+                model_version="live-dc-1",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(
+        main_module,
+        "refresh_live_scores",
+        lambda db, force=False: {"refreshed": False, "updated": 0, "skipped": 0, "warning": None},
+    )
+    # The endpoint snapshots live rows too; a newer bucket would outrank the
+    # sentinel row this test is about.
+    monkeypatch.setattr(
+        main_module,
+        "record_live_snapshots",
+        lambda db: {"fixtures": 0, "written": 0, "skipped": 0},
+    )
+
+    payload = client.get("/fixtures/live").json()
+    row = next(item for item in payload["fixtures"] if item["id"] == fixture_id)
+    block = row["live_prediction"]
+    assert block["status"] == "no_clock"
+    assert block["minute"] is None
+    assert block["remaining_minutes"] is None
+
+    history = client.get(f"/fixtures/{fixture_id}/live").json()["history"]
+    assert history[0]["minute"] is None
+
+
 def test_fixture_live_history_is_404_for_unknown_fixture():
     assert client.get("/fixtures/999999/live").status_code == 404
 

@@ -11,6 +11,8 @@ import os
 import shutil
 import tempfile
 
+import pytest
+
 _TEST_DB_DIR = tempfile.mkdtemp(prefix="fie-tests-")
 os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(_TEST_DB_DIR, 'test.db')}"
 atexit.register(shutil.rmtree, _TEST_DB_DIR, True)
@@ -23,3 +25,13 @@ import app.models  # noqa: E402,F401  (registers every table on Base.metadata)
 from app.database import Base, engine  # noqa: E402
 
 Base.metadata.create_all(engine)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Keep one test's request burst from spending the next test's budget."""
+    from app.core import security
+
+    security.limiter.reset()
+    yield
+    security.limiter.reset()

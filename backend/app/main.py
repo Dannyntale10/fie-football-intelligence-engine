@@ -9,10 +9,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, delete, desc
+from app.core import security
 from app.core.config import settings
 from app.database import Base, engine, get_db
 import app.models  # noqa: F401  (registers every platform table)
@@ -89,25 +91,90 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-# Open so the host can probe the app and a browser can reach the docs, where
-# the Authorize button supplies the key for every data call.
-_OPEN_PATHS = frozenset({"/", "/health", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"})
-
-
+# Open so the host can probe the app and, in development, so a browser can
+# reach the docs where the Authorize button supplies the key. Outside
+# development the docs are not served at all: their schema enumerates every
+# route on a private research engine.
 @app.middleware("http")
-async def require_api_key(request: Request, call_next):
-    """Reject unauthenticated calls once FIE_API_KEY is configured.
+async def protect_api(request: Request, call_next):
+    path = request.url.path
+    environment = settings.environment
+    public = security.is_public_path(path, environment)
 
-    /health stays open so the host's health check works without the secret, and
-    the docs pages stay open so the key can be entered in a browser at all.
-    """
-    configured = settings.fie_api_key
-    if not configured or request.method == "OPTIONS" or request.url.path in _OPEN_PATHS:
-        return await call_next(request)
-    supplied = request.headers.get("x-api-key", "")
-    if not secrets.compare_digest(supplied, configured):
-        return JSONResponse({"detail": "Missing or invalid API key"}, status_code=401)
-    return await call_next(request)
+    if path in security.DOCS_PATHS and not public:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    if not public:
+        kind = security.request_class(request.method, path)
+        identity = security.client_identity(
+            request.headers, request.client.host if request.client else None
+        )
+        limit = security.limit_for(
+            kind,
+            settings.rate_limit_read,
+            settings.rate_limit_write,
+            settings.rate_limit_expensive,
+        )
+        allowed, retry_after = security.limiter.check(f"{identity}:{kind}", limit)
+        if not allowed:
+            return JSONResponse(
+                {"detail": "Too many requests"},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        configured = settings.fie_api_key
+        if not configured:
+            # A production engine with no key would expose destructive routes
+            # to the internet; refuse to serve rather than fail open.
+            if security.is_production(environment):
+                logger.critical("FIE_API_KEY is not set; refusing to serve %s", path)
+                return JSONResponse(
+                    {"detail": "Server API key is not configured"},
+                    status_code=503,
+                )
+        elif not _key_matches(request.headers.get("x-api-key", ""), configured):
+            return JSONResponse(
+                {"detail": "Missing or invalid API key"}, status_code=401
+            )
+
+        if request.method.upper() in security.WRITE_METHODS:
+            cap = security.body_limit(
+                path, settings.max_body_bytes, settings.max_upload_bytes
+            )
+            declared = request.headers.get("content-length")
+            if declared:
+                try:
+                    length = int(declared)
+                except ValueError:
+                    return JSONResponse(
+                        {"detail": "Invalid Content-Length"}, status_code=400
+                    )
+                if length > cap:
+                    return JSONResponse(
+                        {"detail": "Request body too large"}, status_code=413
+                    )
+
+    response = await call_next(request)
+    for name, value in security.SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    scheme = (forwarded_proto.split(",")[-1].strip() or request.url.scheme).lower()
+    if scheme == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
+def _key_matches(supplied: str, configured: str) -> bool:
+    """Constant-time comparison that tolerates non-ASCII header bytes."""
+    try:
+        return secrets.compare_digest(
+            supplied.encode("utf-8"), configured.encode("utf-8")
+        )
+    except (TypeError, UnicodeError):
+        return False
 
 
 app.add_middleware(
@@ -117,6 +184,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _openapi_with_api_key():
@@ -292,7 +361,9 @@ def _build_fixture_out(f: Fixture, custom_signals: Optional[dict] = None) -> dic
 
 @app.get("/", include_in_schema=False)
 def root():
-    return RedirectResponse(url="/docs")
+    if security.docs_are_public(settings.environment):
+        return RedirectResponse(url="/docs")
+    return {"service": settings.app_name, "status": "ok"}
 
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
@@ -309,6 +380,17 @@ def health(db: Session = Depends(get_db)):
         "database": db_status,
         "total_fixtures": fixture_count,
         "min_prediction_probability": settings.min_prediction_probability,
+        "security": {
+            "auth_required": bool(settings.fie_api_key)
+            or security.is_production(settings.environment),
+            "api_key_configured": bool(settings.fie_api_key),
+            "docs_public": security.docs_are_public(settings.environment),
+            "rate_limits": {
+                "read": settings.rate_limit_read,
+                "write": settings.rate_limit_write,
+                "expensive": settings.rate_limit_expensive,
+            },
+        },
     }
 
 @app.get("/bookmakers")

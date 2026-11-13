@@ -9,6 +9,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      # Production refuses to serve data without FIE_API_KEY. Set the key in
+      # this service and the same value in Vercel (server-side only) before
+      # deploying; otherwise every data route returns 503 by design.
+      - key: ENVIRONMENT
+        value: production
       # The SQLite file lives on the mounted disk, so a redeploy does not wipe
       # the fixtures, ratings and settled slips. Without the disk below this
       # path does not exist and the service fails to start.

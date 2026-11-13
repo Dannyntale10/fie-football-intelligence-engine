@@ -18,6 +18,7 @@ const READ_PREFIXES = [
   "/evaluation",
   "/combos",
   "/learning",
+  "/live/calibration",
   "/ledger",
   "/sources",
   "/settings",
@@ -46,10 +47,13 @@ function isSafePath(path: string): boolean {
 }
 
 export function isProxied(method: string, path: string): boolean {
-  if (!isSafePath(path)) return false;
+  // Callers may hand over the browser path including its query string; only
+  // the path decides routing, and the proxy forwards the search separately.
+  const route = path.split(/[?#]/)[0];
+  if (!isSafePath(route)) return false;
   const verb = method.toUpperCase();
-  if (verb === "GET") return READ_PREFIXES.some((prefix) => underPrefix(path, prefix));
-  if (verb === "POST") return WRITE_PATHS.has(path);
-  if (verb === "PUT") return SETTINGS_WRITE.test(path);
+  if (verb === "GET") return READ_PREFIXES.some((prefix) => underPrefix(route, prefix));
+  if (verb === "POST") return WRITE_PATHS.has(route);
+  if (verb === "PUT") return SETTINGS_WRITE.test(route);
   return false;
 }

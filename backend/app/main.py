@@ -46,6 +46,7 @@ from app.data_sources.seeder import (
 from app.data_sources.live_feed import fetch_live_upcoming_fixtures_espn
 from app.data_sources.inplay import refresh_live_scores
 from app.live.ledger import record_live_snapshots, settle_live_predictions
+from app.live.report import calibration_report, export_rows
 from app.models.live import LivePrediction
 from app.analytics.backtest import run_backtest
 from app.betting.portfolio import build_daily_portfolio
@@ -432,6 +433,21 @@ def fixture_live_history(fixture_id: int, db: Session = Depends(get_db)):
             _latest_live_prediction(db, fixture_id), now
         ),
         "history": [_live_history_row(row) for row in history],
+    }
+
+@app.get("/live/calibration")
+def live_calibration(
+    days: int = Query(90, ge=1, le=365), db: Session = Depends(get_db)
+):
+    return calibration_report(db, days=days)
+
+@app.get("/live/export")
+def live_export(
+    days: int = Query(90, ge=1, le=365), db: Session = Depends(get_db)
+):
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "rows": export_rows(db, days=days),
     }
 
 @app.post("/fixtures/import-csv", response_model=ImportSummaryOut)

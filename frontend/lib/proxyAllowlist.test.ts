@@ -70,3 +70,9 @@ test("prefix matching respects segment boundaries", () => {
   assert.equal(isProxied("GET", "/fixturesomething"), false);
   assert.equal(isProxied("GET", "/healthz"), false);
 });
+
+test("forwards live calibration but never the export", () => {
+  assert.equal(isProxied("GET", "/live/calibration"), true);
+  assert.equal(isProxied("GET", "/live/calibration?days=30"), true);
+  assert.equal(isProxied("GET", "/live/export"), false);
+});

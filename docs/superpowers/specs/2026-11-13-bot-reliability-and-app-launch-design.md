@@ -71,8 +71,12 @@ the bot. Phase B is the app launch, preloading, and live-score loop.
 
 The migration goes through `ensure_schema_compatibility` in
 `backend/app/database.py`, following the existing
-`PRAGMA table_info(...)` + `ALTER TABLE ... ADD COLUMN` pattern. A partial
-unique index is created after the column:
+`PRAGMA table_info(...)` + `ALTER TABLE ... ADD COLUMN` pattern. SQLite requires
+`NOT NULL` additions to carry a default, so `attempts` is declared
+`INTEGER NOT NULL DEFAULT 0`. The helper currently swallows every exception
+with `except Exception: pass`; the new blocks log the exception instead, so a
+failed migration is visible rather than silently leaving delivery unprotected.
+A partial unique index is created after the column:
 
 ```sql
 CREATE UNIQUE INDEX IF NOT EXISTS ux_notifications_dedupe_key
@@ -228,9 +232,32 @@ Delete:
 - `GET /sentinel/status`, `POST /sentinel/start`, `POST /sentinel/stop`,
   `POST /sentinel/scan`, `POST /whatsapp/test` in `backend/app/main.py`
 
-Remove the `WHATSAPP_*` environment variables from documentation and
-`.env.example` if present. The on-disk `sentinel_state.json` is left in place
-and unreferenced; it contains credentials and is the operator's to delete.
+**Streamlit is the deployed service.** `render.yaml` starts
+`streamlit run streamlit_app.py`, and both `streamlit_app.py` and the
+unreferenced `dashboard.py` import `app.notifications.whatsapp` and
+`app.tasks.sentinel` at module level. Deleting those modules without editing
+the dashboards would break the Render deployment on the next build. Phase A
+therefore also:
+
+- removes the WhatsApp credential inputs, test-send button, and
+  `send_combo_whatsapp_alert` call from `streamlit_app.py` and `dashboard.py`;
+- removes the sentinel start/stop/scan controls and sentinel chip, replacing
+  the chip with a Telegram queue chip (`queued N · failed M` from the
+  `notifications` table);
+- keeps the existing `fetch_live_scores` live-score table in Streamlit, which
+  Phase B preserves through a compatibility wrapper;
+- removes the `WHATSAPP_*` and `TWILIO_*` variables from `render.yaml`,
+  `.env.example`, and the README environment table, and updates the
+  `notifications/` line in the README architecture block.
+
+The on-disk `sentinel_state.json` is left in place and unreferenced; it
+contains credentials and is the operator's to delete.
+
+**Bot host.** The polling thread runs inside the FastAPI process. The Render
+service runs Streamlit only, so it is not a bot host. Running the bot requires
+the FastAPI process (today: local `uvicorn app.main:app --app-dir backend`).
+Deploying FastAPI as a second Render web service is out of scope for this
+change and is recorded here so the requirement is not silently lost.
 
 Three responsibilities move before the deletion:
 
@@ -279,7 +306,9 @@ them in place. `record_tracked_bet` stops writing them.
 `capture_closing_prices(db)` then `settle_pending_bets(db)`, closes the
 session, and logs counts. Failures are logged, never raised. The 02:30
 `update_results` job keeps finalising fixture scores first, so the following
-settlement run sees them.
+settlement run sees them. `settle_pending_bets` already calls
+`sync_finished_match_scores_from_espn`, so the 30-minute job also finalises
+scores between the 02:30 runs.
 
 `POST /ledger/settle` keeps working with no query parameters. Delivery is the
 2-minute queue drain that already exists.
@@ -314,7 +343,18 @@ Both are added through `ensure_schema_compatibility`. `live_feed.py` writes
 `espn_league_code` on every ingested fixture, including fixtures that already
 exist and are only being refreshed for odds.
 
-New module `backend/app/data_sources/live_scores.py`:
+**Reuse `inplay.py`.** The repo already has
+`backend/app/data_sources/inplay.py`, which fetches live ESPN scores but never
+persists them, polls a fixed 17-league list, and has no throttle. That module
+is rewritten rather than duplicated. It keeps a compatibility function with its
+current signature so the Streamlit live table continues to work:
+
+```python
+def fetch_live_scores(db: Session) -> List[Dict[str, Any]]:
+    # refresh if stale, then return the same dict shape Streamlit expects
+```
+
+and gains the persisting entry point:
 
 ```python
 def refresh_live_scores(db: Session, *, force: bool = False) -> dict:
@@ -334,12 +374,19 @@ def refresh_live_scores(db: Session, *, force: bool = False) -> dict:
 - Maps ESPN state: `pre → scheduled`, `in → live` (or `halftime` when the type
   name contains `HALFTIME`; then `live_clock` is `HT`), `post → finished`.
   Non-final post states set `postponed` or `cancelled` only when ESPN says so.
-- Copies scores from the home and away competitors and `displayClock` into
-  `live_clock`. If a score is absent, it leaves the stored value untouched.
+- Copies scores (ESPN returns them as strings) with an `int(value)` parse inside
+  a `try`; a missing or non-numeric score leaves the stored value untouched.
+  Scores are only copied for `in` and final `post` states, never for
+  postponed or cancelled matches.
 - Commits once and returns
   `{"refreshed": bool, "updated": int, "skipped": int, "warning": str | None}`.
 - A feed error returns `refreshed=False` plus `warning`; it never raises and
   never invents a score.
+
+`fetch_live_scores` calls `refresh_live_scores` (throttled) and then maps the
+stored live, halftime, and finished-today rows to the dict keys Streamlit
+already consumes (`home_team`, `away_team`, `home_score`, `away_score`,
+`state`, `clock`, `fixture_id`, `is_live`, `is_finished`, `kickoff_eat`).
 
 New endpoint in `backend/app/main.py`:
 
@@ -491,11 +538,14 @@ Backend (`pytest`):
   - sanitized error reply contains a reference and not the exception text;
   - `/status`, `/pending`, `/retry`, `/sweep`, and `/today` live suffix.
 
-- `tests/test_live_scores.py` (new)
+- `tests/test_inplay.py` (new)
   - stubbed ESPN payload maps in-play state, scores, and clock;
+  - string scores are parsed, non-numeric scores leave stored values alone;
+  - postponed matches keep their status and do not receive scores;
   - unmatched events do not create fixtures;
   - a feed outage returns `refreshed=False` and leaves stored scores unchanged;
-  - throttle prevents a second upstream call inside 60 seconds.
+  - throttle prevents a second upstream call inside 60 seconds;
+  - `fetch_live_scores` still returns the Streamlit dict shape.
 
 - `tests/test_new_features.py`
   - delete the WhatsApp formatting and sentinel endpoint tests;
@@ -519,6 +569,10 @@ iOS:
   after 60 seconds.
 
 Frontend: `tsc --noEmit` and `next build` after the settings-page edit.
+Streamlit: `python -m compileall streamlit_app.py dashboard.py` and a start-up
+smoke check that the module no longer imports WhatsApp or sentinel. A grep for
+`whatsapp|sentinel|WHATSAPP` must return only historical documentation and the
+unused `sentinel_state.json` filename.
 
 Full suite must report zero failures before the implementation commit.
 
@@ -527,9 +581,15 @@ Full suite must report zero failures before the implementation commit.
 - **ESPN league mapping misses a legacy fixture.** Those fixtures are skipped,
   counted, and shown as unavailable; no score is invented. New ingestion fills
   the code.
-- **60-second report rebuild is expensive.** Only the active tab refreshes;
-  failure keeps the previous payload. The endpoint is read-only and was already
-  called on every pull-to-refresh.
+- **60-second report rebuild is expensive.** Measured on the running backend:
+  `/combos/daily` 0.02 s, `/markets/qualifying` 0.44 s, `/health` 0.02 s. Only
+  the active tab refreshes, and failure keeps the previous payload.
+- **Deleting the modules breaks the deployed Streamlit app.** Phase A edits both
+  dashboards and removes the WhatsApp env vars before the modules are deleted,
+  and verifies with `compileall` plus an import grep.
+- **The Render service cannot host the bot.** It runs Streamlit, not FastAPI, so
+  inbound polling runs only where the API process runs. Documented; deploying
+  FastAPI as a separate web service is out of scope.
 - **Duplicate polling across processes.** Documented single-process
   requirement; `TELEGRAM_POLLING=off` provides an explicit kill switch.
 - **Migration backfill.** `settlement_notified` is only backfilled when the
@@ -544,7 +604,7 @@ Full suite must report zero failures before the implementation commit.
 
 1. Phase A migrations, queue helper, delivery semantics, polling, commands.
 2. Phase A sentinel retirement, ledger/settlement moves, scheduler job,
-   dashboard copy.
+   Streamlit and dashboard cleanup, deployment env removal, dashboard copy.
 3. Phase B backend live scores and endpoint.
 4. Phase B store, splash, view wiring, refresh loop, live presentation.
 5. Verification, then one implementation commit and push.

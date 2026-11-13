@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.models.fixture import Fixture
@@ -498,3 +499,52 @@ def test_long_message_is_chunked(allowlist, db):
     finally:
         db.delete(row)
         db.commit()
+
+
+def test_poll_once_persists_offset_and_sanitizes_errors(allowlist, db, monkeypatch):
+    from app.models.predictions import SystemSetting
+
+    updates = {
+        "ok": True,
+        "result": [
+            {"update_id": 10, "message": {"chat": {"id": 42}, "text": "/today"}},
+            {"update_id": 11, "message": {"chat": {"id": 42}, "text": "/nonsense"}},
+        ],
+    }
+    monkeypatch.setattr(
+        telegram,
+        "handle_command",
+        lambda text, session: (_ for _ in ()).throw(RuntimeError("secret detail")),
+    )
+    replies = []
+
+    def transport(url, payload):
+        if "getUpdates" in url:
+            return updates
+        replies.append(payload["text"])
+        return {"ok": True}
+
+    try:
+        next_offset = telegram.poll_once(db, offset=None, transport=transport)
+        setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "telegram_poll_offset"))
+        assert next_offset == 12
+        assert setting.value == "12"
+        assert replies and "secret detail" not in replies[0]
+        assert "Reference" in replies[0]
+    finally:
+        db.query(SystemSetting).filter(SystemSetting.key == "telegram_poll_offset").delete()
+        db.commit()
+
+
+def test_poll_once_bootstraps_offset_without_running_backlog(allowlist, db, monkeypatch):
+    calls = []
+
+    def transport(url, payload):
+        calls.append(payload)
+        return {"ok": True, "result": [{"update_id": 99}]}
+
+    called = []
+    monkeypatch.setattr(telegram, "handle_command", lambda text, session: called.append(text) or "ok")
+    next_offset = telegram.poll_once(db, offset=None, transport=transport, bootstrap=True)
+    assert next_offset == 100
+    assert called == []

@@ -7,14 +7,18 @@ every command is refused rather than left open.
 from __future__ import annotations
 
 import json
+import logging
 import os
-import time
+import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 API_BASE = "https://api.telegram.org"
@@ -703,53 +707,151 @@ def handle_command(text: str, db: Session) -> str:
     return f"Unknown command.\n{HELP_TEXT}"
 
 
+def _get_offset(db: Session) -> Optional[int]:
+    from app.models.predictions import SystemSetting
+
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == "telegram_poll_offset"))
+    if row is None or row.value is None:
+        return None
+    try:
+        return int(row.value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _save_offset(db: Session, offset: int) -> None:
+    from app.models.predictions import SystemSetting
+
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == "telegram_poll_offset"))
+    if row is None:
+        row = SystemSetting(key="telegram_poll_offset", value=str(offset))
+        db.add(row)
+    else:
+        row.value = str(offset)
+    db.commit()
+
+
 def poll_once(
     db: Session,
     offset: Optional[int] = None,
     transport: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
+    long_poll_seconds: int = 0,
+    bootstrap: bool = False,
 ) -> Optional[int]:
     """Process one batch of updates; returns the next offset."""
     token = _token()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
     transport = transport or _post
-    payload = {"timeout": 0}
+    offset = offset if offset is not None else _get_offset(db)
+
+    if offset is None and bootstrap:
+        latest = transport(
+            f"{API_BASE}/bot{token}/getUpdates",
+            {"offset": -1, "timeout": 0},
+        )
+        results = latest.get("result") or []
+        next_offset = (results[-1].get("update_id", 0) + 1) if results else 0
+        _save_offset(db, next_offset)
+        return next_offset
+
+    payload: Dict[str, Any] = {"timeout": long_poll_seconds}
     if offset is not None:
         payload["offset"] = offset
     update = transport(f"{API_BASE}/bot{token}/getUpdates", payload)
-    next_offset = offset
+    next_offset = offset or 0
     for item in update.get("result", []) or []:
         next_offset = item.get("update_id", 0) + 1
         message = item.get("message") or {}
         chat_id = (message.get("chat") or {}).get("id")
         text = message.get("text") or ""
         if not text:
+            _save_offset(db, next_offset)
             continue
         if not is_authorized(chat_id, db):
+            _save_offset(db, next_offset)
             continue
+        reference = uuid.uuid4().hex[:6]
         try:
             reply = handle_command(text, db)
-        except Exception as error:
-            reply = f"Command failed: {error}"
+        except Exception:
+            logger.exception("Telegram command failed (ref %s)", reference)
+            reply = f"Command failed. Reference {reference}."
         send_message(reply, chat_id=chat_id, transport=transport)
+        _save_offset(db, next_offset)
     return next_offset
 
 
-def run_polling(interval: float = 2.0) -> None:
+_poll_thread: Optional[threading.Thread] = None
+_poll_stop = threading.Event()
+
+
+def _allowlist_from_db() -> List[str]:
+    """Resolve the allowlist through a short-lived session (env or settings)."""
     from app.database import get_db
 
-    if not _token():
-        raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
-    if not allowed_chat_ids():
-        raise SystemExit("TELEGRAM_ALLOWED_CHAT_IDS is empty; refusing to run an open bot")
-    offset = None
-    while True:
+    db = next(get_db())
+    try:
+        return allowed_chat_ids(db)
+    finally:
+        db.close()
+
+
+def polling_status() -> Dict[str, Any]:
+    return {
+        "running": bool(_poll_thread and _poll_thread.is_alive()),
+        "configured": bool(_token()) and bool(_allowlist_from_db()),
+    }
+
+
+def _poll_loop() -> None:
+    from app.database import get_db
+
+    offset: Optional[int] = None
+    db = next(get_db())
+    try:
+        offset = _get_offset(db)
+    finally:
+        db.close()
+    bootstrap = offset is None
+    while not _poll_stop.is_set():
         db = next(get_db())
         try:
-            offset = poll_once(db, offset)
+            offset = poll_once(db, offset=offset, long_poll_seconds=25, bootstrap=bootstrap)
+            bootstrap = False
+        except Exception:
+            logger.exception("Telegram polling cycle failed")
+            _poll_stop.wait(5)
         finally:
             db.close()
-        time.sleep(interval)
+        _poll_stop.wait(1)
+
+
+def start_polling_thread() -> bool:
+    global _poll_thread
+    if os.getenv("TELEGRAM_POLLING", "").lower() in ("off", "0", "false"):
+        return False
+    if not _token() or not _allowlist_from_db():
+        return False
+    if _poll_thread and _poll_thread.is_alive():
+        return True
+    _poll_stop.clear()
+    _poll_thread = threading.Thread(target=_poll_loop, name="telegram-poll", daemon=True)
+    _poll_thread.start()
+    logger.info("Telegram polling thread started")
+    return True
+
+
+def stop_polling_thread() -> None:
+    global _poll_thread
+    _poll_stop.set()
+    if _poll_thread and _poll_thread.is_alive():
+        _poll_thread.join(timeout=5)
+    _poll_thread = None
+
+
+def run_polling(interval: float = 2.0) -> None:
+    start_polling_thread()
 
 
 if __name__ == "__main__":

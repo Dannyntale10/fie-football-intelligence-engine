@@ -1,5 +1,6 @@
 from __future__ import annotations
 import io
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import pandas as pd
@@ -51,10 +52,22 @@ try:
 except Exception:
     pass
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    from app.notifications.telegram import start_polling_thread, stop_polling_thread
+
+    start_polling_thread()
+    try:
+        yield
+    finally:
+        stop_polling_thread()
+
+
 app = FastAPI(
     title=settings.app_name,
     version="0.2.0",
-    description="Local-first football research and prediction platform foundation."
+    description="Local-first football research and prediction platform foundation.",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(

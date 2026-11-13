@@ -127,11 +127,9 @@ def calibration_report(
     buckets = []
     for label, low, high in BUCKETS:
         subset = [row for row in rows if low <= row.minute <= high]
-        metrics = _metrics(subset)
-        # A bucket with no settled snapshot is omitted rather than published as
-        # a row of nulls: an empty bucket is evidence of nothing.
-        if metrics["n"]:
-            buckets.append({"bucket": label, **metrics})
+        # Every bucket is published, empty or not: on a calibration surface the
+        # absence of settled snapshots is itself a signal.
+        buckets.append({"bucket": label, **_metrics(subset)})
 
     if overall["n"]:
         verdict = verdict_for(

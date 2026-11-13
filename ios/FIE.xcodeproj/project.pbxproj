@@ -28,6 +28,8 @@
 		1C000000000000000000000E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000000000000000000000E /* SettingsView.swift */; };
 		1C000000000000000000000F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B000000000000000000000F /* Assets.xcassets */; };
 		1C0000000000000000000016 /* LiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000016 /* LiveView.swift */; };
+		1C0000000000000000000017 /* HighOddsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000017 /* HighOddsView.swift */; };
+		1C0000000000000000000018 /* BankrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000018 /* BankrollView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +56,8 @@
 		1B000000000000000000000F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1B0000000000000000000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1B0000000000000000000016 /* LiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveView.swift; sourceTree = "<group>"; };
+		1B0000000000000000000017 /* HighOddsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighOddsView.swift; sourceTree = "<group>"; };
+		1B0000000000000000000018 /* BankrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankrollView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -132,6 +136,8 @@
 				1B000000000000000000000D /* SourcesView.swift */,
 				1B000000000000000000000E /* SettingsView.swift */,
 				1B0000000000000000000016 /* LiveView.swift */,
+				1B0000000000000000000017 /* HighOddsView.swift */,
+				1B0000000000000000000018 /* BankrollView.swift */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -225,6 +231,8 @@
 				1C000000000000000000000D /* SourcesView.swift in Sources */,
 				1C000000000000000000000E /* SettingsView.swift in Sources */,
 				1C0000000000000000000016 /* LiveView.swift in Sources */,
+				1C0000000000000000000017 /* HighOddsView.swift in Sources */,
+				1C0000000000000000000018 /* BankrollView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

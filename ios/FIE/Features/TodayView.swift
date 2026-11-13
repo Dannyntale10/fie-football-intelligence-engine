@@ -59,6 +59,7 @@ struct TodayView: View {
                                 .foregroundStyle(Palette.textSecondary)
                         }
                     }
+                    highOddsLink
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -132,6 +133,32 @@ struct TodayView: View {
         return report == nil
             ? "Engine unreachable · no saved report"
             : "Engine unreachable · showing the saved report"
+    }
+
+    private var highOddsLink: some View {
+        NavigationLink {
+            HighOddsView()
+        } label: {
+            Card {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Eyebrow(text: "Near-6.00 tickets")
+                        Text("High odds slips")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Palette.textPrimary)
+                        Text("Three to five +EV legs combined into 5.50–6.50. A separate mode from the 85% gate; nothing is ever placed.")
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var actions: some View {

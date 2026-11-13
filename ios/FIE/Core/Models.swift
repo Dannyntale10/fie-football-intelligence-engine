@@ -643,6 +643,167 @@ struct Scorecard: Decodable {
     }
 }
 
+// MARK: - High odds 6.0
+
+struct HighOddsLeg: Decodable, Identifiable {
+    let fixtureId: Int
+    let match: String
+    let competition: String
+    let kickoffUtc: String?
+    let kickoffEat: String
+    let marketKey: String
+    let marketType: String
+    let selection: String
+    let odds: Double
+    let probability: Double
+    let impliedProbability: Double
+    let expectedValue: Double
+    let edgePercent: Double
+    let marketOverround: Double
+    let confidence: Double
+    let confidenceReasons: [String]
+    let bookmaker: String?
+    let source: String?
+    let sourceUrl: String?
+    let capturedAt: String?
+    let priceAgeHours: Double?
+
+    var id: String { "\(fixtureId)-\(marketKey)" }
+}
+
+struct HighOddsSlip: Decodable {
+    let size: Int
+    let legs: [HighOddsLeg]
+    let combinedProbability: Double
+    let totalOdds: Double
+    let impliedProbability: Double?
+    let expectedValuePercent: Double
+    let minLegProbability: Double
+}
+
+struct HighOddsReport: Decodable {
+    let targetDate: String
+    let matchdayLabel: String
+    let generatedAt: String
+    let params: Params
+    let scope: Scope
+    let diagnostics: Diagnostics
+    let rejected: [String: Int]
+    let slips: [HighOddsSlip]
+    let closestLegs: [HighOddsLeg]
+    let legsEvaluated: Int
+    let positiveEvLegs: Int
+    let count: Int
+    let message: String
+    let note: String
+
+    struct Params: Decodable {
+        let targetTotalOdds: Double
+        let oddsBand: [Double]
+        let minLegs: Int
+        let maxLegs: Int
+        let minLegEv: Double
+        let minDataConfidence: Double
+        let minMarketOverround: Double
+        let resultMarkets: [String]
+    }
+
+    struct Scope: Decodable {
+        let fixturesOnSlate: Int
+        let fixturesAnalysed: Int
+        let legsEvaluated: Int
+        let positiveEvLegs: Int
+        let candidateLegs: Int
+        let slipsFound: Int
+    }
+
+    struct Diagnostics: Decodable {
+        let requiredStrikeRatePercent: Double
+        let bestLegEv: Double?
+        let bestLegMatch: String?
+        let bestLegSelection: String?
+        let bestLegOdds: Double?
+        let combosInBand: Int
+        let publishedGate: Double
+    }
+}
+
+// MARK: - Paper bankroll
+
+struct BankrollWarning: Decodable {
+    let code: String
+    let message: String
+}
+
+struct BankrollPlan: Decodable {
+    let stake: Double
+    let currency: String
+    let totalOdds: Double
+    let potentialReturn: Double
+    let potentialProfit: Double
+    let impliedProbability: Double
+    let requiredStrikeRatePercent: Double
+    let breakEvenWinsPer10: Double
+    let bankroll: Double?
+    let stakePercentOfBankroll: Double?
+    let maxStakeByPolicy: Double?
+    let stakeWithinCap: Bool
+    let maxStakePercent: Double
+    let targetProfit: Double?
+    let stakeForTargetProfit: Double?
+    let warnings: [BankrollWarning]
+    let note: String
+}
+
+struct BankrollExposure: Decodable {
+    let slipsPerDay: Int
+    let stakePerSlip: Double
+    let totalStake: Double
+    let currency: String
+    let bankroll: Double
+    let maxDailyExposurePercent: Double
+    let maxDailyStake: Double
+    let exposureWithinCap: Bool
+    let warnings: [BankrollWarning]
+}
+
+struct BankrollPlanResponse: Decodable {
+    let stake: Double
+    let currency: String
+    let totalOdds: Double
+    let potentialReturn: Double
+    let potentialProfit: Double
+    let impliedProbability: Double
+    let requiredStrikeRatePercent: Double
+    let breakEvenWinsPer10: Double
+    let bankroll: Double?
+    let stakePercentOfBankroll: Double?
+    let maxStakeByPolicy: Double?
+    let stakeWithinCap: Bool
+    let maxStakePercent: Double
+    let targetProfit: Double?
+    let stakeForTargetProfit: Double?
+    let warnings: [BankrollWarning]
+    let note: String
+    let dailyExposure: BankrollExposure?
+}
+
+struct BankrollPresets: Decodable {
+    let currency: String
+    let maxStakePercent: Double
+    let presets: [Preset]
+    let note: String
+
+    struct Preset: Decodable, Identifiable {
+        let key: String
+        let label: String
+        let description: String
+        let plan: BankrollPlan
+
+        var id: String { key }
+    }
+}
+
 struct LearningSummary: Decodable {
     let trained: Bool
     let version: String?

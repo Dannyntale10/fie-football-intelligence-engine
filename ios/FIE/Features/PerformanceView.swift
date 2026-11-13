@@ -46,6 +46,7 @@ struct PerformanceView: View {
                     if let sweep, (sweep.rows ?? []).isEmpty == false {
                         sweepCard(sweep)
                     }
+                    bankrollLink
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -70,6 +71,32 @@ struct PerformanceView: View {
                 .foregroundStyle(Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var bankrollLink: some View {
+        NavigationLink {
+            BankrollView()
+        } label: {
+            Card {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Eyebrow(text: "Paper staking")
+                        Text("Bankroll planner")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Palette.textPrimary)
+                        Text("What a target really requires: the break-even strike behind 50 → 10 at 1.20 and 10 → 50 at 6.00, with the 5%/20% policy caps. Nothing is staked.")
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func engineCard(_ health: Health) -> some View {

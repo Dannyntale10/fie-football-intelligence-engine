@@ -64,3 +64,6 @@ models/*.pkl
 
 # Historical CSV cache (downloaded data, not source)
 data/historical_cache/
+
+# Isolated feature worktrees
+.worktrees/

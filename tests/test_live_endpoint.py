@@ -173,7 +173,7 @@ def test_an_unknown_clock_is_not_reported_as_kickoff(monkeypatch):
     monkeypatch.setattr(
         main_module,
         "record_live_snapshots",
-        lambda db: {"fixtures": 0, "written": 0, "skipped": 0},
+        lambda db: {"fixtures": 0, "written": 0, "skipped": 0, "failed": 0},
     )
 
     payload = client.get("/fixtures/live").json()

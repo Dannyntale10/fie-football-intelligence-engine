@@ -66,9 +66,13 @@ struct RootView: View {
         .task { await loadUntilReady() }
         .onAppear {
             // iOS 17 only shows five tabs; a sixth would push Live and Settings
-            // behind "More". Sources now lives inside Settings.
-            if selectedTab == 5 { selectedTab = 3 }
-            if selectedTab > 4 { selectedTab = 0 }
+            // behind "More". Sources now lives inside Settings, so a session
+            // persisted on the old Sources tab opens Settings instead.
+            switch selectedTab {
+            case 3: selectedTab = 4
+            case 5: selectedTab = 3
+            default: if selectedTab > 4 { selectedTab = 0 }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

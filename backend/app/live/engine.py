@@ -68,7 +68,8 @@ def outcome_probabilities(
             final_home = home_goals + extra_home
             final_away = away_goals + extra_away
             # Tau is defined on the full-match means, exactly as the pre-match
-            # grid uses them, so the minute-0 forecast matches it bit for bit.
+            # grid uses them, so the minute-0 forecast reproduces it to within
+            # rounding.
             probability = (
                 p_home
                 * p_away

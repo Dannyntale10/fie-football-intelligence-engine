@@ -174,7 +174,7 @@ def test_one_bad_fixture_does_not_cost_the_slate(monkeypatch):
             db, now=NOW, intensity_provider=lambda state: (1.0, "default")
         )
 
-        assert result == {"fixtures": 2, "written": 1, "skipped": 0}
+        assert result == {"fixtures": 2, "written": 1, "skipped": 0, "failed": 1}
         assert (
             db.query(LivePrediction)
             .filter(LivePrediction.fixture_id == good.id)

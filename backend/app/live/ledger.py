@@ -145,7 +145,7 @@ def record_live_snapshots(
         .order_by(Fixture.kickoff_utc)
     ).all()
 
-    written = skipped = 0
+    written = skipped = failed = 0
     for fixture in fixtures:
         try:
             minute = elapsed_minutes(
@@ -180,11 +180,17 @@ def record_live_snapshots(
             continue
         except Exception as error:  # one malformed fixture must not cost the slate
             logger.warning("live snapshot failed for fixture %s: %s", fixture.id, error)
+            failed += 1
             continue
         written += 1
 
     db.commit()
-    return {"fixtures": len(fixtures), "written": written, "skipped": skipped}
+    return {
+        "fixtures": len(fixtures),
+        "written": written,
+        "skipped": skipped,
+        "failed": failed,
+    }
 
 
 def _label(home_goals: int, away_goals: int) -> str:

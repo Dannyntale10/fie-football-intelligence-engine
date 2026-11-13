@@ -48,6 +48,12 @@ def _reset_throttle():
     inplay._last_refresh_monotonic = None
     yield
     inplay._last_refresh_monotonic = None
+    db = SessionLocal()
+    try:
+        db.query(Fixture).filter(Fixture.dedupe_key.like("inplay-%")).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
 
 
 def _add_fixture(db, suffix: str, competition: str, external_id: str | None) -> Fixture:

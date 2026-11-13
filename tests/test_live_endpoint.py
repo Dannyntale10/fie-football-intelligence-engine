@@ -1,6 +1,7 @@
 """GET /fixtures/live serves stored live rows and survives a feed outage."""
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -9,6 +10,19 @@ from app.main import app
 from app.models.fixture import Fixture
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_fixtures():
+    yield
+    db = SessionLocal()
+    try:
+        db.query(Fixture).filter(
+            Fixture.dedupe_key.like("live-endpoint-%")
+        ).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
 
 
 def _insert_live_fixture() -> int:

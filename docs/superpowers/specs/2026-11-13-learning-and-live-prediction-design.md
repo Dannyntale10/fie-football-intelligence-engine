@@ -182,7 +182,7 @@ the next start; `live_observed_at` on the fixture uses the existing
 | `observed_at` | DateTime | Feed observation time |
 | `home_score`, `away_score` | Integer | Score at snapshot |
 | `lambda_home`, `lambda_away` | Float | Frozen pre-match means |
-| `lambda_source` | String(40) | `market_odds` / `ratings` / `fallback` |
+| `lambda_source` | String(40) | `market_odds` / `team_ratings` / `fallback` |
 | `remaining_home_lambda`, `remaining_away_lambda` | Float | After fraction × k |
 | `intensity` | Float | `k` used |
 | `intensity_source` | String(20) | `default` / `fitted` |

@@ -145,7 +145,7 @@ struct SettingsView: View {
     private var engineAddress: some View {
         Card {
             Eyebrow(text: "Engine address")
-            TextField("http://localhost:8001", text: $serverURL)
+            TextField(AppSettings.defaultServerURL, text: $serverURL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
@@ -180,7 +180,7 @@ struct SettingsView: View {
                 .buttonStyle(SecondaryButtonStyle())
             }
 
-            Text("The iOS Simulator reaches the Mac at localhost. A physical iPhone needs the Mac's LAN address, for example http://192.168.1.20:8001, with the backend bound to 0.0.0.0 and Local Network access allowed.")
+            Text("The default is this Mac's LAN address, so the iPhone reaches the engine over Wi-Fi. Both devices must be on the same network, the backend must be bound to 0.0.0.0, and Local Network access must be allowed. If the Mac's IP changes, update it here.")
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)

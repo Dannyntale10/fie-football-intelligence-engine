@@ -428,10 +428,11 @@ A native SwiftUI client lives in `ios/` and talks to the same FastAPI backend.
   foreground. Fixtures pins a Live now card, Today shows a compact live strip,
   and the match detail header shows the score and clock only when the engine
   has them.
-- The server address is editable in Settings. The default
-  `http://localhost:8001` works in the Simulator; a physical iPhone needs the
-  Mac's LAN address and the backend bound to `0.0.0.0`:
+- The server address is editable in Settings. The default is the Mac's LAN
+  address (`http://192.168.1.165:8001`), which the Simulator and a physical
+  iPhone on the same Wi-Fi can both reach, with the backend bound to `0.0.0.0`:
   `.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8001`
+  If the Mac's IP changes, update it in Settings (Reset restores the default).
 - The app only reads the API. It stores no picks and never places a bet. The
   85% gate, attribution and paper-only rules are identical to the web UI.
 

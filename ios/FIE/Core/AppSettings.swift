@@ -1,7 +1,7 @@
 import Foundation
 
 enum AppSettings {
-    static let defaultServerURL = "http://localhost:8001"
+    static let defaultServerURL = "http://192.168.1.165:8001"
     static let serverURLKey = "fie.serverURL"
 
     static var serverURL: String {

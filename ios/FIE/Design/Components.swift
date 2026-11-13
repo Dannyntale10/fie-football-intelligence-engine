@@ -325,3 +325,91 @@ struct StatusPill: View {
         Pill(text: status ?? "unknown", tint: tint)
     }
 }
+
+struct LiveDot: View {
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(Palette.danger)
+            .frame(width: 8, height: 8)
+            .scaleEffect(pulsing ? 1.35 : 0.9)
+            .opacity(pulsing ? 0.55 : 1)
+            .animation(
+                .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+                value: pulsing
+            )
+            .onAppear { pulsing = true }
+            .accessibilityHidden(true)
+    }
+}
+
+struct LiveScoreRow: View {
+    let fixture: Fixture
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(fixture.matchLabel)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(2)
+                Text(fixture.competition)
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if let home = fixture.homeScore, let away = fixture.awayScore {
+                Text("\(home) – \(away)")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Palette.textPrimary)
+            }
+
+            if let clock = fixture.liveClock {
+                Pill(text: clock, tint: Palette.danger)
+            }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+}
+
+struct LiveMatchesCard: View {
+    let fixtures: [Fixture]
+    var maxRows: Int? = nil
+    var glow: Bool = false
+
+    private var shown: [Fixture] {
+        guard let maxRows else { return fixtures }
+        return Array(fixtures.prefix(maxRows))
+    }
+
+    var body: some View {
+        Card(glow: glow) {
+            HStack(spacing: 8) {
+                LiveDot()
+                Eyebrow(text: "Live now", tint: Palette.danger)
+                Spacer()
+                Pill(
+                    text: fixtures.count > shown.count
+                        ? "\(fixtures.count) in play"
+                        : "\(fixtures.count) live",
+                    tint: Palette.danger
+                )
+            }
+
+            ForEach(shown) { fixture in
+                NavigationLink {
+                    FixtureDetailView(fixture: fixture)
+                } label: {
+                    LiveScoreRow(fixture: fixture)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}

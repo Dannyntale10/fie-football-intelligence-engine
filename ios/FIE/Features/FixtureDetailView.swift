@@ -15,6 +15,7 @@ struct FixtureDetailView: View {
     }
 
     @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @EnvironmentObject private var store: EngineStore
     @State private var dossier: Dossier?
     @State private var discovery: Discovery?
     @State private var loading = false
@@ -107,6 +108,9 @@ struct FixtureDetailView: View {
                 .font(TypeScale.title)
                 .foregroundStyle(Palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let live = liveMatch {
+                liveScoreLine(live)
+            }
             HStack(spacing: 6) {
                 Text(info.kickoff)
                 Text("·")
@@ -126,6 +130,27 @@ struct FixtureDetailView: View {
                 if let grade = info.qualityGrade {
                     Pill(text: "quality \(grade)", tint: Palette.accent)
                 }
+            }
+        }
+    }
+
+    private var liveMatch: Fixture? {
+        store.live.first { $0.id == fixtureId }
+    }
+
+    @ViewBuilder
+    private func liveScoreLine(_ live: Fixture) -> some View {
+        if let home = live.homeScore, let away = live.awayScore {
+            HStack(spacing: 8) {
+                LiveDot()
+                Text("\(home) – \(away)")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Palette.textPrimary)
+                if let clock = live.liveClock {
+                    Pill(text: clock, tint: Palette.danger)
+                }
+                Spacer(minLength: 0)
             }
         }
     }

@@ -247,3 +247,80 @@ def test_backtest_saves_inactive_learning_without_evidence(db, monkeypatch, tmp_
     assert json.loads(learning_file.read_text())["applied"] is False
     assert dc.load_learning() is None
     assert combo_backtest.load_report()["status"] == "ok"
+
+
+def test_tier_sweep_never_uses_holdout_to_choose():
+    def row(tier, train_roi, train_hit, holdout_roi, holdout_hit, count=40):
+        return {
+            "tier": tier,
+            "combos": {
+                "train": {
+                    "total": {
+                        "count": count,
+                        "roi_percent": train_roi,
+                        "hit_rate": train_hit,
+                    }
+                },
+                "holdout": {
+                    "total": {
+                        "count": 40,
+                        "roi_percent": holdout_roi,
+                        "hit_rate": holdout_hit,
+                    }
+                },
+            },
+        }
+
+    results = [
+        row(0.65, 6.0, 0.72, -40.0, 0.30),
+        row(0.85, -4.0, 0.61, 90.0, 0.95),
+    ]
+    assert combo_backtest._pick_tier(results)["tier"] == 0.65
+
+    thin = [row(0.75, 99.0, 1.0, 99.0, 1.0, count=5)]
+    assert combo_backtest._pick_tier(thin) is None
+
+
+def test_tier_sweep_compares_tiers_on_training_days(db):
+    opening = datetime(2024, 9, 1, 16, 0, tzinfo=timezone.utc)
+    for day_index in range(12):
+        kickoff = opening + timedelta(days=day_index)
+        for match_index in range(4):
+            _settled(
+                db,
+                f"Home {day_index}-{match_index}",
+                f"Away {day_index}-{match_index}",
+                kickoff + timedelta(hours=match_index),
+                (2, 0) if day_index < 8 else (0, 1),
+            )
+
+    report = combo_backtest.run_tier_sweep(db, tiers=(0.70, 0.75, 0.85), limit_per_size=3)
+
+    assert report["status"] == "ok"
+    assert report["version"] == combo_backtest.SWEEP_VERSION
+    assert report["params"]["tiers"] == [0.7, 0.75, 0.85]
+    assert report["window"]["matchdays"] == 12
+    assert len(report["rows"]) == 3
+
+    by_tier = {row["tier"]: row for row in report["rows"]}
+    assert by_tier[0.70]["combos"]["train"]["total"]["count"] == 48
+    assert by_tier[0.70]["combos"]["train"]["total"]["hit_rate"] == 1.0
+    assert by_tier[0.70]["combos"]["holdout"]["total"]["count"] == 24
+    assert by_tier[0.70]["combos"]["holdout"]["total"]["hit_rate"] == 0.0
+    assert by_tier[0.85]["combos"]["train"]["total"]["count"] == 0
+
+    rec = report["recommendation"]
+    assert rec["tier"] == 0.70
+    assert rec["matches_published_default"] is False
+    assert rec["holdout_confirmed"] is False
+    assert rec["train"]["count"] == 48
+    assert "required_hit_rate" in rec["holdout"]
+    assert any("85% selection gate is unchanged" in note for note in report["notes"])
+
+
+def test_tier_sweep_reports_missing_history(db):
+    report = combo_backtest.run_tier_sweep(db)
+
+    assert report["status"] == "no_history"
+    assert report["recommendation"] is None
+    assert report["rows"] == []

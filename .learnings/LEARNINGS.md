@@ -255,3 +255,124 @@ Reject names that reduce to home/away or start with `home (`/`away (`; collapse 
 ### Resolution
 - **Resolved**: 2026-11-12T23:55:00+03:00
 - **Notes**: `is_placeholder_team`, `same_match` (normalised team overlap + `SAME_MATCH_WINDOW = 3h`) and `as_utc` enforce the three guards; `scope.rejected` reports `placeholder_fixture` and `duplicate_match`, and the live response shows one leg per match.
+
+## [LRN-20261113-001] knowledge_gap
+
+**Logged**: 2026-11-13T11:20:00+03:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Xcode 27's simulator runs headless behind "DeviceHub": there is no on-screen Simulator window, so AppleScript/CGEvent input injection is unavailable while `simctl` screenshots still work.
+
+### Details
+`osascript ... process "Simulator"` fails with -1728 and `process "DeviceHub"` fails with "not allowed assistive access". `CGWindowListCopyWindowInfo` on the active desktop only listed Qoder windows, so the device framebuffer has no window to scroll or click. Visual verification therefore has to be driven entirely from `xcrun simctl` plus persisted app state, not from GUI automation.
+
+### Suggested Action
+Verify UI through: (1) `defaults write <bundle> <key>` for `@AppStorage` state, then terminate/relaunch; (2) `simctl io … screenshot`; (3) a tall device (iPad, `TARGETED_DEVICE_FAMILY` includes 2) when content is below the fold. Do not spend time on osascript/cliclick/hardware-key injection on this setup.
+
+### Metadata
+- Source: error
+- Related Files: ios/FIE/FIEApp.swift, ios/FIE.xcodeproj/project.pbxproj
+- Tags: ios, simulator, verification
+- Pattern-Key: verify.ios_visual
+- See Also: LRN-20261113-002
+
+---
+
+## [LRN-20261113-002] best_practice
+
+**Logged**: 2026-11-13T11:20:00+03:00
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+To verify a card that is below the fold without touch input, temporarily root the app at that screen and shrink the data above it with a truncating proxy, then revert and grep for the hook.
+
+### Details
+The discovered-markets card sits under a long priced-markets list, so no screenshot could reach it. Rooting the app via an env var (`FIE_FIXTURE_ID`) into `FixtureDetailView` and pointing `fie.serverURL` at a local stub that truncated the dossier payload to two markets exposed the card. The screen then showed 22 priced / 6 families, matching the live discovery endpoint — proving both decode and render.
+
+### Suggested Action
+When a surface is unreachable: add a temporary env-var root in the app entry point, run a tiny local proxy that trims unrelated payload, screenshot, then delete the hook, `grep` for it, rebuild, and reset the simulator defaults you touched. Keep the stub outside the repo.
+
+### Metadata
+- Source: conversation
+- Related Files: ios/FIE/FIEApp.swift, ios/FIE/Features/FixtureDetailView.swift
+- Tags: ios, verification, test-scaffolding
+- Pattern-Key: verify.ios_below_fold
+- See Also: LRN-20261113-001
+
+---
+
+## [LRN-20261113-003] best_practice
+
+**Logged**: 2026-11-13T11:20:00+03:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+`xcodebuild -quiet` prints nothing on success, so judge the build by exit code, not by log text.
+
+### Details
+`xcodebuild ... -quiet build 2>&1 | tail -5` produced no output for a successful build. Piping through `tail` also masks the exit status unless `$?` is captured deliberately.
+
+### Suggested Action
+Run `xcodebuild ... -quiet build` and assert `exit=0`; print `** BUILD SUCCEEDED **` from a non-quiet run only when a human needs the banner.
+
+### Metadata
+- Source: conversation
+- Related Files: ios/FIE.xcodeproj
+- Tags: xcodebuild, verification
+- Pattern-Key: verify.build_exit_code
+
+---
+
+## [LRN-20261113-004] knowledge_gap
+
+**Logged**: 2026-11-13T11:20:00+03:00
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+Project memory claiming "no Xcode on the dev Mac" was stale: Xcode 27.2 is installed and `xcodebuild` builds the app.
+
+### Details
+An earlier session recorded that SwiftUI could not be compiled locally. On 2026-11-13 `xcodebuild -version` reported Xcode 27.2 (27B52) and simulator builds succeeded twice. Acting on the stale note would have skipped type-checking and runtime verification entirely.
+
+### Suggested Action
+Before trusting any environment claim from memory, run the one command that proves it (`xcodebuild -version`, `xcrun simctl list devices booted`). Correct or delete the memory entry once contradicted.
+
+### Metadata
+- Source: conversation
+- Related Files: ios/FIE.xcodeproj
+- Tags: environment, memory-staleness
+- Pattern-Key: verify.environment_claims
+- See Also: LRN-20261113-001
+
+---
+
+## [LRN-20261113-005] knowledge_gap
+
+**Logged**: 2026-11-13T11:45:00+03:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+A booted iOS 26 simulator ignores `simctl spawn defaults write com.<bundle> …` for the app's own `@AppStorage` keys.
+
+### Details
+Setting `fie.selectedTab` through the device-wide defaults domain, then through the app data container plist, both failed: `@AppStorage` kept reading the previous value (cfprefsd cache and sandbox separation). Only a fresh install reset it. For one-off verification, an env-var override read at `onAppear` selects the tab reliably; anything written that way must be removed and rebuilt afterwards.
+
+### Suggested Action
+For simulator verification of a specific tab, either uninstall/reinstall to reset preferences, or add a temporary env-var override, screenshot, then revert and rebuild. Do not trust `simctl spawn defaults` for app-scoped keys.
+
+### Metadata
+- Source: conversation
+- Related Files: ios/FIE/FIEApp.swift
+- Tags: simulator, appstorage, verification
+- Pattern-Key: verify.ios_visual
+- See Also: LRN-20261113-001, LRN-20261113-002

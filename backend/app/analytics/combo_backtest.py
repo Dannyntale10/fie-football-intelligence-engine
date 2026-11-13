@@ -44,6 +44,9 @@ from app.betting.pricing import devigged_probabilities, fixture_market_odds
 from app.models.fixture import Fixture
 
 BACKTEST_VERSION = "combo-backtest-1"
+SWEEP_VERSION = "combo-sweep-1"
+SWEEP_TIERS = (0.65, 0.70, 0.75, 0.80, 0.85)
+MIN_TRAIN_TICKETS = 20
 DEFAULT_STAKE = 10.0
 HOLDOUT_SHARE = 0.30
 
@@ -59,6 +62,10 @@ PROBABILITY_BUCKETS = (
 
 def backtest_path() -> Path:
     return Path(__file__).resolve().parents[3] / "data" / "combo_backtest.json"
+
+
+def sweep_path() -> Path:
+    return Path(__file__).resolve().parents[3] / "data" / "combo_sweep.json"
 
 
 def _outcome(fixture: Fixture) -> Optional[str]:
@@ -519,6 +526,248 @@ def run_combo_backtest(
         "holdout_after_learning": _by_size(holdout_after) if holdout_after else None,
         "notes": notes,
     }
+
+
+def _with_break_even(
+    metrics: Dict[str, Any], combos: Sequence[Dict[str, Any]]
+) -> Dict[str, Any]:
+    if not combos or not metrics.get("count"):
+        return metrics
+    required = sum(1.0 / combo["total_odds"] for combo in combos) / len(combos)
+    metrics["required_hit_rate"] = round(required, 4)
+    metrics["edge_over_break_even"] = round(float(metrics.get("hit_rate", 0.0)) - required, 4)
+    return metrics
+
+
+def _by_size_with_break_even(combos: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    result = _by_size(combos)
+    for size in COMBO_SIZES:
+        key = f"{size}_leg"
+        _with_break_even(result[key], [c for c in combos if c["size"] == size])
+    _with_break_even(result["total"], list(combos))
+    return result
+
+
+def _pick_tier(results: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Choose a tier from training metrics only; holdout never participates."""
+    eligible = [
+        row
+        for row in results
+        if row["combos"]["train"]["total"].get("count", 0) >= MIN_TRAIN_TICKETS
+    ]
+    if not eligible:
+        return None
+    return max(
+        eligible,
+        key=lambda row: (
+            row["combos"]["train"]["total"].get("roi_percent") or -1e9,
+            row["combos"]["train"]["total"].get("hit_rate") or 0.0,
+            -row["tier"],
+        ),
+    )
+
+
+def run_tier_sweep(
+    db: Session,
+    competition: Optional[str] = None,
+    tiers: Sequence[float] = SWEEP_TIERS,
+    stake: float = DEFAULT_STAKE,
+    limit_per_size: int = 1,
+    price_mode: str = "flat",
+) -> Dict[str, Any]:
+    """Replay the same combo rule at several probability tiers and compare them.
+
+    The recommended tier is chosen on training matchdays only. Holdout metrics
+    are reported afterwards as confirmation evidence and never feed the choice,
+    so the recommendation cannot be tuned on the days it is scored against.
+    """
+    tier_values: List[float] = sorted(
+        {round(min(0.99, max(0.50, float(tier))), 4) for tier in tiers}
+    ) or [DEFAULT_TIER]
+    stake = max(1.0, float(stake))
+    limit_per_size = max(1, int(limit_per_size))
+    price_mode = "best" if price_mode == "best" else "flat"
+    rows, skipped = _replay_rows(db, competition=competition, price_mode=price_mode)
+
+    base_params = {
+        "tiers": tier_values,
+        "combo_sizes": list(COMBO_SIZES),
+        "combos_per_size": limit_per_size,
+        "stake": round(stake, 2),
+        "competition": competition,
+        "price_mode": price_mode,
+        "holdout_share": HOLDOUT_SHARE,
+        "published_default_tier": DEFAULT_TIER,
+        "min_train_tickets": MIN_TRAIN_TICKETS,
+    }
+    if not rows:
+        return {
+            "version": SWEEP_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "status": "no_history",
+            "params": base_params,
+            "scope": {"settled_fixtures": 0, "skipped": skipped},
+            "rows": [],
+            "recommendation": None,
+            "message": (
+                "No settled fixtures with complete 1X2 prices were found. "
+                "Import results before comparing tiers."
+            ),
+        }
+
+    train_days, holdout_days, days = _split_days(rows)
+    train_rows = [row for row in rows if row["date"] in train_days]
+    holdout_rows = [row for row in rows if row["date"] in holdout_days]
+
+    results: List[Dict[str, Any]] = []
+    for tier in tier_values:
+        all_legs = _daily_legs(rows, tier, None)
+        train_legs = _daily_legs(train_rows, tier, None)
+        holdout_legs = _daily_legs(holdout_rows, tier, None)
+        results.append(
+            {
+                "tier": tier,
+                "legs": {
+                    "all": _leg_metrics(all_legs),
+                    "train": _leg_metrics(train_legs),
+                    "holdout": _leg_metrics(holdout_legs),
+                },
+                "combos": {
+                    "all": _by_size_with_break_even(_combos(all_legs, stake, limit_per_size)),
+                    "train": _by_size_with_break_even(
+                        _combos(train_legs, stake, limit_per_size)
+                    ),
+                    "holdout": _by_size_with_break_even(
+                        _combos(holdout_legs, stake, limit_per_size)
+                    ),
+                },
+            }
+        )
+
+    chosen = _pick_tier(results)
+    if chosen is not None:
+        train_total = chosen["combos"]["train"]["total"]
+        holdout_total = chosen["combos"]["holdout"]["total"]
+        confirmed = (
+            holdout_total.get("count", 0) >= 10
+            and (holdout_total.get("roi_percent") or -1.0) > 0
+            and (holdout_total.get("edge_over_break_even") or -1.0) >= 0
+        )
+        if confirmed and chosen["tier"] != DEFAULT_TIER:
+            note = (
+                "The holdout confirms a different tier: it clears its break-even "
+                "hit rate and returns a positive flat-stake ROI out of sample."
+            )
+            action = "consider_tier"
+            guidance = (
+                f"Holdout confirms {chosen['tier']:.0%}. The live engine stays at "
+                f"{DEFAULT_TIER:.0%} until you deliberately change it."
+            )
+        elif confirmed:
+            note = (
+                "The holdout confirms the published default tier out of sample."
+            )
+            action = "keep_default"
+            guidance = f"The default {DEFAULT_TIER:.0%} tier is confirmed out of sample."
+        elif holdout_total.get("count", 0) < 10:
+            note = (
+                "The holdout holds too few tickets to confirm the tier; the "
+                "recommendation is provisional until more matchdays settle."
+            )
+            action = "keep_default"
+            guidance = (
+                f"The live engine keeps {DEFAULT_TIER:.0%}; evidence is still too thin."
+            )
+        else:
+            note = (
+                "The holdout does not confirm the tier: either it missed its "
+                "break-even hit rate or the flat-stake ROI was not positive."
+            )
+            action = "keep_default"
+            guidance = (
+                f"The live engine keeps {DEFAULT_TIER:.0%}: a tier that wins only "
+                "on training is not enough to change it."
+            )
+        recommendation: Optional[Dict[str, Any]] = {
+            "tier": chosen["tier"],
+            "basis": (
+                "highest training ROI among tiers with at least "
+                f"{MIN_TRAIN_TICKETS} training tickets; the holdout is not used to choose"
+            ),
+            "action": action,
+            "matches_published_default": chosen["tier"] == DEFAULT_TIER,
+            "train": train_total,
+            "holdout": holdout_total,
+            "holdout_confirmed": confirmed,
+            "note": note,
+            "guidance": guidance,
+        }
+    else:
+        recommendation = {
+            "tier": None,
+            "basis": f"no tier produced at least {MIN_TRAIN_TICKETS} training tickets",
+            "action": "keep_default",
+            "matches_published_default": False,
+            "train": None,
+            "holdout": None,
+            "holdout_confirmed": False,
+            "note": "History is too thin to choose a tier; the default stays in place.",
+            "guidance": f"The live engine keeps {DEFAULT_TIER:.0%}.",
+        }
+
+    price_note = (
+        "Replay prices are the highest stored price per outcome, which assumes "
+        "accounts at every book; this is an upper bound, not a guaranteed price."
+        if price_mode == "best"
+        else "Replay prices come from one stored bookmaker trio per fixture, so "
+        "the comparison is conservative and does not assume access to every book."
+    )
+    notes = [
+        "Every tier is scored with the live decision rule: one 1X2 selection per "
+        "match, de-vigged market probability, one top-ranked ticket per size per "
+        "matchday, flat stake.",
+        "The tier is chosen on training matchdays only; holdout metrics are "
+        "confirmation evidence reported after the choice, never an input to it.",
+        "A tier is only eligible to be recommended when it produced at least "
+        f"{MIN_TRAIN_TICKETS} training tickets; small samples are excluded.",
+        "Gaps smaller than about 5 percentage points of ROI sit inside replay "
+        "noise: read the ranking as directional, not as a precise optimum.",
+        "The published 85% selection gate is unchanged. Tiers here are internal "
+        "combo filters and never lower that gate.",
+        price_note,
+        "Break-even hit rate is the average of 1 / total odds across the settled "
+        "tickets, so it moves with the prices the replay actually took.",
+    ]
+    return {
+        "version": SWEEP_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "ok",
+        "window": _window(rows, days),
+        "params": base_params,
+        "scope": {
+            "settled_fixtures": len(rows),
+            "matchdays": len(days),
+            "holdout_matchdays": len(holdout_days),
+            "skipped": skipped,
+        },
+        "rows": results,
+        "recommendation": recommendation,
+        "notes": notes,
+    }
+
+
+def save_sweep(report: Dict[str, Any]) -> Path:
+    path = sweep_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True))
+    return path
+
+
+def load_sweep() -> Optional[Dict[str, Any]]:
+    try:
+        return json.loads(sweep_path().read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def save_learning(

@@ -744,3 +744,53 @@ export type ComboBacktestReport = {
   notes: string[];
   learning_saved?: Record<string, unknown>;
 };
+
+export type SweepMetric = ComboMetrics & {
+  required_hit_rate?: number | null;
+  edge_over_break_even?: number | null;
+};
+
+export type ComboTierSweep = {
+  version: string;
+  generated_at: string;
+  status: string;
+  window?: {
+    first_matchday: string | null;
+    last_matchday: string | null;
+    matchdays: number;
+    settled_matches: number;
+  };
+  params?: {
+    tiers: number[];
+    combo_sizes: number[];
+    combos_per_size: number;
+    stake: number;
+    competition?: string | null;
+    price_mode: string;
+    holdout_share: number;
+    published_default_tier: number;
+    min_train_tickets: number;
+  };
+  scope?: {
+    settled_fixtures: number;
+    matchdays: number;
+    holdout_matchdays?: number;
+    skipped: Record<string, number>;
+  };
+  rows?: Array<{
+    tier: number;
+    combos?: Record<string, Record<string, SweepMetric>>;
+  }>;
+  recommendation?: {
+    tier: number | null;
+    basis?: string;
+    action?: string;
+    matches_published_default?: boolean;
+    holdout_confirmed?: boolean;
+    train?: SweepMetric;
+    holdout?: SweepMetric;
+    note?: string;
+    guidance?: string;
+  } | null;
+  notes?: string[];
+};

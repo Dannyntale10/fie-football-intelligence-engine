@@ -24,6 +24,15 @@ def test_market_analysis_requires_fixture():
     assert client.get("/markets/fixtures/999999/analysis").status_code == 404
 
 
+def test_qualifying_gate_never_lowers_the_threshold():
+    payload = client.get("/markets/qualifying", params={"max_fixtures": 5}).json()
+    assert payload["threshold"] == 0.85
+    assert "fixtures_scanned" in payload
+    assert all(row["probability"] >= 0.85 for row in payload["qualifying"])
+    if not payload["qualifying"]:
+        assert payload["message"] == "NO QUALIFIED SELECTIONS FOUND."
+
+
 def test_prediction_history_is_recorded():
     created = client.post(
         "/predictions/record",
@@ -98,3 +107,31 @@ def test_notifications_queue():
 
     sent = client.post(f"/notifications/{notification_id}/sent")
     assert sent.json()["status"] == "sent"
+
+
+def test_tier_sweep_endpoint_validates_and_saves(monkeypatch):
+    from app.api import combos as combos_api
+
+    saved = []
+    monkeypatch.setattr(combos_api, "save_sweep", lambda report: saved.append(report))
+
+    payload = client.post("/combos/backtest/sweep", params={"tiers": "0.70,0.75"}).json()
+    assert payload["status"] in {"ok", "no_history"}
+    assert payload["params"]["tiers"] == [0.7, 0.75]
+    if payload["status"] == "ok":
+        assert saved and saved[-1]["status"] == "ok"
+
+    bad = client.post("/combos/backtest/sweep", params={"tiers": "0.40,0.75"})
+    assert bad.status_code == 400
+
+
+def test_saved_tier_sweep_endpoint(monkeypatch):
+    from app.api import combos as combos_api
+
+    monkeypatch.setattr(
+        combos_api, "load_sweep", lambda: {"version": "combo-sweep-1", "status": "ok"}
+    )
+    assert client.get("/combos/backtest/sweep").json()["version"] == "combo-sweep-1"
+
+    monkeypatch.setattr(combos_api, "load_sweep", lambda: None)
+    assert client.get("/combos/backtest/sweep").status_code == 404

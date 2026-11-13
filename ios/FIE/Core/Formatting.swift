@@ -43,18 +43,46 @@ enum Fmt {
         key.replacingOccurrences(of: "_", with: " ").capitalizedFirst
     }
 
-    static func timestamp(_ iso: String?) -> String {
-        guard let iso, !iso.isEmpty else { return "—" }
+    static func date(_ iso: String?) -> Date? {
+        guard let iso, !iso.isEmpty else { return nil }
         let parser = ISO8601DateFormatter()
         parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var date = parser.date(from: iso)
-        if date == nil {
-            parser.formatOptions = [.withInternetDateTime]
-            date = parser.date(from: iso)
+        if let parsed = parser.date(from: iso) { return parsed }
+        parser.formatOptions = [.withInternetDateTime]
+        if let parsed = parser.date(from: iso) { return parsed }
+        // The engine emits naive UTC timestamps (no trailing Z) for kickoff times.
+        for pattern in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss"] {
+            let fallback = DateFormatter()
+            fallback.locale = Locale(identifier: "en_US_POSIX")
+            fallback.timeZone = TimeZone(identifier: "UTC")
+            fallback.dateFormat = pattern
+            if let parsed = fallback.date(from: iso) { return parsed }
         }
-        guard let date else { return iso }
+        return nil
+    }
+
+    static func timestamp(_ iso: String?) -> String {
+        guard let date = date(iso) else { return iso ?? "—" }
         let display = DateFormatter()
         display.dateFormat = "d MMM · HH:mm"
+        return display.string(from: date)
+    }
+
+    static func clock(_ date: Date) -> String {
+        let display = DateFormatter()
+        display.dateFormat = "HH:mm"
+        return display.string(from: date)
+    }
+
+    static func clock(iso: String?) -> String {
+        guard let date = date(iso) else { return "—" }
+        return clock(date)
+    }
+
+    static func eatDay(_ date: Date = Date()) -> String {
+        let display = DateFormatter()
+        display.dateFormat = "yyyy-MM-dd"
+        display.timeZone = TimeZone(identifier: "Africa/Nairobi")
         return display.string(from: date)
     }
 

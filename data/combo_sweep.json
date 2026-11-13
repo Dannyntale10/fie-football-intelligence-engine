@@ -1,0 +1,1328 @@
+{
+  "generated_at": "2026-11-13T08:39:00.481088+00:00",
+  "notes": [
+    "Every tier is scored with the live decision rule: one 1X2 selection per match, de-vigged market probability, one top-ranked ticket per size per matchday, flat stake.",
+    "The tier is chosen on training matchdays only; holdout metrics are confirmation evidence reported after the choice, never an input to it.",
+    "A tier is only eligible to be recommended when it produced at least 20 training tickets; small samples are excluded.",
+    "Gaps smaller than about 5 percentage points of ROI sit inside replay noise: read the ranking as directional, not as a precise optimum.",
+    "The published 85% selection gate is unchanged. Tiers here are internal combo filters and never lower that gate.",
+    "Replay prices come from one stored bookmaker trio per fixture, so the comparison is conservative and does not assume access to every book.",
+    "Break-even hit rate is the average of 1 / total odds across the settled tickets, so it moves with the prices the replay actually took."
+  ],
+  "params": {
+    "combo_sizes": [
+      2,
+      3
+    ],
+    "combos_per_size": 1,
+    "competition": null,
+    "holdout_share": 0.3,
+    "min_train_tickets": 20,
+    "price_mode": "flat",
+    "published_default_tier": 0.75,
+    "stake": 10.0,
+    "tiers": [
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85
+    ]
+  },
+  "recommendation": {
+    "action": "keep_default",
+    "basis": "highest training ROI among tiers with at least 20 training tickets; the holdout is not used to choose",
+    "guidance": "The live engine keeps 75%: a tier that wins only on training is not enough to change it.",
+    "holdout": {
+      "average_predicted_probability": 0.69,
+      "brier": 0.18869,
+      "calibration_gap": 0.0747,
+      "count": 17,
+      "edge_over_break_even": -0.0157,
+      "hit_rate": 0.7647,
+      "log_loss": 0.56493,
+      "losses": 4,
+      "profit": -2.65,
+      "required_hit_rate": 0.7804,
+      "roi_percent": -1.56,
+      "total_returned": 167.35,
+      "total_staked": 170.0,
+      "wins": 13
+    },
+    "holdout_confirmed": false,
+    "matches_published_default": false,
+    "note": "The holdout does not confirm the tier: either it missed its break-even hit rate or the flat-stake ROI was not positive.",
+    "tier": 0.8,
+    "train": {
+      "average_predicted_probability": 0.684,
+      "brier": 0.1791,
+      "calibration_gap": 0.1224,
+      "count": 31,
+      "edge_over_break_even": 0.0403,
+      "hit_rate": 0.8065,
+      "log_loss": 0.54537,
+      "losses": 6,
+      "profit": 18.82,
+      "required_hit_rate": 0.7662,
+      "roi_percent": 6.07,
+      "total_returned": 328.82,
+      "total_staked": 310.0,
+      "wins": 25
+    }
+  },
+  "rows": [
+    {
+      "combos": {
+        "all": {
+          "2_leg": {
+            "average_predicted_probability": 0.6194,
+            "brier": 0.20909,
+            "calibration_gap": 0.0735,
+            "count": 127,
+            "edge_over_break_even": 0.0016,
+            "hit_rate": 0.6929,
+            "log_loss": 0.60802,
+            "losses": 39,
+            "profit": 1.53,
+            "required_hit_rate": 0.6913,
+            "roi_percent": 0.12,
+            "total_returned": 1271.53,
+            "total_staked": 1270.0,
+            "wins": 88
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.4763,
+            "brier": 0.23962,
+            "calibration_gap": 0.0881,
+            "count": 101,
+            "edge_over_break_even": 0.0038,
+            "hit_rate": 0.5644,
+            "log_loss": 0.6723,
+            "losses": 44,
+            "profit": -4.15,
+            "required_hit_rate": 0.5606,
+            "roi_percent": -0.41,
+            "total_returned": 1005.85,
+            "total_staked": 1010.0,
+            "wins": 57
+          },
+          "total": {
+            "average_predicted_probability": 0.556,
+            "brier": 0.22261,
+            "calibration_gap": 0.0799,
+            "count": 228,
+            "edge_over_break_even": 0.0026,
+            "hit_rate": 0.636,
+            "log_loss": 0.6365,
+            "losses": 83,
+            "profit": -2.62,
+            "required_hit_rate": 0.6334,
+            "roi_percent": -0.11,
+            "total_returned": 2277.38,
+            "total_staked": 2280.0,
+            "wins": 145
+          }
+        },
+        "holdout": {
+          "2_leg": {
+            "average_predicted_probability": 0.6209,
+            "brier": 0.20783,
+            "calibration_gap": 0.0864,
+            "count": 41,
+            "edge_over_break_even": 0.0176,
+            "hit_rate": 0.7073,
+            "log_loss": 0.60521,
+            "losses": 12,
+            "profit": 12.54,
+            "required_hit_rate": 0.6897,
+            "roi_percent": 3.06,
+            "total_returned": 422.54,
+            "total_staked": 410.0,
+            "wins": 29
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.4777,
+            "brier": 0.22418,
+            "calibration_gap": 0.1029,
+            "count": 31,
+            "edge_over_break_even": 0.0215,
+            "hit_rate": 0.5806,
+            "log_loss": 0.641,
+            "losses": 13,
+            "profit": 2.38,
+            "required_hit_rate": 0.5591,
+            "roi_percent": 0.77,
+            "total_returned": 312.38,
+            "total_staked": 310.0,
+            "wins": 18
+          },
+          "total": {
+            "average_predicted_probability": 0.5592,
+            "brier": 0.21487,
+            "calibration_gap": 0.0935,
+            "count": 72,
+            "edge_over_break_even": 0.0193,
+            "hit_rate": 0.6528,
+            "log_loss": 0.62062,
+            "losses": 25,
+            "profit": 14.92,
+            "required_hit_rate": 0.6335,
+            "roi_percent": 2.07,
+            "total_returned": 734.92,
+            "total_staked": 720.0,
+            "wins": 47
+          }
+        },
+        "train": {
+          "2_leg": {
+            "average_predicted_probability": 0.6187,
+            "brier": 0.20969,
+            "calibration_gap": 0.0673,
+            "count": 86,
+            "edge_over_break_even": -0.0061,
+            "hit_rate": 0.686,
+            "log_loss": 0.60936,
+            "losses": 27,
+            "profit": -11.01,
+            "required_hit_rate": 0.6921,
+            "roi_percent": -1.28,
+            "total_returned": 848.99,
+            "total_staked": 860.0,
+            "wins": 59
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.4757,
+            "brier": 0.24646,
+            "calibration_gap": 0.0815,
+            "count": 70,
+            "edge_over_break_even": -0.0042,
+            "hit_rate": 0.5571,
+            "log_loss": 0.68617,
+            "losses": 31,
+            "profit": -6.53,
+            "required_hit_rate": 0.5613,
+            "roi_percent": -0.93,
+            "total_returned": 693.47,
+            "total_staked": 700.0,
+            "wins": 39
+          },
+          "total": {
+            "average_predicted_probability": 0.5545,
+            "brier": 0.22619,
+            "calibration_gap": 0.0737,
+            "count": 156,
+            "edge_over_break_even": -0.0052,
+            "hit_rate": 0.6282,
+            "log_loss": 0.64382,
+            "losses": 58,
+            "profit": -17.54,
+            "required_hit_rate": 0.6334,
+            "roi_percent": -1.12,
+            "total_returned": 1542.46,
+            "total_staked": 1560.0,
+            "wins": 98
+          }
+        }
+      },
+      "legs": {
+        "all": {
+          "average_odds": 1.297,
+          "average_predicted_probability": 0.7345,
+          "brier": 0.16625,
+          "buckets": [
+            {
+              "average_predicted": 0.6756,
+              "count": 304,
+              "gap": 0.0514,
+              "observed_win_rate": 0.727,
+              "range": "0.60\u20130.70"
+            },
+            {
+              "average_predicted": 0.7466,
+              "count": 376,
+              "gap": 0.0592,
+              "observed_win_rate": 0.8059,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8362,
+              "count": 128,
+              "gap": 0.0388,
+              "observed_win_rate": 0.875,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9036,
+              "count": 2,
+              "gap": -0.4036,
+              "observed_win_rate": 0.5,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0519,
+          "count": 810,
+          "ece": 0.0539,
+          "hit_rate": 0.7864,
+          "log_loss": 0.51291,
+          "wins": 637
+        },
+        "holdout": {
+          "average_odds": 1.304,
+          "average_predicted_probability": 0.7325,
+          "brier": 0.17676,
+          "buckets": [
+            {
+              "average_predicted": 0.6755,
+              "count": 107,
+              "gap": -0.0026,
+              "observed_win_rate": 0.6729,
+              "range": "0.60\u20130.70"
+            },
+            {
+              "average_predicted": 0.7458,
+              "count": 110,
+              "gap": 0.0542,
+              "observed_win_rate": 0.8,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8414,
+              "count": 41,
+              "gap": 0.0123,
+              "observed_win_rate": 0.8537,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9032,
+              "count": 1,
+              "gap": 0.0968,
+              "observed_win_rate": 1.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0243,
+          "count": 259,
+          "ece": 0.0264,
+          "hit_rate": 0.7568,
+          "log_loss": 0.53449,
+          "wins": 196
+        },
+        "train": {
+          "average_odds": 1.294,
+          "average_predicted_probability": 0.7354,
+          "brier": 0.16132,
+          "buckets": [
+            {
+              "average_predicted": 0.6756,
+              "count": 197,
+              "gap": 0.0808,
+              "observed_win_rate": 0.7563,
+              "range": "0.60\u20130.70"
+            },
+            {
+              "average_predicted": 0.747,
+              "count": 266,
+              "gap": 0.0613,
+              "observed_win_rate": 0.8083,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8338,
+              "count": 87,
+              "gap": 0.0513,
+              "observed_win_rate": 0.8851,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.904,
+              "count": 1,
+              "gap": -0.904,
+              "observed_win_rate": 0.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0649,
+          "count": 551,
+          "ece": 0.0682,
+          "hit_rate": 0.8004,
+          "log_loss": 0.50277,
+          "wins": 441
+        }
+      },
+      "tier": 0.65
+    },
+    {
+      "combos": {
+        "all": {
+          "2_leg": {
+            "average_predicted_probability": 0.6432,
+            "brier": 0.2002,
+            "calibration_gap": 0.0737,
+            "count": 106,
+            "edge_over_break_even": -0.0005,
+            "hit_rate": 0.717,
+            "log_loss": 0.58955,
+            "losses": 30,
+            "profit": -4.85,
+            "required_hit_rate": 0.7175,
+            "roi_percent": -0.46,
+            "total_returned": 1055.15,
+            "total_staked": 1060.0,
+            "wins": 76
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5019,
+            "brier": 0.23786,
+            "calibration_gap": 0.1057,
+            "count": 79,
+            "edge_over_break_even": 0.0169,
+            "hit_rate": 0.6076,
+            "log_loss": 0.66857,
+            "losses": 31,
+            "profit": 13.25,
+            "required_hit_rate": 0.5907,
+            "roi_percent": 1.68,
+            "total_returned": 803.25,
+            "total_staked": 790.0,
+            "wins": 48
+          },
+          "total": {
+            "average_predicted_probability": 0.5829,
+            "brier": 0.21629,
+            "calibration_gap": 0.0874,
+            "count": 185,
+            "edge_over_break_even": 0.007,
+            "hit_rate": 0.6703,
+            "log_loss": 0.62329,
+            "losses": 61,
+            "profit": 8.4,
+            "required_hit_rate": 0.6633,
+            "roi_percent": 0.45,
+            "total_returned": 1858.4,
+            "total_staked": 1850.0,
+            "wins": 124
+          }
+        },
+        "holdout": {
+          "2_leg": {
+            "average_predicted_probability": 0.646,
+            "brier": 0.19371,
+            "calibration_gap": 0.1187,
+            "count": 34,
+            "edge_over_break_even": 0.048,
+            "hit_rate": 0.7647,
+            "log_loss": 0.57608,
+            "losses": 8,
+            "profit": 25.66,
+            "required_hit_rate": 0.7167,
+            "roi_percent": 7.55,
+            "total_returned": 365.66,
+            "total_staked": 340.0,
+            "wins": 26
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5135,
+            "brier": 0.2145,
+            "calibration_gap": 0.1228,
+            "count": 22,
+            "edge_over_break_even": 0.0363,
+            "hit_rate": 0.6364,
+            "log_loss": 0.62131,
+            "losses": 8,
+            "profit": 4.83,
+            "required_hit_rate": 0.6001,
+            "roi_percent": 2.2,
+            "total_returned": 224.83,
+            "total_staked": 220.0,
+            "wins": 14
+          },
+          "total": {
+            "average_predicted_probability": 0.5939,
+            "brier": 0.20188,
+            "calibration_gap": 0.1203,
+            "count": 56,
+            "edge_over_break_even": 0.0434,
+            "hit_rate": 0.7143,
+            "log_loss": 0.59384,
+            "losses": 16,
+            "profit": 30.49,
+            "required_hit_rate": 0.6709,
+            "roi_percent": 5.44,
+            "total_returned": 590.49,
+            "total_staked": 560.0,
+            "wins": 40
+          }
+        },
+        "train": {
+          "2_leg": {
+            "average_predicted_probability": 0.642,
+            "brier": 0.20327,
+            "calibration_gap": 0.0525,
+            "count": 72,
+            "edge_over_break_even": -0.0235,
+            "hit_rate": 0.6944,
+            "log_loss": 0.59592,
+            "losses": 22,
+            "profit": -30.51,
+            "required_hit_rate": 0.7179,
+            "roi_percent": -4.24,
+            "total_returned": 689.49,
+            "total_staked": 720.0,
+            "wins": 50
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.4974,
+            "brier": 0.24688,
+            "calibration_gap": 0.0991,
+            "count": 57,
+            "edge_over_break_even": 0.0095,
+            "hit_rate": 0.5965,
+            "log_loss": 0.68681,
+            "losses": 23,
+            "profit": 8.42,
+            "required_hit_rate": 0.587,
+            "roi_percent": 1.48,
+            "total_returned": 578.42,
+            "total_staked": 570.0,
+            "wins": 34
+          },
+          "total": {
+            "average_predicted_probability": 0.5781,
+            "brier": 0.22254,
+            "calibration_gap": 0.0731,
+            "count": 129,
+            "edge_over_break_even": -0.0089,
+            "hit_rate": 0.6512,
+            "log_loss": 0.63608,
+            "losses": 45,
+            "profit": -22.09,
+            "required_hit_rate": 0.6601,
+            "roi_percent": -1.71,
+            "total_returned": 1267.91,
+            "total_staked": 1290.0,
+            "wins": 84
+          }
+        }
+      },
+      "legs": {
+        "all": {
+          "average_odds": 1.234,
+          "average_predicted_probability": 0.7699,
+          "brier": 0.1461,
+          "buckets": [
+            {
+              "average_predicted": 0.7466,
+              "count": 376,
+              "gap": 0.0592,
+              "observed_win_rate": 0.8059,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8362,
+              "count": 128,
+              "gap": 0.0388,
+              "observed_win_rate": 0.875,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9036,
+              "count": 2,
+              "gap": -0.4036,
+              "observed_win_rate": 0.5,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0522,
+          "count": 506,
+          "ece": 0.0554,
+          "hit_rate": 0.8221,
+          "log_loss": 0.46697,
+          "wins": 416
+        },
+        "holdout": {
+          "average_odds": 1.234,
+          "average_predicted_probability": 0.7726,
+          "brier": 0.14798,
+          "buckets": [
+            {
+              "average_predicted": 0.7458,
+              "count": 110,
+              "gap": 0.0542,
+              "observed_win_rate": 0.8,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8414,
+              "count": 41,
+              "gap": 0.0123,
+              "observed_win_rate": 0.8537,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9032,
+              "count": 1,
+              "gap": 0.0968,
+              "observed_win_rate": 1.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0432,
+          "count": 152,
+          "ece": 0.0432,
+          "hit_rate": 0.8158,
+          "log_loss": 0.46976,
+          "wins": 124
+        },
+        "train": {
+          "average_odds": 1.235,
+          "average_predicted_probability": 0.7688,
+          "brier": 0.14529,
+          "buckets": [
+            {
+              "average_predicted": 0.747,
+              "count": 266,
+              "gap": 0.0613,
+              "observed_win_rate": 0.8083,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8338,
+              "count": 87,
+              "gap": 0.0513,
+              "observed_win_rate": 0.8851,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.904,
+              "count": 1,
+              "gap": -0.904,
+              "observed_win_rate": 0.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0561,
+          "count": 354,
+          "ece": 0.0612,
+          "hit_rate": 0.8249,
+          "log_loss": 0.46578,
+          "wins": 292
+        }
+      },
+      "tier": 0.7
+    },
+    {
+      "combos": {
+        "all": {
+          "2_leg": {
+            "average_predicted_probability": 0.668,
+            "brier": 0.18191,
+            "calibration_gap": 0.1169,
+            "count": 79,
+            "edge_over_break_even": 0.0408,
+            "hit_rate": 0.7848,
+            "log_loss": 0.55167,
+            "losses": 17,
+            "profit": 45.63,
+            "required_hit_rate": 0.744,
+            "roi_percent": 5.78,
+            "total_returned": 835.63,
+            "total_staked": 790.0,
+            "wins": 62
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5368,
+            "brier": 0.23354,
+            "calibration_gap": 0.1232,
+            "count": 50,
+            "edge_over_break_even": 0.0291,
+            "hit_rate": 0.66,
+            "log_loss": 0.65987,
+            "losses": 17,
+            "profit": 22.22,
+            "required_hit_rate": 0.6309,
+            "roi_percent": 4.44,
+            "total_returned": 522.22,
+            "total_staked": 500.0,
+            "wins": 33
+          },
+          "total": {
+            "average_predicted_probability": 0.6171,
+            "brier": 0.20192,
+            "calibration_gap": 0.1193,
+            "count": 129,
+            "edge_over_break_even": 0.0362,
+            "hit_rate": 0.7364,
+            "log_loss": 0.59361,
+            "losses": 34,
+            "profit": 67.85,
+            "required_hit_rate": 0.7002,
+            "roi_percent": 5.26,
+            "total_returned": 1357.85,
+            "total_staked": 1290.0,
+            "wins": 95
+          }
+        },
+        "holdout": {
+          "2_leg": {
+            "average_predicted_probability": 0.6865,
+            "brier": 0.16165,
+            "calibration_gap": 0.1771,
+            "count": 22,
+            "edge_over_break_even": 0.102,
+            "hit_rate": 0.8636,
+            "log_loss": 0.50958,
+            "losses": 3,
+            "profit": 33.58,
+            "required_hit_rate": 0.7616,
+            "roi_percent": 15.26,
+            "total_returned": 253.58,
+            "total_staked": 220.0,
+            "wins": 19
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5524,
+            "brier": 0.21149,
+            "calibration_gap": 0.2476,
+            "count": 15,
+            "edge_over_break_even": 0.1542,
+            "hit_rate": 0.8,
+            "log_loss": 0.61516,
+            "losses": 3,
+            "profit": 35.57,
+            "required_hit_rate": 0.6458,
+            "roi_percent": 23.71,
+            "total_returned": 185.57,
+            "total_staked": 150.0,
+            "wins": 12
+          },
+          "total": {
+            "average_predicted_probability": 0.6322,
+            "brier": 0.18185,
+            "calibration_gap": 0.2057,
+            "count": 37,
+            "edge_over_break_even": 0.1231,
+            "hit_rate": 0.8378,
+            "log_loss": 0.55238,
+            "losses": 6,
+            "profit": 69.15,
+            "required_hit_rate": 0.7147,
+            "roi_percent": 18.69,
+            "total_returned": 439.15,
+            "total_staked": 370.0,
+            "wins": 31
+          }
+        },
+        "train": {
+          "2_leg": {
+            "average_predicted_probability": 0.6608,
+            "brier": 0.18973,
+            "calibration_gap": 0.0936,
+            "count": 57,
+            "edge_over_break_even": 0.0172,
+            "hit_rate": 0.7544,
+            "log_loss": 0.56792,
+            "losses": 14,
+            "profit": 12.05,
+            "required_hit_rate": 0.7372,
+            "roi_percent": 2.11,
+            "total_returned": 582.05,
+            "total_staked": 570.0,
+            "wins": 43
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5302,
+            "brier": 0.24299,
+            "calibration_gap": 0.0698,
+            "count": 35,
+            "edge_over_break_even": -0.0245,
+            "hit_rate": 0.6,
+            "log_loss": 0.67903,
+            "losses": 14,
+            "profit": -13.35,
+            "required_hit_rate": 0.6245,
+            "roi_percent": -3.81,
+            "total_returned": 336.65,
+            "total_staked": 350.0,
+            "wins": 21
+          },
+          "total": {
+            "average_predicted_probability": 0.6111,
+            "brier": 0.21,
+            "calibration_gap": 0.0846,
+            "count": 92,
+            "edge_over_break_even": 0.0014,
+            "hit_rate": 0.6957,
+            "log_loss": 0.61019,
+            "losses": 28,
+            "profit": -1.3,
+            "required_hit_rate": 0.6943,
+            "roi_percent": -0.14,
+            "total_returned": 918.7,
+            "total_staked": 920.0,
+            "wins": 64
+          }
+        }
+      },
+      "legs": {
+        "all": {
+          "average_odds": 1.186,
+          "average_predicted_probability": 0.8005,
+          "brier": 0.12414,
+          "buckets": [
+            {
+              "average_predicted": 0.7729,
+              "count": 173,
+              "gap": 0.0768,
+              "observed_win_rate": 0.8497,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8362,
+              "count": 128,
+              "gap": 0.0388,
+              "observed_win_rate": 0.875,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9036,
+              "count": 2,
+              "gap": -0.4036,
+              "observed_win_rate": 0.5,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0576,
+          "count": 303,
+          "ece": 0.0629,
+          "hit_rate": 0.8581,
+          "log_loss": 0.4156,
+          "wins": 260
+        },
+        "holdout": {
+          "average_odds": 1.184,
+          "average_predicted_probability": 0.8044,
+          "brier": 0.1174,
+          "buckets": [
+            {
+              "average_predicted": 0.7721,
+              "count": 50,
+              "gap": 0.1079,
+              "observed_win_rate": 0.88,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8414,
+              "count": 41,
+              "gap": 0.0123,
+              "observed_win_rate": 0.8537,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9032,
+              "count": 1,
+              "gap": 0.0968,
+              "observed_win_rate": 1.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0652,
+          "count": 92,
+          "ece": 0.0652,
+          "hit_rate": 0.8696,
+          "log_loss": 0.399,
+          "wins": 80
+        },
+        "train": {
+          "average_odds": 1.187,
+          "average_predicted_probability": 0.7988,
+          "brier": 0.12707,
+          "buckets": [
+            {
+              "average_predicted": 0.7732,
+              "count": 123,
+              "gap": 0.0642,
+              "observed_win_rate": 0.8374,
+              "range": "0.70\u20130.80"
+            },
+            {
+              "average_predicted": 0.8338,
+              "count": 87,
+              "gap": 0.0513,
+              "observed_win_rate": 0.8851,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.904,
+              "count": 1,
+              "gap": -0.904,
+              "observed_win_rate": 0.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0543,
+          "count": 211,
+          "ece": 0.0628,
+          "hit_rate": 0.8531,
+          "log_loss": 0.42283,
+          "wins": 180
+        }
+      },
+      "tier": 0.75
+    },
+    {
+      "combos": {
+        "all": {
+          "2_leg": {
+            "average_predicted_probability": 0.7126,
+            "brier": 0.1806,
+            "calibration_gap": 0.0506,
+            "count": 38,
+            "edge_over_break_even": -0.0297,
+            "hit_rate": 0.7632,
+            "log_loss": 0.54734,
+            "losses": 9,
+            "profit": -15.06,
+            "required_hit_rate": 0.7929,
+            "roi_percent": -3.96,
+            "total_returned": 364.94,
+            "total_staked": 380.0,
+            "wins": 29
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5856,
+            "brier": 0.18972,
+            "calibration_gap": 0.3144,
+            "count": 10,
+            "edge_over_break_even": 0.2112,
+            "hit_rate": 0.9,
+            "log_loss": 0.57116,
+            "losses": 1,
+            "profit": 31.23,
+            "required_hit_rate": 0.6888,
+            "roi_percent": 31.23,
+            "total_returned": 131.23,
+            "total_staked": 100.0,
+            "wins": 9
+          },
+          "total": {
+            "average_predicted_probability": 0.6862,
+            "brier": 0.1825,
+            "calibration_gap": 0.1055,
+            "count": 48,
+            "edge_over_break_even": 0.0205,
+            "hit_rate": 0.7917,
+            "log_loss": 0.5523,
+            "losses": 10,
+            "profit": 16.17,
+            "required_hit_rate": 0.7712,
+            "roi_percent": 3.37,
+            "total_returned": 496.17,
+            "total_staked": 480.0,
+            "wins": 38
+          }
+        },
+        "holdout": {
+          "2_leg": {
+            "average_predicted_probability": 0.7301,
+            "brier": 0.18381,
+            "calibration_gap": 0.0199,
+            "count": 12,
+            "edge_over_break_even": -0.0635,
+            "hit_rate": 0.75,
+            "log_loss": 0.55347,
+            "losses": 3,
+            "profit": -9.79,
+            "required_hit_rate": 0.8135,
+            "roi_percent": -8.16,
+            "total_returned": 110.21,
+            "total_staked": 120.0,
+            "wins": 9
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5938,
+            "brier": 0.2004,
+            "calibration_gap": 0.2062,
+            "count": 5,
+            "edge_over_break_even": 0.0989,
+            "hit_rate": 0.8,
+            "log_loss": 0.59243,
+            "losses": 1,
+            "profit": 7.14,
+            "required_hit_rate": 0.7011,
+            "roi_percent": 14.28,
+            "total_returned": 57.14,
+            "total_staked": 50.0,
+            "wins": 4
+          },
+          "total": {
+            "average_predicted_probability": 0.69,
+            "brier": 0.18869,
+            "calibration_gap": 0.0747,
+            "count": 17,
+            "edge_over_break_even": -0.0157,
+            "hit_rate": 0.7647,
+            "log_loss": 0.56493,
+            "losses": 4,
+            "profit": -2.65,
+            "required_hit_rate": 0.7804,
+            "roi_percent": -1.56,
+            "total_returned": 167.35,
+            "total_staked": 170.0,
+            "wins": 13
+          }
+        },
+        "train": {
+          "2_leg": {
+            "average_predicted_probability": 0.7045,
+            "brier": 0.17911,
+            "calibration_gap": 0.0647,
+            "count": 26,
+            "edge_over_break_even": -0.0142,
+            "hit_rate": 0.7692,
+            "log_loss": 0.5445,
+            "losses": 6,
+            "profit": -5.27,
+            "required_hit_rate": 0.7834,
+            "roi_percent": -2.03,
+            "total_returned": 254.73,
+            "total_staked": 260.0,
+            "wins": 20
+          },
+          "3_leg": {
+            "average_predicted_probability": 0.5775,
+            "brier": 0.17905,
+            "calibration_gap": 0.4225,
+            "count": 5,
+            "edge_over_break_even": 0.3235,
+            "hit_rate": 1.0,
+            "log_loss": 0.54988,
+            "losses": 0,
+            "profit": 24.09,
+            "required_hit_rate": 0.6765,
+            "roi_percent": 48.18,
+            "total_returned": 74.09,
+            "total_staked": 50.0,
+            "wins": 5
+          },
+          "total": {
+            "average_predicted_probability": 0.684,
+            "brier": 0.1791,
+            "calibration_gap": 0.1224,
+            "count": 31,
+            "edge_over_break_even": 0.0403,
+            "hit_rate": 0.8065,
+            "log_loss": 0.54537,
+            "losses": 6,
+            "profit": 18.82,
+            "required_hit_rate": 0.7662,
+            "roi_percent": 6.07,
+            "total_returned": 328.82,
+            "total_staked": 310.0,
+            "wins": 25
+          }
+        }
+      },
+      "legs": {
+        "all": {
+          "average_odds": 1.133,
+          "average_predicted_probability": 0.8372,
+          "brier": 0.11257,
+          "buckets": [
+            {
+              "average_predicted": 0.8362,
+              "count": 128,
+              "gap": 0.0388,
+              "observed_win_rate": 0.875,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9036,
+              "count": 2,
+              "gap": -0.4036,
+              "observed_win_rate": 0.5,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.032,
+          "count": 130,
+          "ece": 0.0444,
+          "hit_rate": 0.8692,
+          "log_loss": 0.38404,
+          "wins": 113
+        },
+        "holdout": {
+          "average_odds": 1.127,
+          "average_predicted_probability": 0.8428,
+          "brier": 0.11812,
+          "buckets": [
+            {
+              "average_predicted": 0.8414,
+              "count": 41,
+              "gap": 0.0123,
+              "observed_win_rate": 0.8537,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9032,
+              "count": 1,
+              "gap": 0.0968,
+              "observed_win_rate": 1.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0143,
+          "count": 42,
+          "ece": 0.0143,
+          "hit_rate": 0.8571,
+          "log_loss": 0.39352,
+          "wins": 36
+        },
+        "train": {
+          "average_odds": 1.137,
+          "average_predicted_probability": 0.8346,
+          "brier": 0.10991,
+          "buckets": [
+            {
+              "average_predicted": 0.8338,
+              "count": 87,
+              "gap": 0.0513,
+              "observed_win_rate": 0.8851,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.904,
+              "count": 1,
+              "gap": -0.904,
+              "observed_win_rate": 0.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0404,
+          "count": 88,
+          "ece": 0.061,
+          "hit_rate": 0.875,
+          "log_loss": 0.37952,
+          "wins": 77
+        }
+      },
+      "tier": 0.8
+    },
+    {
+      "combos": {
+        "all": {
+          "2_leg": {
+            "average_predicted_probability": 0.7663,
+            "brier": 0.15977,
+            "calibration_gap": 0.0337,
+            "count": 5,
+            "edge_over_break_even": -0.0493,
+            "hit_rate": 0.8,
+            "log_loss": 0.49954,
+            "losses": 1,
+            "profit": -3.13,
+            "required_hit_rate": 0.8493,
+            "roi_percent": -6.26,
+            "total_returned": 46.87,
+            "total_staked": 50.0,
+            "wins": 4
+          },
+          "3_leg": {
+            "count": 0
+          },
+          "total": {
+            "average_predicted_probability": 0.7663,
+            "brier": 0.15977,
+            "calibration_gap": 0.0337,
+            "count": 5,
+            "edge_over_break_even": -0.0493,
+            "hit_rate": 0.8,
+            "log_loss": 0.49954,
+            "losses": 1,
+            "profit": -3.13,
+            "required_hit_rate": 0.8493,
+            "roi_percent": -6.26,
+            "total_returned": 46.87,
+            "total_staked": 50.0,
+            "wins": 4
+          }
+        },
+        "holdout": {
+          "2_leg": {
+            "average_predicted_probability": 0.7724,
+            "brier": 0.18303,
+            "calibration_gap": -0.0224,
+            "count": 4,
+            "edge_over_break_even": -0.105,
+            "hit_rate": 0.75,
+            "log_loss": 0.54969,
+            "losses": 1,
+            "profit": -5.23,
+            "required_hit_rate": 0.855,
+            "roi_percent": -13.08,
+            "total_returned": 34.77,
+            "total_staked": 40.0,
+            "wins": 3
+          },
+          "3_leg": {
+            "count": 0
+          },
+          "total": {
+            "average_predicted_probability": 0.7724,
+            "brier": 0.18303,
+            "calibration_gap": -0.0224,
+            "count": 4,
+            "edge_over_break_even": -0.105,
+            "hit_rate": 0.75,
+            "log_loss": 0.54969,
+            "losses": 1,
+            "profit": -5.23,
+            "required_hit_rate": 0.855,
+            "roi_percent": -13.08,
+            "total_returned": 34.77,
+            "total_staked": 40.0,
+            "wins": 3
+          }
+        },
+        "train": {
+          "2_leg": {
+            "average_predicted_probability": 0.7416,
+            "brier": 0.06676,
+            "calibration_gap": 0.2584,
+            "count": 1,
+            "edge_over_break_even": 0.1736,
+            "hit_rate": 1.0,
+            "log_loss": 0.29891,
+            "losses": 0,
+            "profit": 2.1,
+            "required_hit_rate": 0.8264,
+            "roi_percent": 21.0,
+            "total_returned": 12.1,
+            "total_staked": 10.0,
+            "wins": 1
+          },
+          "3_leg": {
+            "count": 0
+          },
+          "total": {
+            "average_predicted_probability": 0.7416,
+            "brier": 0.06676,
+            "calibration_gap": 0.2584,
+            "count": 1,
+            "edge_over_break_even": 0.1736,
+            "hit_rate": 1.0,
+            "log_loss": 0.29891,
+            "losses": 0,
+            "profit": 2.1,
+            "required_hit_rate": 0.8264,
+            "roi_percent": 21.0,
+            "total_returned": 12.1,
+            "total_staked": 10.0,
+            "wins": 1
+          }
+        }
+      },
+      "legs": {
+        "all": {
+          "average_odds": 1.085,
+          "average_predicted_probability": 0.8733,
+          "brier": 0.0707,
+          "buckets": [
+            {
+              "average_predicted": 0.8717,
+              "count": 40,
+              "gap": 0.0783,
+              "observed_win_rate": 0.95,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9036,
+              "count": 2,
+              "gap": -0.4036,
+              "observed_win_rate": 0.5,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0553,
+          "count": 42,
+          "ece": 0.0937,
+          "hit_rate": 0.9286,
+          "log_loss": 0.27954,
+          "wins": 39
+        },
+        "holdout": {
+          "average_odds": 1.087,
+          "average_predicted_probability": 0.8741,
+          "brier": 0.05722,
+          "buckets": [
+            {
+              "average_predicted": 0.8724,
+              "count": 17,
+              "gap": 0.0688,
+              "observed_win_rate": 0.9412,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.9032,
+              "count": 1,
+              "gap": 0.0968,
+              "observed_win_rate": 1.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0703,
+          "count": 18,
+          "ece": 0.0703,
+          "hit_rate": 0.9444,
+          "log_loss": 0.24081,
+          "wins": 17
+        },
+        "train": {
+          "average_odds": 1.084,
+          "average_predicted_probability": 0.8726,
+          "brier": 0.08082,
+          "buckets": [
+            {
+              "average_predicted": 0.8712,
+              "count": 23,
+              "gap": 0.0853,
+              "observed_win_rate": 0.9565,
+              "range": "0.80\u20130.90"
+            },
+            {
+              "average_predicted": 0.904,
+              "count": 1,
+              "gap": -0.904,
+              "observed_win_rate": 0.0,
+              "range": "0.90\u20131.00"
+            }
+          ],
+          "calibration_gap": 0.0441,
+          "count": 24,
+          "ece": 0.1194,
+          "hit_rate": 0.9167,
+          "log_loss": 0.30859,
+          "wins": 22
+        }
+      },
+      "tier": 0.85
+    }
+  ],
+  "scope": {
+    "holdout_matchdays": 68,
+    "matchdays": 226,
+    "settled_fixtures": 4117,
+    "skipped": {
+      "incomplete_1x2": 1,
+      "missing_kickoff": 0,
+      "placeholder": 0
+    }
+  },
+  "status": "ok",
+  "version": "combo-sweep-1",
+  "window": {
+    "first_matchday": "2023-07-28",
+    "last_matchday": "2026-11-12",
+    "matchdays": 226,
+    "settled_matches": 4117
+  }
+}

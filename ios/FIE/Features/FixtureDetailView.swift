@@ -1,10 +1,22 @@
 import SwiftUI
 
 struct FixtureDetailView: View {
-    let fixture: Fixture
+    private let fixture: Fixture?
+    private let fixtureId: Int
+
+    init(fixture: Fixture) {
+        self.fixture = fixture
+        self.fixtureId = fixture.id
+    }
+
+    init(fixtureId: Int) {
+        self.fixture = nil
+        self.fixtureId = fixtureId
+    }
 
     @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
     @State private var dossier: Dossier?
+    @State private var discovery: Discovery?
     @State private var loading = false
     @State private var errorMessage: String?
 
@@ -15,8 +27,12 @@ struct FixtureDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                header
-                prices
+                if let info = headerInfo {
+                    header(info)
+                }
+                if let fixture {
+                    prices(fixture)
+                }
                 if loading {
                     LoadingCard(label: "Building the match dossier…")
                 }
@@ -33,6 +49,9 @@ struct FixtureDetailView: View {
                     teamNewsCard(dossier)
                     learningCard(dossier)
                 }
+                if let discovery {
+                    discoveryCard(discovery)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -40,35 +59,78 @@ struct FixtureDetailView: View {
         .background(Palette.background.ignoresSafeArea())
         .navigationTitle("Match analysis")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadDossier() }
+        .task {
+            async let dossierLoad: Void = loadDossier()
+            async let discoveryLoad: Void = loadDiscovery()
+            _ = await (dossierLoad, discoveryLoad)
+        }
     }
 
-    private var header: some View {
+    private struct HeaderInfo {
+        let competition: String
+        let match: String
+        let kickoff: String
+        let country: String
+        let status: String
+        let source: String
+        let qualityGrade: String?
+    }
+
+    private var headerInfo: HeaderInfo? {
+        if let fixture {
+            return HeaderInfo(
+                competition: fixture.competition,
+                match: fixture.matchLabel,
+                kickoff: fixture.kickoffEat ?? "—",
+                country: fixture.country,
+                status: fixture.status?.uppercased() ?? "—",
+                source: fixture.source,
+                qualityGrade: fixture.dataQualityGrade
+            )
+        }
+        guard let info = dossier?.fixture else { return nil }
+        return HeaderInfo(
+            competition: info.competition,
+            match: info.match,
+            kickoff: info.kickoffEat,
+            country: info.country,
+            status: info.status.uppercased(),
+            source: info.source,
+            qualityGrade: nil
+        )
+    }
+
+    private func header(_ info: HeaderInfo) -> some View {
         Card {
-            Eyebrow(text: fixture.competition)
-            Text(fixture.matchLabel)
+            Eyebrow(text: info.competition)
+            Text(info.match)
                 .font(TypeScale.title)
                 .foregroundStyle(Palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
-                Text(fixture.kickoffEat ?? "—")
+                Text(info.kickoff)
                 Text("·")
-                Text(fixture.country)
+                Text(info.country)
                 Text("·")
-                Text(fixture.status?.uppercased() ?? "—")
+                Text(info.status)
             }
             .font(TypeScale.caption)
             .foregroundStyle(Palette.textSecondary)
+            if let iso = fixture?.kickoffUtc ?? dossier?.fixture.kickoffUtc {
+                KickoffCountdown(iso: iso)
+            }
             HStack(spacing: 6) {
-                Pill(text: fixture.source, tint: Palette.textSecondary)
-                if let grade = fixture.dataQualityGrade {
+                if !info.source.isEmpty {
+                    Pill(text: info.source, tint: Palette.textSecondary)
+                }
+                if let grade = info.qualityGrade {
                     Pill(text: "quality \(grade)", tint: Palette.accent)
                 }
             }
         }
     }
 
-    private var prices: some View {
+    private func prices(_ fixture: Fixture) -> some View {
         Card {
             Eyebrow(text: "Bookmaker prices")
             HStack(spacing: 10) {
@@ -277,6 +339,79 @@ struct FixtureDetailView: View {
         }
     }
 
+    private func discoveryCard(_ discovery: Discovery) -> some View {
+        let rows = discovery.markets.sorted { $0.price > $1.price }
+        return Card {
+            HStack {
+                Eyebrow(text: "Discovered markets")
+                Spacer()
+                Pill(
+                    text: discovery.dataStatus,
+                    tint: discovery.dataStatus.lowercased() == "priced" ? Palette.accent : Palette.textSecondary
+                )
+            }
+            HStack(spacing: 6) {
+                Pill(text: "\(discovery.discoveredCount) priced", tint: Palette.accent)
+                Pill(text: "\(discovery.familyCount) families", tint: Palette.textSecondary)
+                if discovery.unmodelledCount > 0 {
+                    Pill(text: "\(discovery.unmodelledCount) unmodelled", tint: Palette.warn)
+                }
+                Spacer(minLength: 0)
+            }
+            if rows.isEmpty {
+                Text("No priced market has been captured for this fixture. The engine reports that instead of inventing markets.")
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(rows.prefix(8)) { market in
+                    DividerLine()
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(market.title)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Palette.textPrimary)
+                            Spacer(minLength: 8)
+                            Text(Fmt.odds(market.price))
+                                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                                .foregroundStyle(Palette.accent)
+                        }
+                        Text(
+                            "\(market.family ?? market.category ?? "market") · "
+                            + "\(market.bookmaker ?? market.source)\(captureAge(market.capturedAt))"
+                        )
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.textTertiary)
+                    }
+                }
+                Text("Prices come from the feed that priced them, with their capture time. Unmodelled markets are reported, never analysed.")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func captureAge(_ iso: String?) -> String {
+        guard let date = Fmt.date(iso) else { return "" }
+        let hours = Date().timeIntervalSince(date) / 3600
+        return " · \(Fmt.age(hours: hours)) old"
+    }
+
+    @MainActor
+    private func loadDiscovery() async {
+        do {
+            discovery = try await client.get(
+                "/markets/fixtures/\(fixtureId)/discovery",
+                timeout: 30,
+                as: Discovery.self
+            )
+        } catch {
+            // The dossier error already explains an unreachable engine.
+            discovery = nil
+        }
+    }
+
     @MainActor
     private func loadDossier() async {
         guard !loading else { return }
@@ -285,11 +420,13 @@ struct FixtureDetailView: View {
         defer { loading = false }
         do {
             dossier = try await client.get(
-                "/fixtures/\(fixture.id)/deep-analysis",
+                "/fixtures/\(fixtureId)/deep-analysis",
                 as: Dossier.self
             )
         } catch {
-            errorMessage = "\(error.localizedDescription) The fixture details above still come from stored data."
+            errorMessage = fixture == nil
+                ? error.localizedDescription
+                : "\(error.localizedDescription) The fixture details above still come from stored data."
         }
     }
 }

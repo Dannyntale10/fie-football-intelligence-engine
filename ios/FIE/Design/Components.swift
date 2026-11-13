@@ -2,8 +2,10 @@ import SwiftUI
 
 struct Card<Content: View>: View {
     private let content: Content
+    private let glow: Bool
 
-    init(@ViewBuilder content: () -> Content) {
+    init(glow: Bool = false, @ViewBuilder content: () -> Content) {
+        self.glow = glow
         self.content = content()
     }
 
@@ -14,12 +16,23 @@ struct Card<Content: View>: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Palette.card)
+            ZStack {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Palette.card)
+                if glow {
+                    RadialGradient(
+                        colors: [Palette.accent.opacity(0.18), .clear],
+                        center: .topTrailing,
+                        startRadius: 4,
+                        endRadius: 260
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+            }
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Palette.cardStroke, lineWidth: 1)
+                .stroke(glow ? Palette.accent.opacity(0.28) : Palette.cardStroke, lineWidth: 1)
         )
     }
 }
@@ -215,6 +228,84 @@ struct SecondaryButtonStyle: ButtonStyle {
                     .stroke(Palette.accent.opacity(0.35), lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+struct KickoffCountdown: View {
+    let iso: String?
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            if let kickoff = Fmt.date(iso) {
+                let state = Self.state(minutes: Int(kickoff.timeIntervalSince(context.date) / 60))
+                Text(state.text)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(state.tint)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    static func state(minutes: Int) -> (text: String, tint: Color) {
+        if minutes < 0 { return ("Kickoff passed", Palette.danger) }
+        if minutes < 60 { return ("Kickoff in \(minutes)m", Palette.warn) }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if rest == 0 { return ("Kickoff in \(hours)h", Palette.textSecondary) }
+        return ("Kickoff in \(hours)h \(rest)m", Palette.textSecondary)
+    }
+}
+
+struct ProbabilityBar: View {
+    let model: Double
+    let market: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [Palette.accent.opacity(0.35), Palette.accent],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(2, geometry.size.width * clamped(model)))
+                    Capsule()
+                        .fill(Palette.textPrimary)
+                        .frame(width: 2, height: 12)
+                        .offset(x: min(geometry.size.width - 2, geometry.size.width * clamped(market)))
+                }
+            }
+            .frame(height: 6)
+            HStack(spacing: 10) {
+                Text("model \(Fmt.percent(model))")
+                    .foregroundStyle(Palette.accent)
+                Text("market \(Fmt.percent(market))")
+                    .foregroundStyle(Palette.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .monospacedDigit()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Model probability \(Fmt.percent(model)) against market probability \(Fmt.percent(market))")
+    }
+
+    private func clamped(_ value: Double) -> CGFloat {
+        CGFloat(min(max(value, 0), 1))
+    }
+}
+
+enum PriceFreshness {
+    static func tint(hours: Double) -> Color {
+        if hours >= 12 { return Palette.danger }
+        if hours >= 2 { return Palette.warn }
+        return Palette.textTertiary
     }
 }
 

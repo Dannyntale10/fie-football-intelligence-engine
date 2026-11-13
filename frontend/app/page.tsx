@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   Badge,
@@ -31,6 +31,7 @@ import {
 import type {
   ComboBacktestReport,
   ComboMetrics,
+  ComboTierSweep,
   DailyCombo,
   DailyComboReport,
   Fixture,
@@ -40,6 +41,7 @@ import type {
   QualifiedPolicy,
   SourcesRefreshResult,
   SourcesResponse,
+  SweepMetric,
 } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
@@ -77,6 +79,30 @@ function ComboMetricsTable({ data }: { data: Record<string, ComboMetrics> }) {
         })}
       </tbody>
     </table>
+  );
+}
+
+function fmtRoi(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function SweepCell({ metric }: { metric?: SweepMetric }) {
+  if (!metric || !metric.count) {
+    return <span className="text-mist/40">no tickets</span>;
+  }
+  const roi = metric.roi_percent;
+  return (
+    <>
+      {metric.count} tickets · hit {fmtPercent(metric.hit_rate ?? null)} ·{" "}
+      <span
+        className={`tabular-nums ${
+          roi !== undefined && roi !== null && roi < 0 ? "text-rose-300" : "text-lime"
+        }`}
+      >
+        ROI {fmtRoi(roi)}
+      </span>
+    </>
   );
 }
 
@@ -150,6 +176,22 @@ export default function OverviewPage() {
   const [backtest, setBacktest] = useState<ComboBacktestReport | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [sweep, setSweep] = useState<ComboTierSweep | null>(null);
+  const [sweepLoading, setSweepLoading] = useState(false);
+  const [sweepError, setSweepError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // A 404 only means no sweep has been run yet; it is not a page error.
+    apiGet<ComboTierSweep>("/combos/backtest/sweep")
+      .then((data) => {
+        if (!cancelled) setSweep(data);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const qualified = predictions.data?.predictions ?? [];
   const gate = policy.data?.minimum_probability ?? 0.85;
@@ -210,6 +252,18 @@ export default function OverviewPage() {
       setBacktestError(error instanceof Error ? error.message : String(error));
     } finally {
       setBacktestLoading(false);
+    }
+  }
+
+  async function runTierSweep() {
+    setSweepLoading(true);
+    setSweepError(null);
+    try {
+      setSweep(await apiPost<ComboTierSweep>("/combos/backtest/sweep"));
+    } catch (error) {
+      setSweepError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSweepLoading(false);
     }
   }
 
@@ -313,6 +367,14 @@ export default function OverviewPage() {
               className="border border-edge bg-panel text-mist/80 hover:border-lime/40 hover:text-lime disabled:cursor-not-allowed disabled:opacity-60"
             >
               {backtestLoading ? "Replaying history…" : "Test on history"}
+            </button>
+            <button
+              type="button"
+              onClick={runTierSweep}
+              disabled={sweepLoading}
+              className="border border-edge bg-panel text-mist/80 hover:border-lime/40 hover:text-lime disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {sweepLoading ? "Comparing tiers…" : "Compare tiers"}
             </button>
           </div>
         }
@@ -507,6 +569,119 @@ export default function OverviewPage() {
                     </Note>
                   </div>
                 )}
+              </>
+            )}
+          </div>
+        )}
+
+        {(sweepLoading || sweepError || sweep) && (
+          <div className="mt-5 border-t border-edge/60 pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-mist">Tier comparison</p>
+              {sweep?.recommendation?.tier != null && (
+                <Badge
+                  tone={sweep.recommendation.action === "consider_tier" ? "good" : "warn"}
+                >
+                  {sweep.recommendation.action === "consider_tier"
+                    ? `Consider ${fmtPercent(sweep.recommendation.tier, 0)}`
+                    : `Keep ${fmtPercent(sweep.params?.published_default_tier ?? 0.75, 0)}`}
+                </Badge>
+              )}
+            </div>
+            {sweepLoading && <Loading label="Comparing tiers on settled matchdays" />}
+            {sweepError && <ErrorNote message={sweepError} />}
+            {sweep && sweep.status !== "ok" && (
+              <ErrorNote message="No settled history is available for a tier sweep yet." />
+            )}
+            {sweep?.status === "ok" && (
+              <>
+                {sweep.window && (
+                  <p className="mb-3 text-xs text-mist/55">
+                    {sweep.window.matchdays} matchdays · {sweep.window.settled_matches} settled
+                    matches · {sweep.window.first_matchday} → {sweep.window.last_matchday}
+                  </p>
+                )}
+                <div className="overflow-x-auto">
+                  <table className={tableClass}>
+                    <thead className={theadClass}>
+                      <tr>
+                        <th className={thClass}>Tier</th>
+                        <th className={thClass}>Training</th>
+                        <th className={thClass}>Holdout</th>
+                        <th className={thClass}>Break-even hit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(sweep.rows ?? []).map((row) => {
+                        const train = row.combos?.train?.total;
+                        const holdout = row.combos?.holdout?.total;
+                        const isPick = sweep.recommendation?.tier === row.tier;
+                        const isDefault =
+                          Math.abs(row.tier - (sweep.params?.published_default_tier ?? 0.75)) <
+                          1e-9;
+                        return (
+                          <tr key={row.tier} className={rowClass}>
+                            <td className={`${tdClass} tabular-nums`}>
+                              <span className={isPick ? "font-semibold text-lime" : ""}>
+                                {fmtPercent(row.tier, 0)}
+                              </span>
+                              {isDefault && (
+                                <span className="ml-1 text-[10px] uppercase tracking-wide text-mist/40">
+                                  live
+                                </span>
+                              )}
+                            </td>
+                            <td className={tdClass}>
+                              <SweepCell metric={train} />
+                            </td>
+                            <td className={tdClass}>
+                              <SweepCell metric={holdout} />
+                            </td>
+                            <td className={`${tdClass} tabular-nums`}>
+                              {fmtPercent(holdout?.required_hit_rate ?? null)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {sweep.recommendation && (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <Stat
+                      label="Leads on training"
+                      value={fmtPercent(sweep.recommendation.tier, 0)}
+                      hint={`${sweep.recommendation.train?.count ?? 0} tickets · ROI ${fmtRoi(
+                        sweep.recommendation.train?.roi_percent,
+                      )}`}
+                    />
+                    <Stat
+                      label="Holdout confirmation"
+                      value={sweep.recommendation.holdout_confirmed ? "Confirmed" : "Not confirmed"}
+                      hint={`${sweep.recommendation.holdout?.count ?? 0} tickets · hit ${fmtPercent(
+                        sweep.recommendation.holdout?.hit_rate ?? null,
+                      )} · ROI ${fmtRoi(sweep.recommendation.holdout?.roi_percent)}`}
+                      tone={sweep.recommendation.holdout_confirmed ? "good" : "warn"}
+                    />
+                    <Stat
+                      label="Holdout break-even"
+                      value={fmtPercent(sweep.recommendation.holdout?.required_hit_rate ?? null)}
+                      hint="A tier above this covers the prices it took"
+                    />
+                  </div>
+                )}
+                {sweep.recommendation?.guidance && (
+                  <div className="mt-3">
+                    <Note tone={sweep.recommendation.holdout_confirmed ? "good" : "warn"}>
+                      {sweep.recommendation.guidance}
+                    </Note>
+                  </div>
+                )}
+                <p className="mt-3 text-[11px] text-mist/45">
+                  Tiers are compared on training matchdays only; the holdout is confirmation, not
+                  an input. The published 85% gate is unchanged, and the live engine keeps its
+                  75% tier unless a sweep clears out-of-sample.
+                </p>
               </>
             )}
           </div>

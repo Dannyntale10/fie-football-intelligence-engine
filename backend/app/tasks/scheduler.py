@@ -24,6 +24,7 @@ SCHEDULE = {
     "lineup_lead_minutes": "60-90",
     "results": "02:30",
     "analytics": "23:00",
+    "delivery_minutes": 2,
 }
 
 
@@ -116,29 +117,55 @@ def run_models() -> Dict[str, Any]:
         return {"status": "error", "error": str(error)}
 
 
-def build_shortlist() -> Dict[str, Any]:
+def deliver_notifications() -> Dict[str, Any]:
+    """Send queued Telegram rows to allowlisted chats and record each outcome."""
     try:
-        from app.betting.portfolio import build_daily_portfolio
+        from app.notifications.telegram import deliver_pending
 
         db = _session()
-        portfolio = build_daily_portfolio(db)
-        db.close()
+        try:
+            result = deliver_pending(db)
+        finally:
+            db.close()
+        if result.get("sent") or result.get("failed"):
+            logger.info(
+                "[Scheduler] notifications delivered: %s sent, %s failed",
+                result.get("sent"),
+                result.get("failed"),
+            )
+        return result
+    except Exception as error:
+        logger.error("[Scheduler] notification delivery failed: %s", error)
+        return {"status": "error", "error": str(error)}
+
+
+def build_shortlist() -> Dict[str, Any]:
+    from app.notifications.telegram import NO_QUALIFIED, format_daily_report
+
+    try:
+        from app.betting.daily_combos import build_daily_combos
+
+        db = _session()
+        try:
+            report = build_daily_combos(db)
+        finally:
+            db.close()
     except Exception as error:
         logger.error("[Scheduler] shortlist failed: %s", error)
         return {"status": "error", "error": str(error)}
 
-    combos = portfolio.get("combos") or []
-    qualified = [combo for combo in combos if combo.get("legs")]
-    if not qualified:
-        _notify("Daily shortlist", "NO QUALIFIED SELECTIONS FOUND.")
-        return {"status": "empty", "message": "NO QUALIFIED SELECTIONS FOUND."}
-    lines = [
-        f"{combo.get('name', 'Combo')}: {combo.get('total_odds')} odds, "
-        f"{round((combo.get('accum_probability') or 0) * 100, 1)}% probability"
-        for combo in qualified
-    ]
-    _notify("Daily shortlist", "\n".join(lines), related_type="portfolio")
-    return {"status": "ok", "combos": len(qualified)}
+    subject = f"Daily shortlist · {report.get('matchday_label') or ''}".strip()
+    text = format_daily_report(report)
+    if not report.get("best"):
+        _notify(subject, text)
+        return {"status": "empty", "message": NO_QUALIFIED, "delivery": deliver_notifications()}
+
+    _notify(subject, text, related_type="combos")
+    return {
+        "status": "ok",
+        "tickets": sum(len(rows) for rows in (report.get("combos") or {}).values()),
+        "delivery": deliver_notifications(),
+    }
 
 
 def monitor_lineups() -> Dict[str, Any]:
@@ -242,6 +269,11 @@ def start_scheduler() -> Optional[object]:
             id="odds_refresh",
         )
         scheduler.add_job(monitor_lineups, CronTrigger(minute="*/15", hour="5-23", timezone=EAT_TZ), id="lineups")
+        scheduler.add_job(
+            deliver_notifications,
+            CronTrigger(minute=f"*/{SCHEDULE['delivery_minutes']}", hour="6-23", timezone=EAT_TZ),
+            id="notify_delivery",
+        )
         scheduler.add_job(update_results, CronTrigger(hour=2, minute=30, timezone=EAT_TZ), id="results")
         scheduler.add_job(daily_analytics, CronTrigger(hour=23, minute=0, timezone=EAT_TZ), id="analytics")
         scheduler.add_job(refit_blend, CronTrigger(day_of_week="sun", hour=23, minute=30, timezone=EAT_TZ), id="blend_refit")

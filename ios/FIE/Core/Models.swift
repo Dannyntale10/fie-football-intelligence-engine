@@ -151,7 +151,7 @@ struct SyncLog: Decodable, Identifiable {
 
 // MARK: - Daily combos
 
-struct DailyComboLeg: Decodable, Identifiable {
+struct DailyComboLeg: Codable, Identifiable {
     let fixtureId: Int
     let match: String
     let competition: String
@@ -173,7 +173,7 @@ struct DailyComboLeg: Decodable, Identifiable {
     var id: Int { fixtureId }
 }
 
-struct DailyCombo: Decodable {
+struct DailyCombo: Codable {
     let size: Int
     let legs: [DailyComboLeg]
     let combinedProbability: Double
@@ -183,7 +183,7 @@ struct DailyCombo: Decodable {
     let minLegProbability: Double
 }
 
-struct DailyComboReport: Decodable {
+struct DailyComboReport: Codable {
     let targetDate: String
     let matchdayLabel: String
     let generatedAt: String
@@ -198,14 +198,14 @@ struct DailyComboReport: Decodable {
     let message: String
     let note: String
 
-    struct Params: Decodable {
+    struct Params: Codable {
         let minLegProbability: Double
         let comboSizes: [Int]
         let maxPriceAgeHours: Double?
         let competition: String?
     }
 
-    struct Tier: Decodable {
+    struct Tier: Codable {
         let label: String
         let probabilitySource: String
         let publishedGate: Double
@@ -213,7 +213,7 @@ struct DailyComboReport: Decodable {
         let note: String
     }
 
-    struct Scope: Decodable {
+    struct Scope: Codable {
         let fixturesOnSlate: Int
         let fixturesPriced: Int
         let qualifiedLegs: Int
@@ -222,7 +222,7 @@ struct DailyComboReport: Decodable {
         let rejected: [String: Int]
     }
 
-    struct Learning: Decodable {
+    struct Learning: Codable {
         let applied: Bool
         let a: Double?
         let b: Double?
@@ -231,7 +231,7 @@ struct DailyComboReport: Decodable {
     }
 }
 
-struct StaleLeg: Decodable {
+struct StaleLeg: Codable {
     let match: String
     let priceAgeHours: Double
 }
@@ -408,4 +408,169 @@ struct Dossier: Decodable {
         let appliedMarkets: [String]
         let calibratedMarketsHere: [String]
     }
+}
+
+// MARK: - Market discovery
+
+struct Discovery: Decodable {
+    let fixtureId: Int?
+    let source: String
+    let capturedAt: String?
+    let dataStatus: String
+    let discoveredCount: Int
+    let familyCount: Int
+    let unmodelledCount: Int
+    let markets: [DiscoveredMarket]
+}
+
+struct DiscoveredMarket: Decodable, Identifiable {
+    let family: String?
+    let category: String?
+    let label: String?
+    let selection: String?
+    let line: Double?
+    let price: Double
+    let bookmaker: String?
+    let source: String
+    let capturedAt: String?
+
+    var id: String { "\(label ?? "")-\(selection ?? "")-\(bookmaker ?? "")-\(price)" }
+    var title: String { label ?? selection ?? "Market" }
+}
+
+// MARK: - Gate
+
+struct GateReport: Decodable {
+    let targetDate: String
+    let threshold: Double
+    let fixturesScanned: Int
+    let count: Int
+    let qualifying: [GateSelection]
+    let message: String
+}
+
+struct GateSelection: Decodable, Identifiable {
+    let fixtureId: Int
+    let match: String
+    let competition: String
+    let kickoffUtc: String?
+    let kickoffEat: String
+    let market: String
+    let probability: Double
+
+    var id: String { "\(fixtureId)-\(market)" }
+}
+
+// MARK: - Closing-line value and learning
+
+struct ClvSummary: Decodable {
+    let nSelections: Int
+    let meanClvPercent: Double?
+    let beatClosePercent: Double?
+    let byMarket: [String: ClvMarket]?
+    let recent: [ClvRow]?
+    let note: String?
+
+    struct ClvMarket: Decodable {
+        let n: Int
+        let meanClvPercent: Double?
+    }
+
+    struct ClvRow: Decodable, Identifiable {
+        let fixtureId: Int
+        let marketKey: String
+        let selectionPrice: Double
+        let closingPrice: Double
+        let clvPercent: Double
+        let beatClose: Bool
+
+        var id: String { "\(fixtureId)-\(marketKey)-\(selectionPrice)" }
+    }
+}
+
+struct LearningSummary: Decodable {
+    let trained: Bool
+    let version: String?
+    let trainedAt: String?
+    let sources: Evidence?
+    let appliedMarkets: [String]?
+    let edgePremiums: [String: EdgePremium]?
+    let notes: [String]?
+    let note: String?
+
+    struct Evidence: Decodable {
+        let settledLegs: Int?
+        let walkforwardMatches: Int?
+    }
+
+    struct EdgePremium: Decodable {
+        let premium: Double
+        let n: Int?
+    }
+}
+
+// MARK: - Delivery
+
+struct DeliveryNotification: Decodable, Identifiable {
+    let id: Int
+    let channel: String
+    let recipient: String?
+    let subject: String?
+    let body: String
+    let status: String
+    let relatedType: String?
+    let relatedId: Int?
+    let sentAt: String?
+    let createdAt: String?
+}
+
+// MARK: - Tier sweep
+
+struct ComboSweep: Decodable {
+    let version: String?
+    let status: String?
+    let window: SweepWindow?
+    let params: SweepParams?
+    let rows: [SweepTier]?
+    let recommendation: SweepRecommendation?
+}
+
+struct SweepWindow: Decodable {
+    let matchdays: Int?
+    let settledMatches: Int?
+    let firstMatchday: String?
+    let lastMatchday: String?
+}
+
+struct SweepParams: Decodable {
+    let tiers: [Double]?
+    let publishedDefaultTier: Double?
+}
+
+struct SweepTier: Decodable, Identifiable {
+    let tier: Double
+    let combos: [String: [String: SweepMetric]]?
+
+    var id: Double { tier }
+    var train: SweepMetric? { combos?["train"]?["total"] }
+    var holdout: SweepMetric? { combos?["holdout"]?["total"] }
+}
+
+struct SweepMetric: Decodable {
+    let count: Int?
+    let hitRate: Double?
+    let averagePredictedProbability: Double?
+    let requiredHitRate: Double?
+    let roiPercent: Double?
+}
+
+struct SweepRecommendation: Decodable {
+    let tier: Double?
+    let action: String?
+    let matchesPublishedDefault: Bool?
+    let holdoutConfirmed: Bool?
+    let guidance: String?
+    let note: String?
+    let train: SweepMetric?
+    let holdout: SweepMetric?
 }

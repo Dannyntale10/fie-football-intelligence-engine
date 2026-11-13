@@ -1,9 +1,11 @@
 """Universal market catalogue, discovery and analysis endpoints."""
 from __future__ import annotations
 
-from typing import Any, Dict
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -14,6 +16,74 @@ from app.market_engine.qualification import QUALIFICATION_THRESHOLD, NO_QUALIFIE
 from app.models.fixture import Fixture
 
 router = APIRouter(prefix="/markets", tags=["markets"])
+
+
+@router.get("/qualifying")
+def qualifying_markets(
+    target_date: Optional[str] = Query(
+        None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Matchday in EAT, default today"
+    ),
+    max_fixtures: int = Query(40, ge=1, le=200, description="Fixtures scanned, kickoff order"),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Markets clearing the published 85% gate, scanned from scheduled fixtures."""
+    from app.analytics.probabilities import analyze_fixture
+    from app.betting.daily_combos import EAT_TZ, as_utc, is_placeholder_team
+
+    now = datetime.now(timezone.utc)
+    day = target_date or now.astimezone(EAT_TZ).strftime("%Y-%m-%d")
+    fixtures = [
+        fixture
+        for fixture in db.scalars(
+            select(Fixture)
+            .where(Fixture.status == "scheduled", Fixture.kickoff_utc > now)
+            .where(Fixture.home_odds.isnot(None))
+            .order_by(Fixture.kickoff_utc)
+        ).all()
+        if fixture.kickoff_utc
+        and as_utc(fixture.kickoff_utc).astimezone(EAT_TZ).strftime("%Y-%m-%d") == day
+        and not is_placeholder_team(fixture.home_team)
+        and not is_placeholder_team(fixture.away_team)
+    ][:max_fixtures]
+
+    rows: List[Dict[str, Any]] = []
+    for fixture in fixtures:
+        try:
+            analysis = analyze_fixture(fixture, db=db)
+        except Exception:
+            continue
+        for market in analysis.get("qualifying_markets", []):
+            rows.append(
+                {
+                    "fixture_id": fixture.id,
+                    "match": f"{fixture.home_team} vs {fixture.away_team}",
+                    "competition": fixture.competition,
+                    "kickoff_utc": fixture.kickoff_utc.isoformat() if fixture.kickoff_utc else None,
+                    "kickoff_eat": as_utc(fixture.kickoff_utc).astimezone(EAT_TZ).strftime(
+                        "%a %d %b, %H:%M EAT"
+                    ),
+                    "market": market["market"],
+                    "probability": market["probability"],
+                }
+            )
+        if len(rows) >= limit:
+            break
+
+    rows.sort(key=lambda row: row["probability"], reverse=True)
+    rows = rows[:limit]
+    return {
+        "target_date": day,
+        "threshold": QUALIFICATION_THRESHOLD,
+        "fixtures_scanned": len(fixtures),
+        "count": len(rows),
+        "qualifying": rows,
+        "message": (
+            NO_QUALIFIED_SELECTIONS
+            if not rows
+            else f"{len(rows)} markets clear the {QUALIFICATION_THRESHOLD:.0%} gate."
+        ),
+    }
 
 
 @router.get("/catalogue")

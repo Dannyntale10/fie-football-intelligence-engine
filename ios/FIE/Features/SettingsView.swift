@@ -6,6 +6,8 @@ struct SettingsView: View {
     @State private var testing = false
     @State private var testNote: String?
     @State private var testError: String?
+    @State private var notifications: [DeliveryNotification] = []
+    @State private var deliveryError: String?
 
     private var trimmedURL: String {
         serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -34,6 +36,7 @@ struct SettingsView: View {
                     if let testError {
                         NoteRow(text: testError, tone: .danger)
                     }
+                    delivery
                     policy
                     about
                 }
@@ -42,7 +45,80 @@ struct SettingsView: View {
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Settings")
+            .task { await loadDelivery() }
+            .refreshable { await loadDelivery() }
         }
+    }
+
+    private var delivery: some View {
+        Card {
+            HStack {
+                Eyebrow(text: "Telegram delivery")
+                Spacer()
+                if let latest = notifications.first {
+                    StatusPill(status: latest.status)
+                }
+            }
+            if let deliveryError {
+                Text(deliveryError)
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if notifications.isEmpty {
+                Text("No notification has been queued yet. The 07:30 EAT shortlist job queues one each morning.")
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let pending = notifications.filter { $0.status == "pending" }.count
+                let sent = notifications.filter { $0.status == "sent" }.count
+                let failed = notifications.filter { $0.status == "failed" }.count
+                HStack(spacing: 12) {
+                    StatTile(label: "Pending", value: "\(pending)")
+                    StatTile(label: "Sent", value: "\(sent)", caption: "most recent \(notifications.count)")
+                    StatTile(label: "Failed", value: "\(failed)")
+                }
+                ForEach(notifications.prefix(3)) { row in
+                    DividerLine()
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.subject ?? row.channel.capitalizedFirst)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Palette.textPrimary)
+                                .lineLimit(1)
+                            Text(Fmt.timestamp(row.sentAt ?? row.createdAt))
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.textTertiary)
+                        }
+                        Spacer(minLength: 8)
+                        StatusPill(status: row.status)
+                    }
+                }
+            }
+            Text("Queued notifications are delivered every 2 minutes between 06:00 and 23:00 EAT. Rows stay pending until TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS are set on the server, and the bot refuses every chat that is not allowlisted.")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @MainActor
+    private func loadDelivery() async {
+        do {
+            notifications = try await client.get(
+                "/notifications",
+                query: [URLQueryItem(name: "limit", value: "25")],
+                timeout: 20,
+                as: [DeliveryNotification].self
+            )
+            deliveryError = nil
+        } catch {
+            deliveryError = "Delivery status unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    private var client: APIClient {
+        APIClient(baseURL: URL(string: trimmedURL) ?? APIClient.fromStoredSettings().baseURL)
     }
 
     private var intro: some View {

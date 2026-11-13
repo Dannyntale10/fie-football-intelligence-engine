@@ -1,11 +1,21 @@
 import SwiftUI
 
 struct FixturesView: View {
-    @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    private enum Mode: String, CaseIterable {
+        case upcoming = "Upcoming"
+        case gate = "85% gate"
+    }
 
+    @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @AppStorage("fie.fixturesMode") private var storedMode = Mode.upcoming.rawValue
+
+    @State private var mode: Mode = .upcoming
     @State private var fixtures: [Fixture] = []
+    @State private var gate: GateReport?
     @State private var loading = false
+    @State private var loadingGate = false
     @State private var errorMessage: String?
+    @State private var gateError: String?
     @State private var searchText = ""
 
     private var client: APIClient {
@@ -25,40 +35,142 @@ struct FixturesView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    if let errorMessage {
-                        NoteRow(text: errorMessage, tone: .danger)
-                    }
-                    if loading && fixtures.isEmpty {
-                        LoadingCard(label: "Reading the upcoming slate…")
-                    }
-                    ForEach(filtered) { fixture in
-                        NavigationLink {
-                            FixtureDetailView(fixture: fixture)
-                        } label: {
-                            FixtureCard(fixture: fixture)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if !loading && filtered.isEmpty && errorMessage == nil {
-                        Card {
-                            Text("No fixtures on the slate.")
-                                .font(TypeScale.section)
-                            Text("Refresh the bookmaker feeds from the Sources tab, or clear the search filter.")
-                                .font(TypeScale.body)
-                                .foregroundStyle(Palette.textSecondary)
-                        }
+            VStack(spacing: 0) {
+                Picker("View", selection: $mode) {
+                    ForEach(Mode.allCases, id: \.self) { item in
+                        Text(item.rawValue).tag(item)
                     }
                 }
+                .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.vertical, 8)
+
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        switch mode {
+                        case .upcoming:
+                            upcomingContent
+                        case .gate:
+                            gateContent
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                }
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Fixtures")
             .searchable(text: $searchText, prompt: "Team or competition")
-            .task { await load() }
-            .refreshable { await load() }
+            .task(id: mode) {
+                await loadCurrent()
+                storedMode = mode.rawValue
+            }
+            .onAppear {
+                mode = Mode(rawValue: storedMode) ?? .upcoming
+            }
+            .refreshable { await loadCurrent() }
+        }
+    }
+
+    @ViewBuilder
+    private var upcomingContent: some View {
+        if let errorMessage {
+            NoteRow(text: errorMessage, tone: .danger)
+        }
+        if loading && fixtures.isEmpty {
+            LoadingCard(label: "Reading the upcoming slate…")
+        }
+        ForEach(filtered) { fixture in
+            NavigationLink {
+                FixtureDetailView(fixture: fixture)
+            } label: {
+                FixtureCard(fixture: fixture)
+            }
+            .buttonStyle(.plain)
+        }
+        if !loading && filtered.isEmpty && errorMessage == nil {
+            Card {
+                Text("No fixtures on the slate.")
+                    .font(TypeScale.section)
+                Text("Refresh the bookmaker feeds from the Sources tab, or clear the search filter.")
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.textSecondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var gateContent: some View {
+        if let gateError {
+            NoteRow(text: gateError, tone: .danger)
+        }
+        if loadingGate && gate == nil {
+            LoadingCard(label: "Scanning today's fixtures for the 85% gate…")
+        }
+        if let gate {
+            Card {
+                HStack {
+                    Eyebrow(text: "Published gate")
+                    Spacer()
+                    Pill(text: "\(Int((gate.threshold * 100).rounded()))%", tint: Palette.accent)
+                }
+                Text(gate.message)
+                    .font(TypeScale.section)
+                    .foregroundStyle(Palette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                LabeledRow(label: "Fixtures scanned", value: Fmt.count(gate.fixturesScanned))
+                LabeledRow(label: "Markets clearing the gate", value: Fmt.count(gate.count))
+                Text("Only markets at or above the published threshold are listed. The gate is never lowered to fill this screen; when nothing clears it, the screen says so.")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if gate.qualifying.isEmpty {
+                Card {
+                    Text("NO QUALIFIED SELECTIONS FOUND.")
+                        .font(.system(size: 15, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Palette.warn)
+                    Text("Scan more fixtures, or wait for fresher prices. Nothing below \(Fmt.percent(gate.threshold, digits: 0)) is shown.")
+                        .font(TypeScale.body)
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            ForEach(gate.qualifying) { row in
+                NavigationLink {
+                    FixtureDetailView(fixtureId: row.fixtureId)
+                } label: {
+                    GateRow(row: row)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @MainActor
+    private func loadCurrent() async {
+        switch mode {
+        case .upcoming:
+            await load()
+        case .gate:
+            await loadGate()
+        }
+    }
+
+    @MainActor
+    private func loadGate() async {
+        guard !loadingGate else { return }
+        loadingGate = true
+        gateError = nil
+        defer { loadingGate = false }
+        do {
+            gate = try await client.get(
+                "/markets/qualifying",
+                timeout: 120,
+                as: GateReport.self
+            )
+        } catch {
+            gateError = error.localizedDescription
         }
     }
 
@@ -115,6 +227,37 @@ struct FixtureCard: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Palette.textTertiary)
             }
+        }
+    }
+}
+
+private struct GateRow: View {
+    let row: GateSelection
+
+    var body: some View {
+        Card {
+            HStack {
+                Eyebrow(text: row.competition)
+                Spacer()
+                Pill(text: Fmt.percent(row.probability), tint: Palette.accent)
+            }
+            Text(row.match)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Palette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(row.market)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Palette.accent)
+            HStack(spacing: 6) {
+                Text(row.kickoffEat)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.textTertiary)
+            }
+            .font(TypeScale.caption)
+            .foregroundStyle(Palette.textSecondary)
+            KickoffCountdown(iso: row.kickoffUtc)
         }
     }
 }

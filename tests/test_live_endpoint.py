@@ -137,7 +137,93 @@ def test_fixture_live_history_is_404_for_unknown_fixture():
     assert client.get("/fixtures/999999/live").status_code == 404
 
 
-def test_fixture_live_history_is_empty_for_a_scheduled_match():
+def _insert_history_rows(fixture_id: int) -> None:
+    """Three buckets: one settled, one unsettled, one suppressed for no lambda."""
+    from app.models.live import LivePrediction
+
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add_all(
+            [
+                LivePrediction(
+                    fixture_id=fixture_id,
+                    minute=5,
+                    minute_bucket=5,
+                    observed_at=now - timedelta(minutes=40),
+                    home_score=0,
+                    away_score=0,
+                    lambda_home=1.5,
+                    lambda_away=1.1,
+                    prob_home=0.52,
+                    prob_draw=0.24,
+                    prob_away=0.24,
+                    status="ok",
+                    model_version="live-dc-1",
+                    result="home",
+                    extra_home_goals=2,
+                    extra_away_goals=1,
+                    brier=0.2,
+                    log_loss=0.6,
+                    top_pick_correct=True,
+                    settled_at=now,
+                ),
+                LivePrediction(
+                    fixture_id=fixture_id,
+                    minute=10,
+                    minute_bucket=10,
+                    observed_at=now - timedelta(minutes=35),
+                    home_score=1,
+                    away_score=0,
+                    lambda_home=1.4,
+                    lambda_away=1.2,
+                    prob_home=0.68,
+                    prob_draw=0.20,
+                    prob_away=0.12,
+                    status="ok",
+                    model_version="live-dc-1",
+                    result=None,
+                ),
+                LivePrediction(
+                    fixture_id=fixture_id,
+                    minute=15,
+                    minute_bucket=15,
+                    observed_at=now - timedelta(minutes=30),
+                    home_score=1,
+                    away_score=0,
+                    status="no_lambda",
+                    model_version="live-dc-1",
+                    result=None,
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_fixture_live_history_includes_every_snapshot_in_the_window():
+    fixture_id = _insert_live_fixture()
+    _insert_history_rows(fixture_id)
+
+    response = client.get(f"/fixtures/{fixture_id}/live")
+
+    assert response.status_code == 200
+    history = response.json()["history"]
+    assert [row["minute_bucket"] for row in history] == [5, 10, 15]
+    assert history[0]["status"] == "ok"
+    assert set(history[0]["probabilities"]) == {"home_win", "draw", "away_win"}
+    assert history[0]["result"] == "home"
+    # The unsettled row is part of the live history, not hidden until settlement.
+    assert history[1]["status"] == "ok"
+    assert history[1]["probabilities"] is not None
+    assert history[1]["result"] is None
+    # The suppressed row stays honest: no fabricated three-null probability dict.
+    assert history[2]["status"] == "no_lambda"
+    assert history[2]["probabilities"] is None
+
+
+def test_fixture_live_history_is_empty_without_snapshots():
     db = SessionLocal()
     try:
         fixture = Fixture(

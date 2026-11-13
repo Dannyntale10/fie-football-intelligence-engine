@@ -1,5 +1,6 @@
 from __future__ import annotations
 import io
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -49,6 +50,8 @@ from app.models.live import LivePrediction
 from app.analytics.backtest import run_backtest
 from app.betting.portfolio import build_daily_portfolio
 from app.betting.combo import generate_high_confidence_combos, top_picks_for_matchday
+
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -224,16 +227,25 @@ def _live_prediction_payload(
 
 
 def _live_history_row(row: LivePrediction) -> dict:
+    probabilities = None
+    if (
+        row.status == "ok"
+        and row.prob_home is not None
+        and row.prob_draw is not None
+        and row.prob_away is not None
+    ):
+        probabilities = {
+            "home_win": row.prob_home,
+            "draw": row.prob_draw,
+            "away_win": row.prob_away,
+        }
     return {
         "minute": row.minute,
         "minute_bucket": row.minute_bucket,
         "observed_at": row.observed_at,
         "score": {"home": row.home_score, "away": row.away_score},
-        "probabilities": {
-            "home_win": row.prob_home,
-            "draw": row.prob_draw,
-            "away_win": row.prob_away,
-        },
+        "status": row.status,
+        "probabilities": probabilities,
         "result": row.result,
         "extra_home_goals": row.extra_home_goals,
         "extra_away_goals": row.extra_away_goals,
@@ -359,8 +371,14 @@ def delete_past_fixtures(db: Session = Depends(get_db)):
 def live_fixtures(db: Session = Depends(get_db)):
     """Refresh, snapshot, settle, then serve the stored rows."""
     refresh = refresh_live_scores(db)
-    record_live_snapshots(db)
-    settle_live_predictions(db)
+    try:
+        record_live_snapshots(db)
+    except Exception as error:
+        logger.warning("Live snapshot write failed; serving stored rows: %s", error)
+    try:
+        settle_live_predictions(db)
+    except Exception as error:
+        logger.warning("Live settlement failed; serving stored rows: %s", error)
 
     now = datetime.now(timezone.utc)
     rows = db.scalars(
@@ -399,15 +417,14 @@ def fixture_live_history(fixture_id: int, db: Session = Depends(get_db)):
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=24)
-    history = db.scalars(
+    rows = db.scalars(
         select(LivePrediction)
-        .where(
-            LivePrediction.fixture_id == fixture_id,
-            LivePrediction.result.isnot(None),
-            LivePrediction.settled_at >= cutoff,
-        )
+        .where(LivePrediction.fixture_id == fixture_id)
         .order_by(LivePrediction.minute_bucket.asc())
     ).all()
+    # SQLite hands back naive datetimes, so compare them in Python against the
+    # aware cutoff instead of relying on SQL-side timezone handling.
+    history = [row for row in rows if _as_utc(row.observed_at) >= cutoff]
 
     return {
         "fixture_id": fixture_id,

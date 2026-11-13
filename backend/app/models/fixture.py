@@ -43,5 +43,8 @@ class Fixture(Base):
     market_odds_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     home_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     away_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Live state written by the ESPN score poller; never inferred from odds.
+    live_clock: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    espn_league_code: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="scheduled", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

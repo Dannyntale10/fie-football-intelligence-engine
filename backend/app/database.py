@@ -27,6 +27,8 @@ def ensure_schema_compatibility(eng):
                     ("opening_away_odds", "REAL"),
                     ("odds_updated_at", "TIMESTAMP"),
                     ("market_odds_json", "TEXT"),
+                    ("live_clock", "VARCHAR(20)"),
+                    ("espn_league_code", "VARCHAR(30)"),
                 ]
                 for col, col_type in new_cols:
                     if col not in col_names:

@@ -112,17 +112,17 @@ def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> D
         active_params = date_params[:3] if quick_sync else date_params
         for d_param in active_params:
             url = f"http://site.api.espn.com/apis/site/v2/sports/soccer/{comp_code}/scoreboard{d_param}"
-            tasks.append((url, comp_name, country))
+            tasks.append((url, comp_code, comp_name, country))
 
     def _fetch_url(item):
-        target_url, c_name, c_country = item
+        target_url, c_code, c_name, c_country = item
         try:
             r = requests.get(target_url, headers=headers, timeout=3.5)
             if r.status_code == 200:
-                return r.json(), c_name, c_country
+                return r.json(), c_code, c_name, c_country
         except Exception:
             pass
-        return None, c_name, c_country
+        return None, c_code, c_name, c_country
 
     seen_event_ids = set()
     raw_events = []
@@ -131,7 +131,7 @@ def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> D
     with ThreadPoolExecutor(max_workers=12) as executor:
         futures = [executor.submit(_fetch_url, t) for t in tasks]
         for fut in as_completed(futures):
-            data, c_name, c_country = fut.result()
+            data, c_code, c_name, c_country = fut.result()
             if not data:
                 continue
             for event in data.get("events", []):
@@ -140,9 +140,9 @@ def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> D
                     continue
                 if e_id:
                     seen_event_ids.add(e_id)
-                raw_events.append((event, c_name, c_country))
+                raw_events.append((event, c_code, c_name, c_country))
 
-    for event, comp_name, country in raw_events:
+    for event, comp_code, comp_name, country in raw_events:
         comp_data = event.get("competitions", [{}])[0]
         status_state = comp_data.get("status", {}).get("type", {}).get("state", "pre")
 
@@ -197,11 +197,17 @@ def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> D
 
         existing = db.scalar(select(Fixture).where(Fixture.dedupe_key == dedupe))
         if existing:
+            changed = False
+            if existing.espn_league_code != comp_code:
+                existing.espn_league_code = comp_code
+                changed = True
             if h_odds and existing.home_odds is None:
                 existing.home_odds = h_odds
                 existing.draw_odds = d_odds
                 existing.away_odds = a_odds
                 existing.source = "ESPN_DraftKings"
+                changed = True
+            if changed:
                 db.commit()
                 updated += 1
         else:
@@ -215,6 +221,7 @@ def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> D
                 country=country,
                 source="ESPN_DraftKings",
                 external_fixture_id=str(event_id) if event_id else None,
+                espn_league_code=comp_code,
                 home_odds=h_odds,
                 draw_odds=d_odds,
                 away_odds=a_odds,
@@ -228,5 +235,5 @@ def fetch_live_upcoming_fixtures_espn(db: Session, quick_sync: bool = True) -> D
         "inserted": inserted,
         "updated": updated,
         "total_found": total_found,
-        "message": f"Successfully ingested {inserted} genuine upcoming live matches ({updated} updated with DraftKings odds) across UEFA Nations League & top leagues."
+        "message": f"Successfully ingested {inserted} genuine upcoming live matches ({updated} refreshed with league code or DraftKings odds) across UEFA Nations League & top leagues."
     }

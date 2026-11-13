@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.betting.top_picks import TOP_PICKS, build_top_picks
 from app.market_engine import analyse_fixture
 from app.market_engine.catalogue import catalogue_payload, families_by_category
 from app.market_engine.discovery import discover_from_market_odds
@@ -16,6 +17,18 @@ from app.market_engine.qualification import QUALIFICATION_THRESHOLD, NO_QUALIFIE
 from app.models.fixture import Fixture
 
 router = APIRouter(prefix="/markets", tags=["markets"])
+
+
+@router.get("/top-picks")
+def top_picks(
+    target_date: Optional[str] = Query(
+        None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Matchday in EAT, default today"
+    ),
+    limit: int = Query(TOP_PICKS, ge=1, le=TOP_PICKS),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """The five best analysed matches whose outright result clears the 85% gate."""
+    return build_top_picks(db, limit=limit, target_date=target_date)
 
 
 @router.get("/qualifying")

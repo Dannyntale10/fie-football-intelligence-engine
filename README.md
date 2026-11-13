@@ -22,6 +22,7 @@ not evaluate, and when nothing clears the qualification gate the platform says
 | Universal market discovery | Working for markets present in `market_odds_json` |
 | Accumulators, ranking, CLV, calibration | Working; gated on real settled history |
 | Top structure selection (≥85%) | Working: one weighted pick per fixture from real prices |
+| Top 5 match picks page (≥85%) | Working: strongest outright result per match, attributed price, 0.60 confidence floor |
 | Model–market blend (1X2) | Fitted and applied; on current data the market carries the weight |
 | Bookmaker feeds (BetPawa, SportPesa, Betika, FANSPORT) | Working keyless; refresh on demand or every 30 min |
 | Daily 2–3 team combos (75% tier) | Working: attributed prices, explicit exclusions, NO QUALIFIED SELECTIONS when empty |
@@ -284,6 +285,19 @@ curl "http://127.0.0.1:8000/portfolio/combos?selection_mode=certainty"
 The Accumulators page renders the top-picks table above the slip result: rank,
 match, structure, selection and runner-ups, price with its source, win
 probability with the 85% marker, data confidence, and the weighted score/grade.
+
+## Five best match picks (≥85%)
+
+`GET /markets/top-picks` backs the **Top 5 Matches** dashboard tab
+(`backend/app/betting/top_picks.py`). It ranks today's scheduled, priced
+fixtures by the model's probability for the strongest outright result (home,
+draw or away). A match is published only when that exact outcome has an
+attributed bookmaker price and the data clears the 0.60 confidence floor; other
+markets on the same fixture that also clear 85% are attached as
+`also_qualifying` and never replace the headline result. Five is a cap, not a
+quota: a thinner slate yields a shorter list, and an empty one returns exactly
+`NO QUALIFIED SELECTIONS FOUND.` The page also shows what was filtered out and
+why, so a short list is explained rather than padded.
 
 ## Model–market blending (1X2)
 

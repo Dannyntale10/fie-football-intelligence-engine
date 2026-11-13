@@ -751,6 +751,67 @@ export type SweepMetric = ComboMetrics & {
   edge_over_break_even?: number | null;
 };
 
+export type GatedPickSupporting = {
+  market_key: string;
+  label: string;
+  probability: number;
+};
+
+export type GatedPick = {
+  rank: number;
+  fixture_id: number;
+  match: string;
+  competition: string;
+  country: string;
+  kickoff_utc: string | null;
+  kickoff_eat: string;
+  market_key: string;
+  market_type: string;
+  selection: string;
+  probability: number;
+  market_probability: number | null;
+  model_probability: number | null;
+  odds: number;
+  implied_probability: number | null;
+  expected_value_percent: number | null;
+  edge: number | null;
+  bookmaker: string | null;
+  source: string | null;
+  source_url: string | null;
+  captured_at: string | null;
+  price_age_hours: number | null;
+  confidence: number;
+  confidence_reasons: string[];
+  data_quality: {
+    grade: string | null;
+    score: number | null;
+    eligible_for_analysis: boolean | null;
+  };
+  expected_goals: number | null;
+  lambda_source: string | null;
+  model_vs_market: {
+    weight: number | null;
+    model: number | null;
+    market: number | null;
+    competition: string | null;
+    verdict: string | null;
+  } | null;
+  also_qualifying: GatedPickSupporting[];
+};
+
+export type GatedPicksReport = {
+  target_date: string;
+  threshold: number;
+  minimum_confidence: number;
+  params: { limit: number; result_markets: string[] };
+  fixtures_scanned: number;
+  count: number;
+  picks: GatedPick[];
+  rejected: Record<string, number>;
+  message: string;
+  note: string;
+};
+
 export type ComboTierSweep = {
   version: string;
   generated_at: string;

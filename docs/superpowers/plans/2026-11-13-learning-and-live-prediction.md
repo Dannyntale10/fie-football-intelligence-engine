@@ -2165,6 +2165,13 @@ git commit -m "feat(live): expose calibration and the settled export"
 - Consumes: `top_picks_for_matchday`, `build_daily_combos`, `build_high_odds`.
 - Asserts: no selection path can emit an in-play fixture, with no production change.
 
+> Executed as a control-paired test: each builder must return an identical
+> *scheduled* twin before its silence about the in-play fixture proves anything.
+> The snippet below lacked that control and passed vacuously for
+> `build_daily_combos` and `build_high_odds`, which only see a fixture that
+> carries attributed `market_odds_json` prices. The committed
+> `tests/test_live_exclusion.py` is the authority.
+
 - [ ] **Step 1: Write the guardrail test**
 
 ```python

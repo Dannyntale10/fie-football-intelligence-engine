@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 _started = False
+_scheduler = None
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 
 SCHEDULE = {
@@ -286,7 +287,7 @@ def refit_blend() -> Dict[str, Any]:
 
 def start_scheduler() -> Optional[object]:
     """Start APScheduler with the published EAT schedule."""
-    global _started
+    global _started, _scheduler
     if _started:
         return None
     try:
@@ -313,6 +314,7 @@ def start_scheduler() -> Optional[object]:
         scheduler.add_job(daily_analytics, CronTrigger(hour=23, minute=0, timezone=EAT_TZ), id="analytics")
         scheduler.add_job(refit_blend, CronTrigger(day_of_week="sun", hour=23, minute=30, timezone=EAT_TZ), id="blend_refit")
         scheduler.start()
+        _scheduler = scheduler
         _started = True
         logger.info("[Scheduler] EAT schedule active.")
         return scheduler
@@ -322,6 +324,21 @@ def start_scheduler() -> Optional[object]:
     except Exception as error:
         logger.error("[Scheduler] failed to start: %s", error)
         return None
+
+
+def scheduler_status() -> Dict[str, Any]:
+    if _scheduler is None:
+        return {"running": False, "jobs": []}
+    return {
+        "running": bool(_scheduler.running),
+        "jobs": [
+            {
+                "id": job.id,
+                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+            }
+            for job in _scheduler.get_jobs()
+        ],
+    }
 
 
 # Backwards-compatible job names used by older entry points.

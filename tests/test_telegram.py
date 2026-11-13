@@ -548,3 +548,24 @@ def test_poll_once_bootstraps_offset_without_running_backlog(allowlist, db, monk
     next_offset = telegram.poll_once(db, offset=None, transport=transport, bootstrap=True)
     assert next_offset == 100
     assert called == []
+
+
+def test_status_pending_retry_and_sweep_commands(db, allowlist):
+    from app.notifications.telegram import queue_message
+
+    assert "Telegram" in telegram.handle_command("/status", db)
+    row = queue_message(db, "Test", "Body", dedupe_key="cmd:pending")
+    try:
+        pending = telegram.handle_command("/pending", db)
+        assert "Test" in pending
+        assert str(row) in pending
+        assert "not found" in telegram.handle_command("/retry 999999", db)
+        stored = db.get(Notification, row)
+        stored.status = "failed"
+        db.commit()
+        assert "queued" in telegram.handle_command(f"/retry {row}", db)
+        sweep = telegram.handle_command("/sweep", db)
+        assert "sweep" in sweep.lower() or "no" in sweep.lower()
+    finally:
+        db.query(Notification).filter(Notification.id == row).delete()
+        db.commit()

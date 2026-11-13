@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,11 @@ HELP_TEXT = (
     "/learning - calibrated parameters\n"
     "/performance - real-slip record\n"
     "/sources - data providers\n"
-    "/settings - platform settings"
+    "/settings - platform settings\n"
+    "/status - bot, queue and scheduler state\n"
+    "/pending - queued and failed notifications\n"
+    "/retry <id> - requeue a failed notification\n"
+    "/sweep - tier comparison summary"
 )
 
 
@@ -662,6 +666,84 @@ def _learning_text() -> str:
     return "\n".join(lines)
 
 
+def _status_text(db: Session) -> str:
+    from app.models.predictions import Notification
+    from app.tasks.scheduler import scheduler_status
+
+    pending = db.scalar(
+        select(func.count(Notification.id)).where(Notification.status == "pending")
+    )
+    failed = db.scalar(
+        select(func.count(Notification.id)).where(Notification.status == "failed")
+    )
+    sent_today = db.scalar(
+        select(func.count(Notification.id)).where(
+            Notification.status == "sent",
+            Notification.sent_at >= _today_bounds()[0],
+        )
+    )
+    status = scheduler_status()
+    poll = polling_status()
+    jobs = ", ".join(job["id"] for job in status["jobs"]) or "none"
+    return (
+        f"Telegram polling: {'running' if poll['running'] else 'stopped'}\n"
+        f"Allowlist source: {allowlist_source(db)}\n"
+        f"Scheduler: {'running' if status['running'] else 'stopped'} ({jobs})\n"
+        f"Queue: {pending} pending · {failed} failed · {sent_today} sent today"
+    )
+
+
+def _pending_text(db: Session) -> str:
+    from app.models.predictions import Notification
+
+    rows = db.scalars(
+        select(Notification)
+        .where(Notification.status.in_(("pending", "failed")))
+        .order_by(Notification.created_at.desc())
+        .limit(10)
+    ).all()
+    if not rows:
+        return "No pending or failed notifications."
+    lines = []
+    for row in rows:
+        error = (row.last_error or "")[:60]
+        lines.append(
+            f"#{row.id} {row.status} · attempts {row.attempts or 0} · "
+            f"{(row.subject or row.body)[:40]}" + (f" · {error}" if error else "")
+        )
+    return "\n".join(lines)
+
+
+def _retry_text(db: Session, notification_id: int) -> str:
+    from app.models.predictions import Notification
+
+    row = db.get(Notification, notification_id)
+    if row is None:
+        return f"Notification {notification_id} not found."
+    if row.status != "failed":
+        return f"Notification {notification_id} is {row.status}; only failed rows are retried."
+    row.status = "pending"
+    row.attempts = 0
+    row.last_error = None
+    row.next_attempt_at = None
+    db.commit()
+    return f"Notification {notification_id} queued for retry."
+
+
+def _sweep_text() -> str:
+    from app.analytics.combo_backtest import load_sweep
+
+    report = load_sweep() or {}
+    recommendation = report.get("recommendation") or {}
+    if not recommendation:
+        return "No tier sweep saved yet. Run POST /combos/backtest/sweep."
+    return (
+        f"Tier sweep: {float(recommendation.get('tier') or 0):.0%} leads on training · "
+        f"holdout confirmed: {bool(recommendation.get('holdout_confirmed'))}\n"
+        f"{recommendation.get('guidance') or ''}"
+    )
+
+
 def handle_command(text: str, db: Session) -> str:
     parts = (text or "").strip().split()
     if not parts:
@@ -693,6 +775,16 @@ def handle_command(text: str, db: Session) -> str:
         return _sources_text()
     if command == "/settings":
         return _settings_text(db)
+    if command == "/status":
+        return _status_text(db)
+    if command == "/pending":
+        return _pending_text(db)
+    if command == "/retry":
+        if not argument.isdigit():
+            return "Usage: /retry <notification_id>"
+        return _retry_text(db, int(argument))
+    if command == "/sweep":
+        return _sweep_text()
     if command in ("/analyse", "/analyze", "/markets", "/dossier", "/value"):
         if not argument.isdigit():
             return f"Usage: {command} <fixture_id>"

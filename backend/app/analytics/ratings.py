@@ -19,6 +19,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.fixture import Fixture
+from app.models.predictions import SystemSetting
 from app.models.team_rating import TeamRating
 from app.data_sources.fixtures import clean_competition_name, clean_team_name
 
@@ -395,6 +396,19 @@ def fit_competition(
     return result
 
 
+def _mark_local_ratings(db: Session) -> None:
+    """A fit from this database's own results outranks a committed artifact."""
+    row = db.scalar(
+        select(SystemSetting).where(
+            SystemSetting.key == "ratings_artifact_version"
+        )
+    )
+    if row:
+        row.value = "local"
+    else:
+        db.add(SystemSetting(key="ratings_artifact_version", value="local"))
+
+
 def calculate_ratings_from_fixtures(
     db: Session,
     competition: Optional[str] = None,
@@ -483,6 +497,8 @@ def calculate_ratings_from_fixtures(
             "avg_goals": round(total_goals / max(1, len(rows)), 2),
         })
 
+    if total_updated:
+        _mark_local_ratings(db)
     db.commit()
     db.info.pop("_rating_index", None)
 

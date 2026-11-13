@@ -1,6 +1,7 @@
 from __future__ import annotations
 import io
 import logging
+import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -56,12 +57,13 @@ logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
-try:
-    from app.analytics.artifacts import load_ratings
+if os.environ.get("FIE_SKIP_ARTIFACT_LOAD") != "1":
+    try:
+        from app.analytics.artifacts import load_ratings
 
-    load_ratings()
-except Exception:
-    pass
+        load_ratings()
+    except Exception:
+        pass
 
 try:
     from app.tasks.scheduler import start_scheduler

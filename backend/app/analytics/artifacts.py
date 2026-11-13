@@ -16,13 +16,42 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.analytics.ratings import MIN_WEIGHTED_MATCHES, upsert_team_rating
+from app.analytics.ratings import (
+    MIN_WEIGHTED_MATCHES,
+    clean_competition_name,
+    upsert_team_rating,
+)
 from app.database import SessionLocal
+from app.models.predictions import SystemSetting
 from app.models.team_rating import TeamRating
 
 logger = logging.getLogger(__name__)
 
 RATINGS_PATH = Path(__file__).resolve().parents[3] / "data" / "ratings.json"
+RATINGS_SOURCE_KEY = "ratings_artifact_version"
+LOCAL_RATINGS_SOURCE = "local"
+
+
+def _artifact_hash(payload: Dict[str, Any]) -> str:
+    """Hash the document with its own hash field blanked, so it can live inside."""
+    body = dict(payload)
+    body["content_hash"] = ""
+    return "sha256:" + hashlib.sha256(
+        json.dumps(body, indent=2, sort_keys=True).encode()
+    ).hexdigest()
+
+
+def _setting(db: Session, key: str) -> Optional[str]:
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == key))
+    return row.value if row else None
+
+
+def _set_setting(db: Session, key: str, value: str) -> None:
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == key))
+    if row:
+        row.value = value
+    else:
+        db.add(SystemSetting(key=key, value=value))
 
 
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
@@ -78,6 +107,7 @@ def write_ratings(
         "half_life_days": half_life_days,
         "competitions": competitions,
     }
+    payload["content_hash"] = _artifact_hash(payload)
     text = json.dumps(payload, indent=2, sort_keys=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
@@ -86,7 +116,7 @@ def write_ratings(
         "path": str(path),
         "teams": teams,
         "competitions": len(competitions),
-        "content_hash": "sha256:" + hashlib.sha256(text.encode()).hexdigest(),
+        "content_hash": payload["content_hash"],
     }
 
 
@@ -95,19 +125,42 @@ def load_ratings(
     *,
     session_factory: Callable[[], Session] = SessionLocal,
 ) -> int:
-    """Seed an empty rating table from the committed artifact."""
+    """Seed or refresh the rating table from the committed artifact.
+
+    The artifact is applied only when its ``content_hash`` differs from the
+    stored artifact version. A fit computed from this database's own results
+    outranks the artifact: it marks the stored version ``local`` and later
+    startups leave those ratings alone.
+    """
     if not path.exists():
         return 0
 
     db = session_factory()
     try:
-        existing = db.scalar(select(func.count(TeamRating.id))) or 0
-        if existing:
+        payload = json.loads(path.read_text())
+        version = str(payload.get("content_hash") or _artifact_hash(payload))
+        stored = _setting(db, RATINGS_SOURCE_KEY)
+
+        if stored == LOCAL_RATINGS_SOURCE:
+            logger.info("Ratings were fitted locally; keeping them over %s", path)
+            return 0
+        if stored and stored == version:
             return 0
 
-        payload = json.loads(path.read_text())
+        existing = db.scalar(select(func.count(TeamRating.id))) or 0
+        if stored is None and existing:
+            # Rows without provenance predate this loader; assume a local fit
+            # outranks the artifact rather than overwriting measured ratings.
+            _set_setting(db, RATINGS_SOURCE_KEY, LOCAL_RATINGS_SOURCE)
+            db.commit()
+            return 0
+
         loaded = 0
         for competition, block in (payload.get("competitions") or {}).items():
+            comp = clean_competition_name(competition)
+            db.query(TeamRating).filter(
+                TeamRating.competition == comp
+            ).delete(synchronize_session=False)
             for team, row in (block.get("teams") or {}).items():
                 upsert_team_rating(
                     db,
@@ -124,6 +177,7 @@ def load_ratings(
                     commit=False,
                 )
                 loaded += 1
+        _set_setting(db, RATINGS_SOURCE_KEY, version)
         db.commit()
         logger.info("Loaded %s team ratings from %s", loaded, path)
         return loaded

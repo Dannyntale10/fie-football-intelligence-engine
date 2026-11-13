@@ -25,7 +25,7 @@ def test_a_neutral_multiplier_is_rejected():
 
 
 def test_a_material_shift_promotes():
-    # Synthetic rows, oldest first: the held-out tail is where the shift lives.
+    # Synthetic rows, oldest first: the temporal-check tail is where the shift lives.
     rows = [_row(1, 1) for _ in range(240)] + [_row(2, 1) for _ in range(360)]
     result = fit_intensity(rows)
     assert result["status"] == "fitted"

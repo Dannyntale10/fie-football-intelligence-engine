@@ -6,10 +6,12 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/", label: "Overview", short: "OV" },
   { href: "/top-picks", label: "Top 5 Matches", short: "T5" },
+  { href: "/high-odds", label: "High Odds 6.0", short: "H6" },
   { href: "/fixtures", label: "Global Fixtures", short: "GF" },
   { href: "/markets", label: "All Markets", short: "AM" },
   { href: "/predictions", label: "Predictions", short: "PR" },
   { href: "/accumulators", label: "Accumulators", short: "AC" },
+  { href: "/bankroll", label: "Bankroll", short: "BK" },
   { href: "/analysis", label: "Match Analysis", short: "MA" },
   { href: "/performance", label: "Performance", short: "PA" },
   { href: "/sources", label: "Data Sources", short: "DS" },

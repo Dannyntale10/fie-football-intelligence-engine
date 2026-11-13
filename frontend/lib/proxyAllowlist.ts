@@ -13,6 +13,7 @@ const READ_PREFIXES = [
   "/fixtures",
   "/ratings",
   "/markets",
+  "/bankroll",
   "/portfolio",
   "/evaluation",
   "/combos",

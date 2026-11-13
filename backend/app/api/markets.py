@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.betting.high_odds import MAX_SLIPS as HIGH_ODDS_SLIPS
+from app.betting.high_odds import build_high_odds
 from app.betting.top_picks import TOP_PICKS, build_top_picks
 from app.market_engine import analyse_fixture
 from app.market_engine.catalogue import catalogue_payload, families_by_category
@@ -29,6 +31,18 @@ def top_picks(
 ) -> Dict[str, Any]:
     """The five best analysed matches whose outright result clears the 85% gate."""
     return build_top_picks(db, limit=limit, target_date=target_date)
+
+
+@router.get("/high-odds")
+def high_odds_slips(
+    target_date: Optional[str] = Query(
+        None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="Matchday in EAT, default today"
+    ),
+    limit: int = Query(HIGH_ODDS_SLIPS, ge=1, le=HIGH_ODDS_SLIPS),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Near-6.00 slips built only from legs whose blended probability beats the price."""
+    return build_high_odds(db, limit=limit, target_date=target_date)
 
 
 @router.get("/qualifying")

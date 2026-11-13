@@ -812,6 +812,134 @@ export type GatedPicksReport = {
   note: string;
 };
 
+export type HighOddsLeg = {
+  fixture_id: number;
+  match: string;
+  competition: string;
+  kickoff_utc: string | null;
+  kickoff_eat: string;
+  market_key: string;
+  market_type: string;
+  selection: string;
+  odds: number;
+  probability: number;
+  implied_probability: number;
+  expected_value: number;
+  edge_percent: number;
+  market_overround: number;
+  confidence: number;
+  confidence_reasons: string[];
+  bookmaker: string | null;
+  source: string | null;
+  source_url: string | null;
+  captured_at: string | null;
+  price_age_hours: number | null;
+};
+
+export type HighOddsSlip = {
+  size: number;
+  legs: HighOddsLeg[];
+  combined_probability: number;
+  total_odds: number;
+  implied_probability: number | null;
+  expected_value_percent: number;
+  min_leg_probability: number;
+};
+
+export type HighOddsReport = {
+  target_date: string;
+  matchday_label: string;
+  generated_at: string;
+  params: {
+    target_total_odds: number;
+    odds_band: [number, number];
+    min_legs: number;
+    max_legs: number;
+    min_leg_ev: number;
+    min_data_confidence: number;
+    min_market_overround: number;
+    result_markets: string[];
+  };
+  scope: {
+    fixtures_on_slate: number;
+    fixtures_analysed: number;
+    legs_evaluated: number;
+    positive_ev_legs: number;
+    candidate_legs: number;
+    slips_found: number;
+  };
+  diagnostics: {
+    required_strike_rate_percent: number;
+    best_leg_ev: number | null;
+    best_leg_match: string | null;
+    best_leg_selection: string | null;
+    best_leg_odds: number | null;
+    combos_in_band: number;
+    published_gate: number;
+  };
+  rejected: Record<string, number>;
+  slips: HighOddsSlip[];
+  closest_legs: HighOddsLeg[];
+  legs_evaluated: number;
+  positive_ev_legs: number;
+  count: number;
+  message: string;
+  note: string;
+};
+
+export type BankrollWarning = {
+  code: string;
+  message: string;
+};
+
+export type BankrollPlan = {
+  stake: number;
+  currency: string;
+  total_odds: number;
+  potential_return: number;
+  potential_profit: number;
+  implied_probability: number;
+  required_strike_rate_percent: number;
+  break_even_wins_per_10: number;
+  bankroll: number | null;
+  stake_percent_of_bankroll: number | null;
+  max_stake_by_policy: number | null;
+  stake_within_cap: boolean;
+  max_stake_percent: number;
+  target_profit: number | null;
+  stake_for_target_profit: number | null;
+  warnings: BankrollWarning[];
+  note: string;
+};
+
+export type BankrollExposure = {
+  slips_per_day: number;
+  stake_per_slip: number;
+  total_stake: number;
+  currency: string;
+  bankroll: number;
+  max_daily_exposure_percent: number;
+  max_daily_stake: number;
+  exposure_within_cap: boolean;
+  warnings: BankrollWarning[];
+};
+
+export type BankrollPlanResponse = BankrollPlan & {
+  daily_exposure: BankrollExposure | null;
+};
+
+export type BankrollPresets = {
+  currency: string;
+  max_stake_percent: number;
+  presets: Array<{
+    key: string;
+    label: string;
+    description: string;
+    plan: BankrollPlan;
+  }>;
+  note: string;
+};
+
 export type ComboTierSweep = {
   version: string;
   generated_at: string;

@@ -1,20 +1,23 @@
 """Fit the one live knob from settled snapshots.
 
 The multiplier is the ratio of goals actually scored after a snapshot to the
-goals the frozen prior expected. It is promoted only when there is enough
-evidence, the held-out Poisson likelihood improves, and the shift is large
-enough to matter.
+goals the frozen prior expected, aggregated over every usable snapshot
+(spec 6.4). The later 30% of snapshots is used as a temporal check: the fitted
+multiplier must beat a neutral one there by MIN_IMPROVEMENT. Because that
+slice is also part of the aggregate, the check is a diagnostic rather than a
+clean holdout.
+
+Callers must pass snapshots oldest-first. ``/live/export`` orders them by
+``observed_at``; a shuffled or reversed list would move the tail and silently
+change the verdict.
 """
 from __future__ import annotations
 
-import json
 import math
-from pathlib import Path
 from typing import Any, Dict, List
 
 from app.live.engine import INTENSITY_BOUNDS
 
-CALIBRATION_PATH = Path(__file__).resolve().parents[3] / "data" / "live_calibration.json"
 MIN_SNAPSHOTS = 500
 MIN_IMPROVEMENT = 0.002
 MIN_SHIFT = 0.05
@@ -46,7 +49,13 @@ def fit_intensity(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         or (row.get("remaining_away_lambda") or 0) > 0
     ]
     if not usable:
-        return {"status": "no_data", "k": 1.0, "sample": 0}
+        return {
+            "status": "no_data",
+            "k": 1.0,
+            "sample": 0,
+            "validation": None,
+            "generated_at": None,
+        }
 
     total_extra = sum(
         (row.get("extra_home_goals") or 0) + (row.get("extra_away_goals") or 0)
@@ -58,7 +67,13 @@ def fit_intensity(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         for row in usable
     )
     if total_remaining <= 0:
-        return {"status": "no_data", "k": 1.0, "sample": len(usable)}
+        return {
+            "status": "no_data",
+            "k": 1.0,
+            "sample": len(usable),
+            "validation": None,
+            "generated_at": None,
+        }
 
     k = total_extra / total_remaining
     k = max(INTENSITY_BOUNDS[0], min(INTENSITY_BOUNDS[1], k))

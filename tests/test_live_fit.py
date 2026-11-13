@@ -1,5 +1,4 @@
 """The intensity fit promotes only a material, validated shift."""
-import math
 
 from app.live.fit import fit_intensity
 
@@ -34,7 +33,19 @@ def test_a_material_shift_promotes():
     assert result["validation"]["improvement"] > 0
 
 
+def test_a_shift_absent_from_the_later_snapshots_is_rejected():
+    # Same overall shift as the promoting case, but concentrated in the older
+    # snapshots: the chronological tail is neutral, so the aggregate multiplier
+    # does not generalise forward and must not be promoted.
+    rows = [_row(2, 1) for _ in range(360)] + [_row(1, 1) for _ in range(240)]
+    result = fit_intensity(rows)
+    assert result["status"] == "rejected"
+    assert abs(result["k"] - 1.3) < 0.01
+    assert result["validation"]["improvement"] < 0
+
+
 def test_k_is_clamped_to_the_supported_band():
     rows = [_row(4, 3) for _ in range(600)]
     result = fit_intensity(rows)
-    assert result["k"] <= 2.0
+    assert result["k"] == 2.0
+    assert result["status"] == "fitted"

@@ -1,6 +1,10 @@
+import logging
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
@@ -45,21 +49,52 @@ def ensure_schema_compatibility(eng):
                         conn.execute(text(f"ALTER TABLE team_ratings ADD COLUMN {col} {col_type}"))
                 conn.commit()
 
-            # Check tracked_bets provenance columns
+            res_notif = conn.execute(text("PRAGMA table_info(notifications)")).fetchall()
+            if res_notif:
+                notif_cols = {row[1] for row in res_notif}
+                new_notif_cols = [
+                    ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+                    ("next_attempt_at", "TIMESTAMP"),
+                    ("last_error", "VARCHAR(400)"),
+                    ("dedupe_key", "VARCHAR(200)"),
+                ]
+                for col, col_type in new_notif_cols:
+                    if col not in notif_cols:
+                        conn.execute(text(f"ALTER TABLE notifications ADD COLUMN {col} {col_type}"))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_notifications_dedupe_key "
+                    "ON notifications (dedupe_key) WHERE dedupe_key IS NOT NULL"
+                ))
+                conn.commit()
+
+            # Check tracked_bets provenance, dedupe and settlement columns
             res_bets = conn.execute(text("PRAGMA table_info(tracked_bets)")).fetchall()
             if res_bets:
                 bet_cols = {row[1] for row in res_bets}
+                had_settlement = "settlement_notified" in bet_cols
                 new_bet_cols = [
                     ("model_version", "TEXT"),
                     ("ratings_hash", "TEXT"),
                     ("selection_mode", "TEXT"),
+                    ("dedupe_key", "VARCHAR(200)"),
+                    ("tier", "REAL"),
+                    ("settlement_notified", "INTEGER NOT NULL DEFAULT 0"),
                 ]
                 for col, col_type in new_bet_cols:
                     if col not in bet_cols:
                         conn.execute(text(f"ALTER TABLE tracked_bets ADD COLUMN {col} {col_type}"))
+                if not had_settlement and "whatsapp_settlement_sent" in bet_cols:
+                    conn.execute(text(
+                        "UPDATE tracked_bets SET settlement_notified = "
+                        "CASE WHEN whatsapp_settlement_sent = 1 THEN 1 ELSE 0 END"
+                    ))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_tracked_bets_dedupe_key "
+                    "ON tracked_bets (dedupe_key) WHERE dedupe_key IS NOT NULL"
+                ))
                 conn.commit()
     except Exception:
-        pass
+        logger.exception("Schema compatibility migration failed")
 
 ensure_schema_compatibility(engine)
 

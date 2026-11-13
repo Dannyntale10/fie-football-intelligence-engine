@@ -156,6 +156,10 @@ class Notification(Base):
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     related_type: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     related_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String(400), nullable=True)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

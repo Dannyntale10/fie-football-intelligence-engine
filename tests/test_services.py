@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import pytest
+from sqlalchemy import delete, select
 from app.analytics.quality import grade_data_quality, baseline_signals, evaluate_fixture_signals
 from app.analytics.probabilities import (
     poisson_market_probabilities,
@@ -13,6 +14,7 @@ from app.analytics.probabilities import (
 )
 from app.data_sources.fixtures import make_dedupe_key, clean_team_name, _float_or_none
 from app.analytics.ratings import upsert_team_rating, estimate_lambdas_from_ratings
+from app.models.team_rating import TeamRating
 from app.data_sources.seeder import seed_sample_historical_data
 from app.analytics.backtest import run_backtest
 from app.database import SessionLocal
@@ -162,6 +164,28 @@ def test_team_ratings_and_lambda_estimation():
         assert h_lam > a_lam
     finally:
         db.close()
+
+def test_upsert_team_rating_can_defer_the_commit():
+    """Bulk rebuilds write hundreds of ratings; committing per team is quadratic."""
+    db = SessionLocal()
+    reader = SessionLocal()
+    try:
+        upsert_team_rating(
+            db, "Commit Probe", "Commit Probe League",
+            attack_rating=1.1, defense_rating=0.9, commit=False,
+        )
+        probe = select(TeamRating).where(TeamRating.competition == "commit probe league")
+        assert reader.scalar(probe) is None
+
+        db.commit()
+
+        assert reader.scalar(probe) is not None
+    finally:
+        db.execute(delete(TeamRating).where(TeamRating.competition == "commit probe league"))
+        db.commit()
+        reader.close()
+        db.close()
+
 
 def test_calculate_kelly_stake():
     # Model prob 60%, odds 2.0 -> b=1, p=0.6, q=0.4 -> Full Kelly = (1*0.6 - 0.4)/1 = 0.20 (20%)

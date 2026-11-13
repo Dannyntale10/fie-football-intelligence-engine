@@ -376,3 +376,51 @@ For simulator verification of a specific tab, either uninstall/reinstall to rese
 - Tags: simulator, appstorage, verification
 - Pattern-Key: verify.ios_visual
 - See Also: LRN-20261113-001, LRN-20261113-002
+
+## [LRN-20261113-006] best_practice
+
+**Logged**: 2026-11-13T15:05:00+03:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+`row.get("B365H") or row.get("AvgH")` never falls through when the CSV column exists but is empty — pandas yields `NaN`, and `NaN` is truthy.
+
+### Details
+The football-data.co.uk importer cascaded odds columns with `or`. For rows where a bookmaker had no price, the cell is `NaN` (or `""`), both truthy, so the first column always "won" and the fallback was skipped. Worse, `NaN` survived into the database as a price. Every cascade is now a `_first_price(row, columns)` helper that calls `_float_or_none` per column and only accepts values `> 1.0`.
+
+### Suggested Action
+Never use `or` to coalesce values from pandas rows. Normalise each candidate through a numeric parser and test the parsed value explicitly.
+
+### Metadata
+- Source: conversation
+- Related Files: backend/app/data_sources/seeder.py
+- Tags: pandas, nan, odds-import
+- Pattern-Key: harden.pandas_coalesce
+- See Also: LRN-20261113-007
+
+---
+
+## [LRN-20261113-007] best_practice
+
+**Logged**: 2026-11-13T15:05:00+03:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+On 26 years of history the walk-forward hotspot was `scipy.stats.poisson.pmf`, not the Dixon-Coles fit — 865k scalar calls cost 37s of a 40s run.
+
+### Details
+Profiling `fit_report` showed the iterative rating fit was already cheap; nearly all the time went to per-match 1X2 grids built from scalar Poisson calls. Replacing both with numpy (`fit_strength_arrays`, `outcome_1x2_from_lambdas`, `np.bincount` residuals, batched `(n, 11, 11)` score grid) took the run from 31s to 4.4s. Model output stayed bit-identical against a pre-refactor snapshot (max lambda delta 1.0e-12).
+
+### Suggested Action
+Before optimising a statistical pipeline, profile it. Optimise the per-prediction probability evaluation with batched numpy before touching the fitting loop, and keep an equivalence snapshot so the refactor can be proven semantically neutral.
+
+### Metadata
+- Source: conversation
+- Related Files: backend/app/analytics/ratings.py, backend/app/analytics/calibration.py, backend/app/analytics/probabilities.py
+- Tags: performance, numpy, walk-forward
+- Pattern-Key: optimize.profile_first
+- See Also: LRN-20261113-006

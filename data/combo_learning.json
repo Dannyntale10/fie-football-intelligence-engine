@@ -1,22 +1,22 @@
 {
-  "a": 1.231,
-  "applied": true,
-  "b": 0.057,
-  "generated_at": "2026-11-13T09:26:29.161661+00:00",
-  "improvement": 0.00353,
-  "logloss_after": 0.6369,
-  "logloss_before": 0.64044,
-  "n": 4117,
-  "n_train": 2881,
-  "n_validation": 1236,
-  "reason": "validated on held-out recent matches",
+  "a": 1.1438,
+  "applied": false,
+  "b": 0.0604,
+  "generated_at": "2026-11-13T12:19:46.171837+00:00",
+  "improvement": 0.00054,
+  "logloss_after": 0.65923,
+  "logloss_before": 0.65976,
+  "n": 174592,
+  "n_train": 122214,
+  "n_validation": 52378,
+  "reason": "held-out log loss did not improve enough to justify a change",
   "source": "de-vigged 1X2 market probability of the highest-probability outcome per settled fixture",
   "tier": 0.75,
   "version": "combo-backtest-1",
   "window": {
-    "first_matchday": "2023-07-28",
+    "first_matchday": "2000-07-28",
     "last_matchday": "2026-11-12",
-    "matchdays": 226,
-    "settled_matches": 4117
+    "matchdays": 6677,
+    "settled_matches": 174592
   }
 }

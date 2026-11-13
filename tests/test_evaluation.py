@@ -12,13 +12,16 @@ from app.models.fixture import Fixture
 from app.models.price_snapshot import PriceSnapshot  # noqa: F401  (registers the table)
 from app.analytics.ratings import (
     MIN_MATCH_WEIGHT,
+    PRIOR_MATCHES,
     RATING_HALF_LIFE_DAYS,
     data_age_days,
     decay_weight,
+    fit_competition,
     rating_key,
 )
 from app.analytics.probabilities import (
     estimate_lambdas_from_market,
+    outcome_1x2_from_lambdas,
     poisson_market_probabilities,
 )
 from app.analytics.calibration import (
@@ -93,6 +96,90 @@ def test_rating_key_resolves_feed_aliases_and_club_prefixes():
     assert rating_key("Sheffield Weds") == "sheffield wednesday"
 
 
+def _reference_fit(matches, avg_home, avg_away, iterations):
+    """Straightforward loop version of the fit, used to pin the numpy kernel."""
+    from collections import defaultdict
+
+    teams = {m["home"] for m in matches} | {m["away"] for m in matches}
+    attack = {t: 1.0 for t in teams}
+    defence = {t: 1.0 for t in teams}
+
+    for _ in range(iterations):
+        scored, conceded = defaultdict(float), defaultdict(float)
+        expected_scored, expected_conceded = defaultdict(float), defaultdict(float)
+        weight_sum = defaultdict(float)
+        for m in matches:
+            w, h, a = m["weight"], m["home"], m["away"]
+            exp_h = avg_home * defence[a]
+            exp_a = avg_away * defence[h]
+            scored[h] += w * m["home_goals"]
+            conceded[h] += w * m["away_goals"]
+            expected_scored[h] += w * exp_h
+            expected_conceded[h] += w * exp_a
+            scored[a] += w * m["away_goals"]
+            conceded[a] += w * m["home_goals"]
+            expected_scored[a] += w * exp_a
+            expected_conceded[a] += w * exp_h
+            weight_sum[h] += w
+            weight_sum[a] += w
+        for t in teams:
+            attack[t] = (scored[t] + PRIOR_MATCHES) / (expected_scored[t] + PRIOR_MATCHES)
+            defence[t] = (conceded[t] + PRIOR_MATCHES) / (expected_conceded[t] + PRIOR_MATCHES)
+            if weight_sum[t] <= 0:
+                attack[t] = defence[t] = 1.0
+        total_w = sum(weight_sum.values()) or 1.0
+        mean_att = sum(attack[t] * weight_sum[t] for t in teams) / total_w
+        mean_def = sum(defence[t] * weight_sum[t] for t in teams) / total_w
+        attack = {t: v / mean_att for t, v in attack.items()}
+        defence = {t: v / mean_def for t, v in defence.items()}
+
+    out = {}
+    for t in teams:
+        home_m = [m for m in matches if m["home"] == t]
+        away_m = [m for m in matches if m["away"] == t]
+        hw = sum(m["weight"] for m in home_m)
+        aw = sum(m["weight"] for m in away_m)
+        h_goals = sum(m["weight"] * m["home_goals"] for m in home_m) / hw if hw else avg_home
+        a_goals = sum(m["weight"] * m["away_goals"] for m in away_m) / aw if aw else avg_away
+        out[t] = {
+            "attack": attack[t],
+            "defence": defence[t],
+            "weighted_matches": sum(m["weight"] for m in home_m + away_m),
+            "matches_played": len(home_m) + len(away_m),
+            "home_goals_avg": h_goals,
+            "away_goals_avg": a_goals,
+        }
+    return out
+
+
+def test_fit_competition_matches_the_reference_loop():
+    import random
+
+    rng = random.Random(7)
+    teams = [f"team {i}" for i in range(8)]
+    matches = []
+    for i in range(240):
+        home, away = rng.sample(teams, 2)
+        matches.append({
+            "home": home,
+            "away": away,
+            "home_goals": rng.randint(0, 5),
+            "away_goals": rng.randint(0, 4),
+            "weight": round(rng.uniform(MIN_MATCH_WEIGHT, 1.0), 4),
+            "kickoff": datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i),
+        })
+
+    fitted = fit_competition(matches, 1.55, 1.18, iterations=6)
+    reference = _reference_fit(matches, 1.55, 1.18, 6)
+
+    assert set(fitted) == set(reference)
+    for team, expected in reference.items():
+        got = fitted[team]
+        for key in ("attack", "defence", "weighted_matches", "home_goals_avg", "away_goals_avg"):
+            assert got[key] == pytest.approx(expected[key], abs=1e-9), (team, key)
+        assert got["matches_played"] == expected["matches_played"]
+
+
 # ── Market-implied expected goals ────────────────────────────────────────────
 
 class _FakeFixture:
@@ -148,6 +235,20 @@ def test_calibration_metrics_reward_confident_correct_forecasts():
     assert expected_calibration_error(overconfident) == pytest.approx(0.9, abs=1e-9)
 
 
+def test_vectorised_1x2_matches_the_scalar_grid():
+    cases = [(1.6, 1.1), (0.4, 2.3), (2.7, 0.8), (1.2, 1.2), (0.2, 0.2)]
+
+    batch = outcome_1x2_from_lambdas(
+        [home for home, _ in cases], [away for _, away in cases], rho=-0.10
+    )
+
+    for (home, away), row in zip(cases, batch):
+        scalar = poisson_market_probabilities(home, away, rho=-0.10)["markets"]
+        assert row == {
+            key: scalar[key] for key in ("home_win", "draw", "away_win")
+        }, (home, away)
+
+
 # ── Walk-forward predictions never see the future ────────────────────────────
 
 def _seed_league(db, matches: int = 40, spacing_days: int = 3):
@@ -200,6 +301,50 @@ def test_walkforward_predictions_use_only_past_matches(mem_db):
 
     earliest_predicted = min(_aware(p["fixture"].kickoff_utc) for p in predictions)
     assert earliest_predicted >= all_kickoffs[30]
+
+
+def test_walkforward_first_prediction_matches_a_manual_fit(mem_db):
+    """Pins the window arithmetic and the fit used for each refit window."""
+    _seed_league(mem_db, matches=40)
+    predictions = list(iter_walkforward_predictions(mem_db, refit_days=14))
+    first = predictions[0]
+    fixture = first["fixture"]
+    kickoff = _aware(fixture.kickoff_utc)
+
+    comp = mem_db.query(Fixture).order_by(Fixture.kickoff_utc).all()
+    window_start = _aware(comp[0].kickoff_utc)
+    while window_start <= _aware(comp[-1].kickoff_utc):
+        window_end = window_start + timedelta(days=14)
+        if window_start <= kickoff < window_end:
+            break
+        window_start = window_end
+
+    past = [f for f in comp if _aware(f.kickoff_utc) < window_start]
+    rows = [
+        {
+            "home": rating_key(f.home_team),
+            "away": rating_key(f.away_team),
+            "home_goals": f.home_score,
+            "away_goals": f.away_score,
+            "weight": decay_weight(_aware(f.kickoff_utc), window_end),
+            "kickoff": _aware(f.kickoff_utc),
+        }
+        for f in past
+    ]
+    total_w = sum(r["weight"] for r in rows)
+    avg_home = sum(r["home_goals"] * r["weight"] for r in rows) / total_w
+    avg_away = sum(r["away_goals"] * r["weight"] for r in rows) / total_w
+    fitted = fit_competition(rows, avg_home, avg_away, iterations=6)
+
+    home = fitted[rating_key(fixture.home_team)]
+    away = fitted[rating_key(fixture.away_team)]
+    home_lambda = max(0.1, min(8.0, home["attack"] * away["defence"] * avg_home * (1.0 + min(0.35, home["home_boost"] * 0.25))))
+    away_lambda = max(0.1, min(8.0, away["attack"] * home["defence"] * avg_away))
+    expected = poisson_market_probabilities(home_lambda, away_lambda, rho=-0.10)["markets"]
+
+    assert first["model"] == pytest.approx(
+        {key: expected[key] for key in ("home_win", "draw", "away_win")}, abs=1e-9
+    )
 
 
 def test_walkforward_ignores_ignored_competitions(mem_db):

@@ -12,20 +12,22 @@ import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.fixture import Fixture
 from app.data_sources.fixtures import clean_competition_name
-from app.analytics.probabilities import poisson_market_probabilities
+from app.analytics.probabilities import outcome_1x2_from_lambdas
 from app.analytics.ratings import (
     DEFAULT_LEAGUE_AVG_AWAY,
     DEFAULT_LEAGUE_AVG_HOME,
     IGNORED_COMPETITIONS,
-    decay_weight,
-    fit_competition,
+    MIN_MATCH_WEIGHT,
+    RATING_HALF_LIFE_DAYS,
+    fit_strength_arrays,
     rating_key,
 )
 
@@ -102,27 +104,129 @@ def _fair_1x2(home_odds: float, draw_odds: float, away_odds: float) -> Dict[str,
     return {k: v / total for k, v in raw.items()}
 
 
-def _rows_for(matches: List[Fixture], reference: datetime) -> List[Dict[str, Any]]:
-    rows = []
-    for m in matches:
-        kickoff = _utc(m.kickoff_utc)
-        rows.append({
-            "home": rating_key(m.home_team),
-            "away": rating_key(m.away_team),
-            "home_goals": int(m.home_score),
-            "away_goals": int(m.away_score),
-            "weight": decay_weight(kickoff, reference),
-            "kickoff": kickoff,
-        })
-    return rows
+_NANOS_PER_DAY = 86_400_000_000_000
 
 
-def _weighted_averages(rows: List[Dict[str, Any]]) -> Tuple[float, float]:
-    weight = sum(r["weight"] for r in rows) or 1.0
-    return (
-        sum(r["home_goals"] * r["weight"] for r in rows) / weight,
-        sum(r["away_goals"] * r["weight"] for r in rows) / weight,
+def _walkforward_for_competition(
+    competition: str,
+    matches: List[Fixture],
+    refit_days: int,
+    min_weighted_matches: float,
+    rho: float,
+):
+    """Yield out-of-sample predictions for one competition, in kickoff order.
+
+    Matches are held as arrays so each 14-day window costs a few vector
+    operations rather than a Python loop over the whole history. The model
+    fitted for a window only ever sees matches that kicked off before it.
+    """
+    team_keys = sorted(
+        {rating_key(m.home_team) for m in matches}
+        | {rating_key(m.away_team) for m in matches}
     )
+    index = {key: i for i, key in enumerate(team_keys)}
+    n_teams = len(team_keys)
+
+    home_idx = np.fromiter(
+        (index[rating_key(m.home_team)] for m in matches), dtype=np.int64, count=len(matches)
+    )
+    away_idx = np.fromiter(
+        (index[rating_key(m.away_team)] for m in matches), dtype=np.int64, count=len(matches)
+    )
+    home_goals = np.fromiter(
+        (int(m.home_score) for m in matches), dtype=np.float64, count=len(matches)
+    )
+    away_goals = np.fromiter(
+        (int(m.away_score) for m in matches), dtype=np.float64, count=len(matches)
+    )
+    kick_ns = np.fromiter(
+        (int(_utc(m.kickoff_utc).timestamp()) * 1_000_000_000 for m in matches),
+        dtype=np.int64,
+        count=len(matches),
+    )
+
+    step_ns = int(refit_days * _NANOS_PER_DAY)
+    window_start = int(kick_ns.min())
+    last_kick = int(kick_ns.max())
+
+    while window_start <= last_kick:
+        window_end = window_start + step_ns
+        past = kick_ns < window_start
+        window = (kick_ns >= window_start) & (kick_ns < window_end)
+        window_start = window_end
+
+        if int(past.sum()) < 30 or not bool(window.any()):
+            continue
+
+        age_days = np.maximum(0.0, (window_end - kick_ns) / _NANOS_PER_DAY)
+        weights = np.maximum(
+            MIN_MATCH_WEIGHT, 0.5 ** (age_days / RATING_HALF_LIFE_DAYS)
+        )
+        past_weights = weights[past]
+        total_weight = float(past_weights.sum()) or 1.0
+        avg_home = float((past_weights * home_goals[past]).sum()) / total_weight
+        avg_away = float((past_weights * away_goals[past]).sum()) / total_weight
+        avg_home = avg_home or DEFAULT_LEAGUE_AVG_HOME
+        avg_away = avg_away or DEFAULT_LEAGUE_AVG_AWAY
+
+        fitted = fit_strength_arrays(
+            home_idx=home_idx[past],
+            away_idx=away_idx[past],
+            weights=past_weights,
+            home_goals=home_goals[past],
+            away_goals=away_goals[past],
+            n_teams=n_teams,
+            league_avg_home=avg_home,
+            league_avg_away=avg_away,
+            iterations=6,
+        )
+        attack = fitted["attack"]
+        defence = fitted["defence"]
+        weighted = fitted["weighted_matches"]
+        boost = fitted["boost"]
+
+        kept = []
+        for j in np.nonzero(window)[0]:
+            home = int(home_idx[j])
+            away = int(away_idx[j])
+            if weighted[home] < min_weighted_matches or weighted[away] < min_weighted_matches:
+                continue
+
+            home_lambda = max(
+                0.1,
+                min(
+                    8.0,
+                    attack[home]
+                    * defence[away]
+                    * avg_home
+                    * (1.0 + min(0.35, boost[home] * 0.25)),
+                ),
+            )
+            away_lambda = max(0.1, min(8.0, attack[away] * defence[home] * avg_away))
+            kept.append((int(j), home_lambda, away_lambda))
+
+        if not kept:
+            continue
+
+        probabilities = outcome_1x2_from_lambdas(
+            [item[1] for item in kept], [item[2] for item in kept], rho=rho
+        )
+        for (j, home_lambda, away_lambda), model in zip(kept, probabilities):
+            fixture = matches[j]
+            yield {
+                "fixture": fixture,
+                "competition": competition,
+                "home_lambda": home_lambda,
+                "away_lambda": away_lambda,
+                "model": model,
+                "market": _fair_1x2(fixture.home_odds, fixture.draw_odds, fixture.away_odds),
+                "odds": {
+                    "home_win": float(fixture.home_odds),
+                    "draw": float(fixture.draw_odds),
+                    "away_win": float(fixture.away_odds),
+                },
+                "label": _outcome_label(int(fixture.home_score), int(fixture.away_score)),
+            }
 
 
 def iter_walkforward_predictions(
@@ -160,46 +264,13 @@ def iter_walkforward_predictions(
         by_competition[comp].append(m)
 
     for comp, comp_matches in by_competition.items():
-        start = _utc(comp_matches[0].kickoff_utc)
-        last = _utc(comp_matches[-1].kickoff_utc)
-        window_start = start
-
-        while window_start <= last:
-            window_end = window_start + timedelta(days=refit_days)
-            past = [m for m in comp_matches if _utc(m.kickoff_utc) < window_start]
-            window = [m for m in comp_matches if window_start <= _utc(m.kickoff_utc) < window_end]
-            window_start = window_end
-
-            if len(past) < 30 or not window:
-                continue
-
-            rows = _rows_for(past, window_end)
-            avg_home, avg_away = _weighted_averages(rows)
-            avg_home = avg_home or DEFAULT_LEAGUE_AVG_HOME
-            avg_away = avg_away or DEFAULT_LEAGUE_AVG_AWAY
-            fitted = fit_competition(rows, avg_home, avg_away, iterations=6)
-
-            for m in window:
-                home = fitted.get(rating_key(m.home_team))
-                away = fitted.get(rating_key(m.away_team))
-                if not home or not away:
-                    continue
-                if home["weighted_matches"] < min_weighted_matches or away["weighted_matches"] < min_weighted_matches:
-                    continue
-
-                home_lambda = max(0.1, min(8.0, home["attack"] * away["defence"] * avg_home * (1.0 + min(0.35, home["home_boost"] * 0.25))))
-                away_lambda = max(0.1, min(8.0, away["attack"] * home["defence"] * avg_away))
-                markets = poisson_market_probabilities(home_lambda, away_lambda, rho=rho)["markets"]
-                yield {
-                    "fixture": m,
-                    "competition": comp,
-                    "home_lambda": home_lambda,
-                    "away_lambda": away_lambda,
-                    "model": {k: markets[k] for k in OUTCOMES},
-                    "market": _fair_1x2(m.home_odds, m.draw_odds, m.away_odds),
-                    "odds": {"home_win": float(m.home_odds), "draw": float(m.draw_odds), "away_win": float(m.away_odds)},
-                    "label": _outcome_label(int(m.home_score), int(m.away_score)),
-                }
+        yield from _walkforward_for_competition(
+            comp,
+            comp_matches,
+            refit_days=refit_days,
+            min_weighted_matches=min_weighted_matches,
+            rho=rho,
+        )
 
 
 def run_walk_forward(

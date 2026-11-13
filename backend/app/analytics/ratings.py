@@ -14,6 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -211,8 +212,14 @@ def upsert_team_rating(
     away_goals_avg: float = 0.0,
     weighted_matches: Optional[float] = None,
     last_match_at: Optional[datetime] = None,
+    commit: bool = True,
 ) -> TeamRating:
-    """Create or update a team rating record."""
+    """Create or update a team rating record.
+
+    ``commit=False`` lets a caller that writes many ratings commit once.
+    Each commit expires every object in the session, so committing per team
+    while a full history is loaded is quadratic in the history size.
+    """
     if weighted_matches is None:
         weighted_matches = float(matches_played)
     clean = rating_key(team_name)
@@ -247,9 +254,100 @@ def upsert_team_rating(
             last_match_at=last_match_at,
         )
         db.add(rating)
-    db.commit()
-    db.refresh(rating)
+    if commit:
+        db.commit()
+        db.refresh(rating)
     return rating
+
+
+def fit_strength_arrays(
+    home_idx: np.ndarray,
+    away_idx: np.ndarray,
+    weights: np.ndarray,
+    home_goals: np.ndarray,
+    away_goals: np.ndarray,
+    n_teams: int,
+    league_avg_home: float,
+    league_avg_away: float,
+    iterations: int = 10,
+) -> Dict[str, np.ndarray]:
+    """Vectorised attack/defence solve over per-team index arrays.
+
+    Same algorithm as the loop formulation -- posterior means with
+    ``PRIOR_MATCHES`` pseudo-matches, weighted by decay -- but expressed with
+    ``bincount`` so a 26-year refit stays minutes instead of hours. The sums
+    that do not depend on the current strengths (scored, conceded, weights)
+    are hoisted out of the iteration.
+    """
+    home_idx = np.asarray(home_idx, dtype=np.int64)
+    away_idx = np.asarray(away_idx, dtype=np.int64)
+    weights = np.asarray(weights, dtype=np.float64)
+    home_goals = np.asarray(home_goals, dtype=np.float64)
+    away_goals = np.asarray(away_goals, dtype=np.float64)
+
+    home_weight = np.bincount(home_idx, weights=weights, minlength=n_teams)
+    away_weight = np.bincount(away_idx, weights=weights, minlength=n_teams)
+    weight_sum = home_weight + away_weight
+    scored = np.bincount(home_idx, weights=weights * home_goals, minlength=n_teams) + np.bincount(
+        away_idx, weights=weights * away_goals, minlength=n_teams
+    )
+    conceded = np.bincount(home_idx, weights=weights * away_goals, minlength=n_teams) + np.bincount(
+        away_idx, weights=weights * home_goals, minlength=n_teams
+    )
+    home_weighted_goals = np.bincount(home_idx, weights=weights * home_goals, minlength=n_teams)
+    away_weighted_goals = np.bincount(away_idx, weights=weights * away_goals, minlength=n_teams)
+
+    attack = np.ones(n_teams)
+    defence = np.ones(n_teams)
+    empty = weight_sum <= 0.0
+
+    for _ in range(iterations):
+        exp_home = league_avg_home * defence[away_idx]
+        exp_away = league_avg_away * defence[home_idx]
+        expected_scored = np.bincount(
+            home_idx, weights=weights * exp_home, minlength=n_teams
+        ) + np.bincount(away_idx, weights=weights * exp_away, minlength=n_teams)
+        expected_conceded = np.bincount(
+            home_idx, weights=weights * exp_away, minlength=n_teams
+        ) + np.bincount(away_idx, weights=weights * exp_home, minlength=n_teams)
+
+        attack = (scored + PRIOR_MATCHES) / (expected_scored + PRIOR_MATCHES)
+        defence = (conceded + PRIOR_MATCHES) / (expected_conceded + PRIOR_MATCHES)
+        attack[empty] = 1.0
+        defence[empty] = 1.0
+
+        total_w = float(weight_sum.sum()) or 1.0
+        mean_attack = float((attack * weight_sum).sum()) / total_w
+        mean_defence = float((defence * weight_sum).sum()) / total_w
+        if mean_attack > 0.0:
+            attack = attack / mean_attack
+        if mean_defence > 0.0:
+            defence = defence / mean_defence
+
+    home_goals_avg = np.where(
+        home_weight > 0.0,
+        home_weighted_goals / np.where(home_weight > 0.0, home_weight, 1.0),
+        league_avg_home,
+    )
+    away_goals_avg = np.where(
+        away_weight > 0.0,
+        away_weighted_goals / np.where(away_weight > 0.0, away_weight, 1.0),
+        league_avg_away,
+    )
+    boost = np.maximum(0.0, (home_goals_avg / np.maximum(0.5, away_goals_avg)) - 1.0)
+
+    return {
+        "attack": attack,
+        "defence": defence,
+        "weighted_matches": weight_sum,
+        "boost": boost,
+        "home_goals_avg": home_goals_avg,
+        "away_goals_avg": away_goals_avg,
+        "matches_played": (
+            np.bincount(home_idx, minlength=n_teams)
+            + np.bincount(away_idx, minlength=n_teams)
+        ).astype(np.int64),
+    }
 
 
 def fit_competition(
@@ -259,68 +357,40 @@ def fit_competition(
     iterations: int = 10,
 ) -> Dict[str, Dict[str, float]]:
     """Iteratively solve attack/defence strengths with shrinkage and decay weights."""
-    teams = {m["home"] for m in matches} | {m["away"] for m in matches}
-    attack = {t: 1.0 for t in teams}
-    defence = {t: 1.0 for t in teams}
+    teams = sorted({m["home"] for m in matches} | {m["away"] for m in matches})
+    index = {team: i for i, team in enumerate(teams)}
+    n_teams = len(teams)
 
-    for _ in range(iterations):
-        scored = defaultdict(float)
-        conceded = defaultdict(float)
-        expected_scored = defaultdict(float)
-        expected_conceded = defaultdict(float)
-        weight_sum = defaultdict(float)
+    fitted = fit_strength_arrays(
+        home_idx=np.fromiter((index[m["home"]] for m in matches), dtype=np.int64, count=len(matches)),
+        away_idx=np.fromiter((index[m["away"]] for m in matches), dtype=np.int64, count=len(matches)),
+        weights=np.fromiter((m["weight"] for m in matches), dtype=np.float64, count=len(matches)),
+        home_goals=np.fromiter((m["home_goals"] for m in matches), dtype=np.float64, count=len(matches)),
+        away_goals=np.fromiter((m["away_goals"] for m in matches), dtype=np.float64, count=len(matches)),
+        n_teams=n_teams,
+        league_avg_home=league_avg_home,
+        league_avg_away=league_avg_away,
+        iterations=iterations,
+    )
 
-        for m in matches:
-            w, h, a = m["weight"], m["home"], m["away"]
-            exp_h = league_avg_home * defence[a]
-            exp_a = league_avg_away * defence[h]
+    last_match: Dict[str, datetime] = {}
+    for match in matches:
+        kickoff = match["kickoff"]
+        for team in (match["home"], match["away"]):
+            if team not in last_match or kickoff > last_match[team]:
+                last_match[team] = kickoff
 
-            scored[h] += w * m["home_goals"]
-            conceded[h] += w * m["away_goals"]
-            expected_scored[h] += w * exp_h
-            expected_conceded[h] += w * exp_a
-            scored[a] += w * m["away_goals"]
-            conceded[a] += w * m["home_goals"]
-            expected_scored[a] += w * exp_a
-            expected_conceded[a] += w * exp_h
-            weight_sum[h] += w
-            weight_sum[a] += w
-
-        for t in teams:
-            ev = weight_sum[t]
-            # Posterior mean of a Gamma-ish ratio with PRIOR_MATCHES pseudo-matches at 1.0.
-            attack[t] = (scored[t] + PRIOR_MATCHES * 1.0) / (expected_scored[t] + PRIOR_MATCHES)
-            defence[t] = (conceded[t] + PRIOR_MATCHES * 1.0) / (expected_conceded[t] + PRIOR_MATCHES)
-            if ev <= 0:
-                attack[t] = defence[t] = 1.0
-
-        total_w = sum(weight_sum.values()) or 1.0
-        mean_att = sum(attack[t] * weight_sum[t] for t in teams) / total_w
-        mean_def = sum(defence[t] * weight_sum[t] for t in teams) / total_w
-        if mean_att > 0:
-            attack = {t: v / mean_att for t, v in attack.items()}
-        if mean_def > 0:
-            defence = {t: v / mean_def for t, v in defence.items()}
-
-    result: Dict[str, Dict[str, float]] = {}
-    for t in teams:
-        home_scored = [m for m in matches if m["home"] == t]
-        away_scored = [m for m in matches if m["away"] == t]
-        hw = sum(m["weight"] for m in home_scored) or 0.0
-        aw = sum(m["weight"] for m in away_scored) or 0.0
-        h_goals = (sum(m["weight"] * m["home_goals"] for m in home_scored) / hw) if hw else league_avg_home
-        a_goals = (sum(m["weight"] * m["away_goals"] for m in away_scored) / aw) if aw else league_avg_away
-        boost = max(0.0, (h_goals / max(0.5, a_goals)) - 1.0)
-        last_match = max(m["kickoff"] for m in home_scored + away_scored)
-        result[t] = {
-            "attack": attack[t],
-            "defence": defence[t],
-            "weighted_matches": sum(m["weight"] for m in home_scored + away_scored),
-            "matches_played": len(home_scored) + len(away_scored),
-            "home_goals_avg": h_goals,
-            "away_goals_avg": a_goals,
-            "home_boost": boost,
-            "last_match_at": last_match,
+    result: Dict[str, Dict[str, Any]] = {}
+    for i, team in enumerate(teams):
+        result[team] = {
+            "attack": float(fitted["attack"][i]),
+            "defence": float(fitted["defence"][i]),
+            "weighted_matches": float(fitted["weighted_matches"][i]),
+            "matches_played": int(fitted["matches_played"][i]),
+            "home_goals_avg": float(fitted["home_goals_avg"][i]),
+            "away_goals_avg": float(fitted["away_goals_avg"][i]),
+            "home_boost": float(fitted["boost"][i]),
+            "last_match_at": last_match.get(team),
         }
     return result
 
@@ -396,8 +466,11 @@ def calculate_ratings_from_fixtures(
                 away_goals_avg=values["away_goals_avg"],
                 weighted_matches=values["weighted_matches"],
                 last_match_at=values["last_match_at"],
+                commit=False,
             )
             total_updated += 1
+
+        db.commit()
 
         total_matches += len(rows)
         competitions.append({

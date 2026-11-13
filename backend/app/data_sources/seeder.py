@@ -1,8 +1,8 @@
 from __future__ import annotations
-import io
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 import requests
 from sqlalchemy import select
@@ -31,6 +31,73 @@ DIV_MAPPING = {
     "G1": "Super League Greece",
     "SC0": "Scottish Premiership",
 }
+
+# Pre-2002/03 files predate B365/Avg columns and only carry these books.
+# Order is a preference for one real bookmaker price, never a synthetic one.
+_HOME_PRICE_COLUMNS = ("B365H", "PSH", "BFDH", "WHH", "LBH", "SBH", "IWH", "GBH", "AvgH", "MaxH")
+_DRAW_PRICE_COLUMNS = ("B365D", "PSD", "BFDD", "WHD", "LBD", "SBD", "IWD", "GBD", "AvgD", "MaxD")
+_AWAY_PRICE_COLUMNS = ("B365A", "PSA", "BFDA", "WHA", "LBA", "SBA", "IWA", "GBA", "AvgA", "MaxA")
+
+
+def _first_price(row, columns) -> Optional[float]:
+    """First usable decimal price among ``columns``.
+
+    ``row.get`` returns NaN for a present-but-empty cell, and NaN is truthy,
+    so a plain ``or`` cascade silently loses valid fallbacks.
+    """
+    for column in columns:
+        value = _float_or_none(row.get(column))
+        if value is not None and value > 1.0:
+            return value
+    return None
+
+
+def _decode_csv_bytes(raw: bytes) -> str:
+    """Decode a football-data CSV; the oldest files are Latin-1, not UTF-8."""
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
+_LEGACY_TEAM_COLUMNS = {"HT": "HomeTeam", "AT": "AwayTeam"}
+
+
+def read_football_data_csv(raw: bytes) -> tuple:
+    """Parse a football-data.co.uk CSV, repairing ragged rows.
+
+    The source files occasionally carry extra empty cells (or a short row),
+    which makes ``pandas.read_csv`` abandon the whole file. Padding short rows
+    and trimming trailing empty extras recovers those matches; a row whose
+    extra cells hold real values is too ambiguous to align, so it is dropped
+    and counted. Early Greek files also name the teams ``HT``/``AT``.
+
+    Returns ``(frame, dropped_rows)``.
+    """
+    rows = list(csv.reader(_decode_csv_bytes(raw).splitlines()))
+    if not rows:
+        return pd.DataFrame(), 0
+
+    header = rows[0]
+    if "HomeTeam" not in header and "HT" in header:
+        header = [_LEGACY_TEAM_COLUMNS.get(name, name) for name in header]
+
+    width = len(header)
+    kept = []
+    dropped = 0
+    for row in rows[1:]:
+        if len(row) > width:
+            extras = [cell for cell in row[width:] if cell.strip()]
+            if extras:
+                dropped += 1
+                continue
+            row = row[:width]
+        elif len(row) < width:
+            row = row + [""] * (width - len(row))
+        kept.append(row)
+
+    return pd.DataFrame(kept, columns=header), dropped
+
 
 def _country_for_div(div: str) -> str:
     if div.startswith("E"):
@@ -77,7 +144,12 @@ def parse_football_data_date(date_str: str, time_str: Optional[str] = None) -> d
     # Fallback to pandas
     return pd.to_datetime(f"{raw} {time_part}", utc=True).to_pydatetime()
 
-def import_football_data_dataframe(db: Session, df: pd.DataFrame, default_source: str = "FootballData") -> Dict[str, Any]:
+def import_football_data_dataframe(
+    db: Session,
+    df: pd.DataFrame,
+    default_source: str = "FootballData",
+    recalculate_ratings: bool = True,
+) -> Dict[str, Any]:
     """Ingest match rows from a Football-Data.co.uk formatted DataFrame."""
     required = {"HomeTeam", "AwayTeam", "Date"}
     if not required.issubset(set(df.columns)):
@@ -85,6 +157,7 @@ def import_football_data_dataframe(db: Session, df: pd.DataFrame, default_source
 
     inserted = 0
     duplicates = 0
+    priced = 0
 
     for _, row in df.iterrows():
         home = str(row.get("HomeTeam", "")).strip()
@@ -100,10 +173,11 @@ def import_football_data_dataframe(db: Session, df: pd.DataFrame, default_source
         kickoff = parse_football_data_date(str(row["Date"]), time_val)
         key = make_dedupe_key(kickoff, home, away, comp)
 
-        # Primary odds: Bet365 as default
-        h_odds = _float_or_none(row.get("B365H") or row.get("AvgH") or row.get("MaxH"))
-        d_odds = _float_or_none(row.get("B365D") or row.get("AvgD") or row.get("MaxD"))
-        a_odds = _float_or_none(row.get("B365A") or row.get("AvgA") or row.get("MaxA"))
+        h_odds = _first_price(row, _HOME_PRICE_COLUMNS)
+        d_odds = _first_price(row, _DRAW_PRICE_COLUMNS)
+        a_odds = _first_price(row, _AWAY_PRICE_COLUMNS)
+        if h_odds is not None and d_odds is not None and a_odds is not None:
+            priced += 1
 
         # Multi-bookmaker odds (BetVictor=BV, Betway=BW, Pinnacle=PS, Max=MaxOdds)
         bv_h = _float_or_none(row.get("BVH") or row.get("BWH"))
@@ -184,15 +258,28 @@ def import_football_data_dataframe(db: Session, df: pd.DataFrame, default_source
 
     db.commit()
 
-    # Recalculate ratings from the imported scores
-    rating_res = calculate_ratings_from_fixtures(db)
+    # Bulk history imports defer this: rebuilding every competition's ratings
+    # after each of hundreds of files is quadratic and changes nothing.
+    rating_res = (
+        calculate_ratings_from_fixtures(db)
+        if recalculate_ratings
+        else {"updated_teams": 0}
+    )
+
+    calibrated = rating_res.get("updated_teams", 0)
+    message = f"Successfully ingested {len(df)} matches ({inserted} new, {duplicates} updated)."
+    if recalculate_ratings:
+        message += f" Calibrated {calibrated} team ratings."
+    else:
+        message += " Ratings rebuild deferred."
 
     return {
         "inserted": inserted,
         "duplicates": duplicates,
         "total_processed": len(df),
-        "teams_rated": rating_res.get("updated_teams", 0),
-        "message": f"Successfully ingested {len(df)} matches ({inserted} new, {duplicates} updated). Calibrated {rating_res.get('updated_teams', 0)} team ratings."
+        "priced": priced,
+        "teams_rated": calibrated,
+        "message": message,
     }
 
 def seed_sample_historical_data(db: Session, filepath: str = "data/historical_epl_sample.csv") -> Dict[str, Any]:
@@ -251,8 +338,7 @@ def fetch_and_import_url(db: Session, url: str, default_source: str = "FootballD
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
     res = requests.get(url, headers=headers, timeout=15)
     res.raise_for_status()
-    content = res.content.decode("utf-8-sig", errors="replace")
-    df = pd.read_csv(io.StringIO(content))
+    df, _dropped = read_football_data_csv(res.content)
     return import_football_data_dataframe(db, df, default_source=default_source)
 
 def fetch_live_upcoming_fixtures(db: Session) -> Dict[str, Any]:
@@ -280,6 +366,40 @@ MAJOR_DIVISIONS = [
     ("SC0", "Scottish Premiership"),
     ("G1", "Super League Greece"),
 ]
+
+# Every division football-data.co.uk publishes, which is also what the
+# historical backfill ingests: 12 countries, top two tiers, 2000/01 onward.
+HISTORICAL_DIVISIONS = [
+    ("E0", "Premier League"),
+    ("E1", "Championship"),
+    ("E2", "League One"),
+    ("E3", "League Two"),
+    ("SC0", "Scottish Premiership"),
+    ("SP1", "La Liga"),
+    ("SP2", "Segunda Division"),
+    ("I1", "Serie A"),
+    ("I2", "Serie B"),
+    ("D1", "Bundesliga"),
+    ("D2", "2. Bundesliga"),
+    ("F1", "Ligue 1"),
+    ("F2", "Ligue 2"),
+    ("N1", "Eredivisie"),
+    ("B1", "Belgian Pro League"),
+    ("P1", "Primeira Liga"),
+    ("T1", "Super Lig"),
+    ("G1", "Super League Greece"),
+]
+
+
+def history_season_codes(first_year: int = 2000, last_year: int = 2026) -> List[str]:
+    """Season codes like ``0001`` (2000/01) through ``2627`` (2026/27)."""
+    if last_year < first_year:
+        raise ValueError("last_year must not precede first_year")
+    return [
+        f"{year % 100:02d}{(year + 1) % 100:02d}"
+        for year in range(first_year, last_year + 1)
+    ]
+
 
 def fetch_all_major_leagues(db: Session, season: str = "2324") -> Dict[str, Any]:
     """Automatically ingest complete season results & odds for all 5 major European leagues and calibrate team ratings."""

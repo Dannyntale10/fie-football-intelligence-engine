@@ -4,149 +4,229 @@
   "method": "per-outcome log-opinion pool, renormalised",
   "verdict": "blend_matches_market",
   "weights": {
-    "default": 0.003,
+    "default": 0.04,
     "temperature": 0.5,
     "per_competition": {
-      "belgian pro league": 0.001,
+      "ligue 1": 0.055,
+      "scottish premiership": 0.045,
       "championship": 0.001,
-      "primeira liga": 0.001,
-      "la liga": 0.038,
-      "ligue 1": 0.001,
-      "premier league": 0.001,
-      "super lig": 0.048,
-      "eredivisie": 0.008,
-      "bundesliga": 0.072,
-      "serie a": 0.101
+      "league one": 0.015,
+      "league two": 0.001,
+      "ligue 2": 0.025,
+      "belgian pro league": 0.079,
+      "eredivisie": 0.084,
+      "premier league": 0.055,
+      "super lig": 0.074,
+      "bundesliga": 0.055,
+      "2 bundesliga": 0.011,
+      "primeira liga": 0.122,
+      "segunda division": 0.013,
+      "serie b": 0.035,
+      "la liga": 0.04,
+      "serie a": 0.04,
+      "super league greece": 0.112
     }
   },
   "train": {
-    "n_matches": 2503,
-    "n_competitions": 12,
-    "weight": 0.003,
+    "n_matches": 119152,
+    "n_competitions": 18,
+    "weight": 0.04,
     "temperature": 0.5,
-    "log_loss": 0.953619,
-    "from": "2023-08-26T15:00:00+00:00",
-    "to": "2024-03-09T17:45:00+00:00"
+    "log_loss": 1.004368,
+    "from": "2000-08-26T15:00:00+00:00",
+    "to": "2018-12-22T15:00:00+00:00"
   },
   "holdout": {
-    "n_matches": 1073,
-    "n_competitions": 12,
-    "from": "2024-03-09T18:00:00+00:00",
-    "to": "2024-06-02T17:00:00+00:00",
+    "n_matches": 51065,
+    "n_competitions": 18,
+    "from": "2018-12-22T15:00:00+00:00",
+    "to": "2026-11-09T19:30:00+00:00",
     "model": {
-      "n_matches": 1073,
-      "brier": 0.597938,
-      "log_loss": 0.999956,
-      "accuracy_percent": 50.7
+      "n_matches": 51065,
+      "brier": 0.618145,
+      "log_loss": 1.029638,
+      "accuracy_percent": 47.74
     },
     "market": {
-      "n_matches": 1073,
-      "brier": 0.568637,
-      "log_loss": 0.958034,
-      "accuracy_percent": 54.33
+      "n_matches": 51065,
+      "brier": 0.596856,
+      "log_loss": 0.998988,
+      "accuracy_percent": 50.6
     },
     "blend": {
-      "n_matches": 1073,
-      "brier": 0.568666,
-      "log_loss": 0.958062,
-      "accuracy_percent": 54.24
+      "n_matches": 51065,
+      "brier": 0.596935,
+      "log_loss": 0.999058,
+      "accuracy_percent": 50.56
     },
     "skill": {
-      "brier_improvement_over_market": -2.9e-05,
-      "log_loss_improvement_over_market": -2.8e-05,
+      "brier_improvement_over_market": -7.9e-05,
+      "log_loss_improvement_over_market": -7e-05,
       "validated": false
     }
   },
   "per_competition": {
     "championship": {
-      "n_train": 392,
-      "n_holdout": 112,
+      "n_train": 9951,
+      "n_holdout": 4301,
       "raw_weight": 0.0,
       "weight": 0.001,
-      "model_brier": 0.665522,
-      "market_brier": 0.640022,
-      "blend_brier": 0.640085
+      "model_brier": 0.641205,
+      "market_brier": 0.623555,
+      "blend_brier": 0.623558
+    },
+    "league two": {
+      "n_train": 9885,
+      "n_holdout": 4162,
+      "raw_weight": 0.0,
+      "weight": 0.001,
+      "model_brier": 0.649132,
+      "market_brier": 0.63479,
+      "blend_brier": 0.634793
+    },
+    "league one": {
+      "n_train": 9860,
+      "n_holdout": 4103,
+      "raw_weight": 0.015,
+      "weight": 0.015,
+      "model_brier": 0.631736,
+      "market_brier": 0.610459,
+      "blend_brier": 0.610456
+    },
+    "segunda division": {
+      "n_train": 8125,
+      "n_holdout": 3555,
+      "raw_weight": 0.013,
+      "weight": 0.013,
+      "model_brier": 0.641295,
+      "market_brier": 0.626548,
+      "blend_brier": 0.626521
     },
     "la liga": {
-      "n_train": 232,
-      "n_holdout": 107,
-      "raw_weight": 0.06,
-      "weight": 0.038,
-      "model_brier": 0.576023,
-      "market_brier": 0.547677,
-      "blend_brier": 0.546727
+      "n_train": 6830,
+      "n_holdout": 2982,
+      "raw_weight": 0.04,
+      "weight": 0.04,
+      "model_brier": 0.594487,
+      "market_brier": 0.575774,
+      "blend_brier": 0.575259
     },
     "premier league": {
-      "n_train": 232,
-      "n_holdout": 107,
-      "raw_weight": 0.0,
-      "weight": 0.001,
-      "model_brier": 0.567481,
-      "market_brier": 0.518923,
-      "blend_brier": 0.518926
+      "n_train": 6831,
+      "n_holdout": 2946,
+      "raw_weight": 0.055,
+      "weight": 0.055,
+      "model_brier": 0.598625,
+      "market_brier": 0.574163,
+      "blend_brier": 0.574455
     },
     "serie a": {
-      "n_train": 213,
-      "n_holdout": 106,
-      "raw_weight": 0.17,
-      "weight": 0.101,
-      "model_brier": 0.666074,
-      "market_brier": 0.64527,
-      "blend_brier": 0.65291
+      "n_train": 6502,
+      "n_holdout": 2942,
+      "raw_weight": 0.04,
+      "weight": 0.04,
+      "model_brier": 0.601136,
+      "market_brier": 0.572813,
+      "blend_brier": 0.572953
+    },
+    "serie b": {
+      "n_train": 7811,
+      "n_holdout": 2906,
+      "raw_weight": 0.035,
+      "weight": 0.035,
+      "model_brier": 0.651276,
+      "market_brier": 0.632546,
+      "blend_brier": 0.633
+    },
+    "ligue 2": {
+      "n_train": 6735,
+      "n_holdout": 2667,
+      "raw_weight": 0.025,
+      "weight": 0.025,
+      "model_brier": 0.647976,
+      "market_brier": 0.629275,
+      "blend_brier": 0.629399
     },
     "super lig": {
-      "n_train": 243,
-      "n_holdout": 94,
+      "n_train": 5435,
+      "n_holdout": 2647,
       "raw_weight": 0.075,
-      "weight": 0.048,
-      "model_brier": 0.568183,
-      "market_brier": 0.533837,
-      "blend_brier": 0.53267
-    },
-    "primeira liga": {
-      "n_train": 180,
-      "n_holdout": 88,
-      "raw_weight": 0.0,
-      "weight": 0.001,
-      "model_brier": 0.550098,
-      "market_brier": 0.530019,
-      "blend_brier": 0.530004
+      "weight": 0.074,
+      "model_brier": 0.608879,
+      "market_brier": 0.582511,
+      "blend_brier": 0.58226
     },
     "ligue 1": {
-      "n_train": 182,
-      "n_holdout": 88,
-      "raw_weight": 0.0,
-      "weight": 0.001,
-      "model_brier": 0.620142,
-      "market_brier": 0.589855,
-      "blend_brier": 0.589873
+      "n_train": 6722,
+      "n_holdout": 2619,
+      "raw_weight": 0.055,
+      "weight": 0.055,
+      "model_brier": 0.613209,
+      "market_brier": 0.588176,
+      "blend_brier": 0.58844
     },
-    "eredivisie": {
-      "n_train": 179,
-      "n_holdout": 88,
-      "raw_weight": 0.013,
-      "weight": 0.008,
-      "model_brier": 0.544495,
-      "market_brier": 0.524667,
-      "blend_brier": 0.524628
+    "primeira liga": {
+      "n_train": 4938,
+      "n_holdout": 2402,
+      "raw_weight": 0.125,
+      "weight": 0.122,
+      "model_brier": 0.574976,
+      "market_brier": 0.544737,
+      "blend_brier": 0.54511
     },
-    "belgian pro league": {
-      "n_train": 195,
-      "n_holdout": 85,
-      "raw_weight": 0.0,
-      "weight": 0.001,
-      "model_brier": 0.619476,
-      "market_brier": 0.602799,
-      "blend_brier": 0.60278
+    "2 bundesliga": {
+      "n_train": 5390,
+      "n_holdout": 2347,
+      "raw_weight": 0.01,
+      "weight": 0.011,
+      "model_brier": 0.636069,
+      "market_brier": 0.628348,
+      "blend_brier": 0.628237
     },
     "bundesliga": {
-      "n_train": 177,
-      "n_holdout": 84,
-      "raw_weight": 0.13,
-      "weight": 0.072,
-      "model_brier": 0.601544,
-      "market_brier": 0.556929,
-      "blend_brier": 0.559836
+      "n_train": 5515,
+      "n_holdout": 2346,
+      "raw_weight": 0.055,
+      "weight": 0.055,
+      "model_brier": 0.601941,
+      "market_brier": 0.57849,
+      "blend_brier": 0.579186
+    },
+    "eredivisie": {
+      "n_train": 5534,
+      "n_holdout": 2327,
+      "raw_weight": 0.085,
+      "weight": 0.084,
+      "model_brier": 0.582773,
+      "market_brier": 0.556502,
+      "blend_brier": 0.55733
+    },
+    "belgian pro league": {
+      "n_train": 4875,
+      "n_holdout": 2236,
+      "raw_weight": 0.08,
+      "weight": 0.079,
+      "model_brier": 0.612903,
+      "market_brier": 0.58562,
+      "blend_brier": 0.586196
+    },
+    "super league greece": {
+      "n_train": 4067,
+      "n_holdout": 1839,
+      "raw_weight": 0.115,
+      "weight": 0.112,
+      "model_brier": 0.588322,
+      "market_brier": 0.556779,
+      "blend_brier": 0.558061
+    },
+    "scottish premiership": {
+      "n_train": 4146,
+      "n_holdout": 1738,
+      "raw_weight": 0.045,
+      "weight": 0.045,
+      "model_brier": 0.573277,
+      "market_brier": 0.553121,
+      "blend_brier": 0.55279
     }
   },
   "params": {
@@ -156,6 +236,6 @@
     "min_holdout": 60,
     "scope": "1x2"
   },
-  "message": "The fitted weight is 0.003: on this history the model adds nothing to the de-vigged market price, so the blend falls back to the market. That is the honest result. Improve the model before expecting independent 1X2 edges; EV slips stay gated off.",
-  "generated_at": "2026-11-12T16:33:34.350509+00:00"
+  "message": "Blend and market are within 0.002 Brier on the holdout (0.596935 vs 0.596856). Treat the difference as noise.",
+  "generated_at": "2026-11-13T12:19:24.610832+00:00"
 }

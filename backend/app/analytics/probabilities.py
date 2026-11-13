@@ -54,6 +54,60 @@ def dixon_coles_score_grid(
     return {score: probability / total for score, probability in grid.items()}
 
 
+def outcome_1x2_from_lambdas(
+    home_lambdas,
+    away_lambdas,
+    max_goals: int = 10,
+    rho: float = -0.10,
+) -> List[Dict[str, float]]:
+    """Vectorised 1X2 probabilities for many fixtures at once.
+
+    Same Dixon-Coles grid and 4-decimal rounding as
+    :func:`poisson_market_probabilities`, but it skips the unrelated markets
+    so walk-forward replays over tens of thousands of matches stay cheap.
+    """
+    import numpy as np
+
+    home_flat = np.asarray(home_lambdas, dtype=np.float64).reshape(-1)
+    away_flat = np.asarray(away_lambdas, dtype=np.float64).reshape(-1)
+    if home_flat.shape != away_flat.shape:
+        raise ValueError("home and away lambdas must have the same length")
+
+    home = home_flat[:, None, None]
+    away = away_flat[:, None, None]
+    goals = np.arange(max_goals + 1, dtype=np.float64)
+    factorials = np.array([math.factorial(k) for k in range(max_goals + 1)], dtype=np.float64)
+
+    pmf_home = np.exp(-home) * home ** goals[None, :, None] / factorials[None, :, None]
+    pmf_away = np.exp(-away) * away ** goals[None, None, :] / factorials[None, None, :]
+
+    tau = np.ones_like(pmf_home * pmf_away)
+    tau[:, 0, 0] = np.maximum(0.0, 1.0 - home_flat * away_flat * rho)
+    tau[:, 0, 1] = np.maximum(0.0, 1.0 + home_flat * rho)
+    tau[:, 1, 0] = np.maximum(0.0, 1.0 + away_flat * rho)
+    tau[:, 1, 1] = np.maximum(0.0, 1.0 - rho)
+
+    grid = tau * pmf_home * pmf_away
+    total = grid.sum(axis=(1, 2))[:, None, None]
+    total[total <= 0.0] = 1.0
+    grid = grid / total
+
+    rows = goals[:, None]
+    cols = goals[None, :]
+    home_win = (grid * (rows > cols)).sum(axis=(1, 2))
+    draw = (grid * (rows == cols)).sum(axis=(1, 2))
+    away_win = (grid * (rows < cols)).sum(axis=(1, 2))
+
+    return [
+        {
+            "home_win": round(float(home_win[i]), 4),
+            "draw": round(float(draw[i]), 4),
+            "away_win": round(float(away_win[i]), 4),
+        }
+        for i in range(home_flat.size)
+    ]
+
+
 def poisson_market_probabilities(
     home_lambda: float,
     away_lambda: float,

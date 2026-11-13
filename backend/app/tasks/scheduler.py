@@ -23,6 +23,7 @@ SCHEDULE = {
     "shortlist": "07:30",
     "odds_minutes": 30,
     "odds_window": "06-23",
+    "live_minutes": 5,
     "lineup_lead_minutes": "60-90",
     "results": "02:30",
     "analytics": "23:00",
@@ -264,13 +265,36 @@ def settle_and_capture() -> Dict[str, Any]:
         return {"error": str(error)}
 
 
+def live_snapshot() -> Dict[str, Any]:
+    """Refresh live scores and keep the forecast ledger current."""
+    try:
+        from app.data_sources.inplay import refresh_live_scores
+        from app.live.ledger import record_live_snapshots, settle_live_predictions
+
+        db = _session()
+        try:
+            refresh = refresh_live_scores(db, force=True)
+            written = record_live_snapshots(db)
+            settled = settle_live_predictions(db)
+        finally:
+            db.close()
+        return {"refresh": refresh, "snapshots": written, "settlement": settled}
+    except Exception as error:
+        logger.error("[Scheduler] live snapshot failed: %s", error)
+        return {"error": str(error)}
+
+
 def update_results() -> Dict[str, Any]:
     try:
         from app.betting.result_tracker import fetch_and_update_results
+        from app.live.ledger import settle_live_predictions
 
         db = _session()
-        result = fetch_and_update_results(db)
-        db.close()
+        try:
+            result = fetch_and_update_results(db)
+            result["live_settled"] = settle_live_predictions(db)
+        finally:
+            db.close()
         return result
     except Exception as error:
         logger.error("[Scheduler] results update failed: %s", error)
@@ -353,6 +377,11 @@ def start_scheduler() -> Optional[object]:
             id="odds_refresh",
         )
         scheduler.add_job(monitor_lineups, CronTrigger(minute="*/15", hour="5-23", timezone=EAT_TZ), id="lineups")
+        scheduler.add_job(
+            live_snapshot,
+            CronTrigger(minute=f"*/{SCHEDULE['live_minutes']}"),
+            id="live_snapshot",
+        )
         scheduler.add_job(
             deliver_notifications,
             CronTrigger(minute=f"*/{SCHEDULE['delivery_minutes']}", hour="6-23", timezone=EAT_TZ),

@@ -35,11 +35,14 @@ class FixtureOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class LiveFixtureOut(FixtureOut):
+    live_prediction: Optional[Dict[str, Any]] = None
+
 class LiveFixturesOut(BaseModel):
     as_of: datetime
     refreshed: bool
     warning: Optional[str] = None
-    fixtures: List[FixtureOut]
+    fixtures: List[LiveFixtureOut]
 
 class ImportSummaryOut(BaseModel):
     inserted: int

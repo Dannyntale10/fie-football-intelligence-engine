@@ -17,9 +17,19 @@ def _cleanup_fixtures():
     yield
     db = SessionLocal()
     try:
-        db.query(Fixture).filter(
-            Fixture.dedupe_key.like("live-endpoint-%")
-        ).delete(synchronize_session=False)
+        ids = [
+            row[0]
+            for row in db.query(Fixture.id)
+            .filter(Fixture.dedupe_key.like("live-endpoint-%"))
+            .all()
+        ]
+        if ids:
+            from app.models.live import LivePrediction
+
+            db.query(LivePrediction).filter(
+                LivePrediction.fixture_id.in_(ids)
+            ).delete(synchronize_session=False)
+            db.query(Fixture).filter(Fixture.id.in_(ids)).delete(synchronize_session=False)
         db.commit()
     finally:
         db.close()
@@ -87,3 +97,68 @@ def test_live_endpoint_survives_a_feed_outage(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["warning"] == "feed down"
+
+
+def test_live_endpoint_includes_the_prediction_block(monkeypatch):
+    from app.live import ledger
+
+    fixture_id = _insert_live_fixture()
+    monkeypatch.setattr(
+        main_module,
+        "refresh_live_scores",
+        lambda db, force=False: {"refreshed": True, "updated": 0, "skipped": 0, "warning": None},
+    )
+    monkeypatch.setattr(
+        ledger,
+        "analyze_fixture",
+        lambda fixture, db=None, as_of=None: {
+            "estimated_lambdas": {"home_lambda": 1.6, "away_lambda": 0.9},
+            "lambda_source": "market_odds",
+            "all_markets": {"home_win": 0.55, "draw": 0.25, "away_win": 0.20},
+        },
+    )
+
+    response = client.get("/fixtures/live")
+
+    assert response.status_code == 200
+    row = next(
+        item for item in response.json()["fixtures"] if item["id"] == fixture_id
+    )
+    block = row["live_prediction"]
+    assert block["status"] == "ok"
+    assert block["minute"] == 67
+    assert block["freshness"] == "fresh"
+    assert set(block["probabilities"]) == {"home_win", "draw", "away_win"}
+    assert abs(sum(block["probabilities"].values()) - 1.0) < 1e-3
+    assert block["model_version"] == "live-dc-1"
+
+
+def test_fixture_live_history_is_404_for_unknown_fixture():
+    assert client.get("/fixtures/999999/live").status_code == 404
+
+
+def test_fixture_live_history_is_empty_for_a_scheduled_match():
+    db = SessionLocal()
+    try:
+        fixture = Fixture(
+            dedupe_key=f"live-endpoint-history-{datetime.now(timezone.utc).timestamp()}",
+            kickoff_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            home_team="History Home",
+            away_team="History Away",
+            competition="Fixture Payload League",
+            country="Test",
+            source="Test",
+            status="scheduled",
+        )
+        db.add(fixture)
+        db.commit()
+        db.refresh(fixture)
+        fixture_id = fixture.id
+    finally:
+        db.close()
+
+    response = client.get(f"/fixtures/{fixture_id}/live")
+
+    assert response.status_code == 200
+    assert response.json()["latest"] is None
+    assert response.json()["history"] == []

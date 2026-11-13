@@ -44,6 +44,8 @@ from app.data_sources.seeder import (
 )
 from app.data_sources.live_feed import fetch_live_upcoming_fixtures_espn
 from app.data_sources.inplay import refresh_live_scores
+from app.live.ledger import record_live_snapshots, settle_live_predictions
+from app.models.live import LivePrediction
 from app.analytics.backtest import run_backtest
 from app.betting.portfolio import build_daily_portfolio
 from app.betting.combo import generate_high_confidence_combos, top_picks_for_matchday
@@ -145,6 +147,101 @@ def format_eat(dt_val: Optional[datetime]) -> Optional[str]:
     if dt_val.tzinfo is None:
         dt_val = dt_val.replace(tzinfo=timezone.utc)
     return dt_val.astimezone(EAT_TZ).strftime("%a %d %b, %H:%M EAT")
+
+LIVE_FRESH_SECONDS = 180
+LIVE_STALE_SECONDS = 480
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _freshness(observed_at: Optional[datetime], now: datetime) -> str:
+    if observed_at is None:
+        return "expired"
+    age = (now - _as_utc(observed_at)).total_seconds()
+    if age < LIVE_FRESH_SECONDS:
+        return "fresh"
+    if age <= LIVE_STALE_SECONDS:
+        return "stale"
+    return "expired"
+
+
+def _latest_live_prediction(db: Session, fixture_id: int) -> Optional[LivePrediction]:
+    return db.scalar(
+        select(LivePrediction)
+        .where(LivePrediction.fixture_id == fixture_id)
+        .order_by(LivePrediction.minute_bucket.desc(), LivePrediction.id.desc())
+    )
+
+
+def _live_prediction_payload(
+    row: Optional[LivePrediction], now: datetime
+) -> Optional[dict]:
+    if row is None:
+        return None
+
+    freshness = _freshness(row.observed_at, now)
+    status = row.status
+    probabilities = None
+    if row.prob_home is not None and freshness != "expired":
+        probabilities = {
+            "home_win": row.prob_home,
+            "draw": row.prob_draw,
+            "away_win": row.prob_away,
+        }
+    if freshness == "expired":
+        # An old score is worse than no number; the stored row keeps its status.
+        status = "stale"
+
+    prematch = None
+    if row.prematch_home is not None:
+        prematch = {
+            "home_win": row.prematch_home,
+            "draw": row.prematch_draw,
+            "away_win": row.prematch_away,
+        }
+
+    return {
+        "status": status,
+        "observed_at": row.observed_at,
+        "minute": row.minute,
+        "freshness": freshness,
+        "score": {"home": row.home_score, "away": row.away_score},
+        "remaining_minutes": max(0, 90 - row.minute),
+        "probabilities": probabilities,
+        "prematch_probabilities": prematch,
+        "lambda": {"home": row.lambda_home, "away": row.lambda_away},
+        "remaining_lambda": {
+            "home": row.remaining_home_lambda,
+            "away": row.remaining_away_lambda,
+        },
+        "intensity": row.intensity,
+        "intensity_source": row.intensity_source,
+        "lambda_source": row.lambda_source,
+        "model_version": row.model_version,
+    }
+
+
+def _live_history_row(row: LivePrediction) -> dict:
+    return {
+        "minute": row.minute,
+        "minute_bucket": row.minute_bucket,
+        "observed_at": row.observed_at,
+        "score": {"home": row.home_score, "away": row.away_score},
+        "probabilities": {
+            "home_win": row.prob_home,
+            "draw": row.prob_draw,
+            "away_win": row.prob_away,
+        },
+        "result": row.result,
+        "extra_home_goals": row.extra_home_goals,
+        "extra_away_goals": row.extra_away_goals,
+        "brier": row.brier,
+        "log_loss": row.log_loss,
+        "top_pick_correct": row.top_pick_correct,
+    }
+
 
 def _build_fixture_out(f: Fixture, custom_signals: Optional[dict] = None) -> dict:
     signals = evaluate_fixture_signals(f, custom_signals=custom_signals)
@@ -260,18 +357,31 @@ def delete_past_fixtures(db: Session = Depends(get_db)):
 
 @app.get("/fixtures/live", response_model=LiveFixturesOut)
 def live_fixtures(db: Session = Depends(get_db)):
-    """Refresh (throttled) and return stored in-play fixtures with scores and clock."""
+    """Refresh, snapshot, settle, then serve the stored rows."""
     refresh = refresh_live_scores(db)
+    record_live_snapshots(db)
+    settle_live_predictions(db)
+
+    now = datetime.now(timezone.utc)
     rows = db.scalars(
         select(Fixture)
         .where(Fixture.status.in_(("live", "halftime")))
         .order_by(Fixture.kickoff_utc.asc())
     ).all()
+
+    fixtures = []
+    for fixture in rows:
+        item = _build_fixture_out(fixture)
+        item["live_prediction"] = _live_prediction_payload(
+            _latest_live_prediction(db, fixture.id), now
+        )
+        fixtures.append(item)
+
     return {
-        "as_of": datetime.now(timezone.utc),
+        "as_of": now,
         "refreshed": bool(refresh.get("refreshed")),
         "warning": refresh.get("warning"),
-        "fixtures": [_build_fixture_out(f) for f in rows],
+        "fixtures": fixtures,
     }
 
 @app.get("/fixtures/{fixture_id}", response_model=FixtureOut)
@@ -280,6 +390,32 @@ def get_fixture(fixture_id: int, db: Session = Depends(get_db)):
     if not fixture:
         raise HTTPException(status_code=404, detail="Fixture not found")
     return _build_fixture_out(fixture)
+
+@app.get("/fixtures/{fixture_id}/live")
+def fixture_live_history(fixture_id: int, db: Session = Depends(get_db)):
+    fixture = db.get(Fixture, fixture_id)
+    if not fixture:
+        raise HTTPException(status_code=404, detail="Fixture not found")
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+    history = db.scalars(
+        select(LivePrediction)
+        .where(
+            LivePrediction.fixture_id == fixture_id,
+            LivePrediction.result.isnot(None),
+            LivePrediction.settled_at >= cutoff,
+        )
+        .order_by(LivePrediction.minute_bucket.asc())
+    ).all()
+
+    return {
+        "fixture_id": fixture_id,
+        "latest": _live_prediction_payload(
+            _latest_live_prediction(db, fixture_id), now
+        ),
+        "history": [_live_history_row(row) for row in history],
+    }
 
 @app.post("/fixtures/import-csv", response_model=ImportSummaryOut)
 def import_csv(request: FixtureImportRequest, db: Session = Depends(get_db)):

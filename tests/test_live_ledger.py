@@ -190,3 +190,48 @@ def test_settlement_scores_each_open_snapshot_once():
             assert row.settled_at is not None
     finally:
         db.close()
+
+
+def test_settlement_reaches_a_row_whose_fixture_finished_days_ago():
+    db = SessionLocal()
+    try:
+        fixture = _fixture(
+            status="finished",
+            kickoff_utc=NOW - timedelta(days=30),
+            home_score=0,
+            away_score=2,
+        )
+        db.add(fixture)
+        db.commit()
+        db.refresh(fixture)
+
+        db.add(
+            LivePrediction(
+                fixture_id=fixture.id,
+                minute=60,
+                minute_bucket=60,
+                observed_at=NOW - timedelta(days=30) + timedelta(minutes=60),
+                home_score=0,
+                away_score=0,
+                prob_home=0.60,
+                prob_draw=0.25,
+                prob_away=0.15,
+                status="ok",
+                model_version="live-dc-1",
+            )
+        )
+        db.commit()
+
+        ledger.settle_live_predictions(db, now=NOW)
+
+        row = db.query(LivePrediction).filter(
+            LivePrediction.fixture_id == fixture.id
+        ).one()
+        assert row.result == "away_win"
+        assert row.extra_home_goals == 0
+        assert row.extra_away_goals == 2
+        assert row.top_pick_correct is False
+        assert abs(row.brier - (0.36 + 0.0625 + 0.7225)) < 1e-6
+        assert row.settled_at is not None
+    finally:
+        db.close()

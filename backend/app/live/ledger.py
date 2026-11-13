@@ -173,46 +173,38 @@ def settle_live_predictions(
     """Score open forecasts against the final result exactly once."""
     now = now or datetime.now(timezone.utc)
 
-    fixtures = db.scalars(
-        select(Fixture)
+    open_rows = db.execute(
+        select(LivePrediction, Fixture)
+        .join(Fixture, Fixture.id == LivePrediction.fixture_id)
+        .where(LivePrediction.result.is_(None))
+        .where(LivePrediction.status == "ok")
         .where(Fixture.status == "finished")
         .where(Fixture.home_score.isnot(None))
         .where(Fixture.away_score.isnot(None))
     ).all()
 
     settled = 0
-    for fixture in fixtures:
-        open_rows = db.scalars(
-            select(LivePrediction).where(
-                LivePrediction.fixture_id == fixture.id,
-                LivePrediction.result.is_(None),
-                LivePrediction.prob_home.isnot(None),
-            )
-        ).all()
-        if not open_rows:
-            continue
-
+    for row, fixture in open_rows:
         home_goals = int(fixture.home_score)
         away_goals = int(fixture.away_score)
         label = _label(home_goals, away_goals)
         index = OUTCOMES.index(label)
 
-        for row in open_rows:
-            probabilities = (row.prob_home, row.prob_draw, row.prob_away)
-            row.result = label
-            row.extra_home_goals = home_goals - int(row.home_score or 0)
-            row.extra_away_goals = away_goals - int(row.away_score or 0)
-            row.brier = round(
-                sum(
-                    (probability - (1.0 if position == index else 0.0)) ** 2
-                    for position, probability in enumerate(probabilities)
-                ),
-                6,
-            )
-            row.log_loss = round(-math.log(max(1e-9, probabilities[index])), 6)
-            row.top_pick_correct = max(range(3), key=lambda i: probabilities[i]) == index
-            row.settled_at = now
-            settled += 1
+        probabilities = (row.prob_home, row.prob_draw, row.prob_away)
+        row.result = label
+        row.extra_home_goals = home_goals - int(row.home_score or 0)
+        row.extra_away_goals = away_goals - int(row.away_score or 0)
+        row.brier = round(
+            sum(
+                (probability - (1.0 if position == index else 0.0)) ** 2
+                for position, probability in enumerate(probabilities)
+            ),
+            6,
+        )
+        row.log_loss = round(-math.log(max(1e-9, probabilities[index])), 6)
+        row.top_pick_correct = max(range(3), key=lambda i: probabilities[i]) == index
+        row.settled_at = now
+        settled += 1
 
     db.commit()
     return {"settled": settled}

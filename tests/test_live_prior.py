@@ -1,4 +1,5 @@
 """The live prior may only use prices provably captured before kickoff."""
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -76,6 +77,45 @@ def test_fixture_fallback_needs_a_provable_capture_time():
 
         assert resolve(db, fixture, before=KICKOFF) is None
         assert resolve(db, fixture) is not None
+    finally:
+        _cleanup(db)
+        db.close()
+
+
+def _totals_json(captured):
+    """A totals payload shaped exactly like ``merge_market_prices`` writes it."""
+    return json.dumps(
+        {
+            key: {
+                "price": 1.9,
+                "bookmaker": "Book",
+                "source": "Test",
+                "captured_at": captured.isoformat(),
+            }
+            for key in ("over_2_5", "under_2_5")
+        }
+    )
+
+
+def test_frozen_prior_refuses_totals_captured_after_kickoff():
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        _add_quote(db, 990001, "EarlyBook", 1.80, 3.60, 4.50, KICKOFF - timedelta(hours=3))
+        db.commit()
+
+        late = _fixture()
+        late.market_odds_json = _totals_json(KICKOFF + timedelta(minutes=30))
+        early = _fixture()
+        early.market_odds_json = _totals_json(KICKOFF - timedelta(hours=1))
+
+        frozen_late = analyze_fixture(late, db=db, as_of=KICKOFF)
+        current_late = analyze_fixture(late, db=db)
+        frozen_early = analyze_fixture(early, db=db, as_of=KICKOFF)
+
+        assert frozen_late["lambda_source"] == "market_draw"
+        assert current_late["lambda_source"] == "market_totals"
+        assert frozen_early["lambda_source"] == "market_totals"
     finally:
         _cleanup(db)
         db.close()

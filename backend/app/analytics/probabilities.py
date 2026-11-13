@@ -421,7 +421,23 @@ def _solve_total_goals(target_prob, evaluator, low: float = 0.8, high: float = 7
     return (lo + hi) / 2.0
 
 
-def _market_json(fixture: Any) -> Dict[str, float]:
+def _captured_at(value: Any) -> Optional[datetime]:
+    """Parse a stored capture stamp into an aware UTC datetime, or ``None``."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    from app.analytics.market_reference import _aware
+
+    return _aware(parsed)
+
+
+def _market_json(fixture: Any, before: Optional[datetime] = None) -> Dict[str, float]:
     import json
 
     raw = getattr(fixture, "market_odds_json", None)
@@ -433,10 +449,21 @@ def _market_json(fixture: Any) -> Dict[str, float]:
         return {}
     if not isinstance(parsed, dict):
         return {}
+    cutoff = _captured_at(before) if before is not None else None
     prices: Dict[str, float] = {}
     for key, value in parsed.items():
+        captured_at: Optional[datetime] = None
         if isinstance(value, dict):
+            captured_at = _captured_at(value.get("captured_at"))
             value = value.get("price", value.get("odds"))
+        elif cutoff is not None:
+            # Legacy flat entries carry no capture time, so a frozen prior
+            # cannot prove they were observed before the cutoff.
+            continue
+        # An unknown or post-cutoff capture time cannot be proven pre-kickoff,
+        # so a frozen prior refuses it instead of assuming the best.
+        if cutoff is not None and (captured_at is None or captured_at >= cutoff):
+            continue
         if isinstance(value, (int, float)) and value > 1.0:
             prices[str(key)] = float(value)
     return prices
@@ -445,6 +472,7 @@ def _market_json(fixture: Any) -> Dict[str, float]:
 def estimate_lambdas_from_market(
     fixture: Any,
     prices: Optional[tuple[float, float, float]] = None,
+    as_of: Optional[datetime] = None,
 ) -> tuple[float, float, str]:
     """Infer expected goals from the bookmaker's own prices.
 
@@ -469,7 +497,7 @@ def estimate_lambdas_from_market(
     decisive = fair_home + fair_away
     home_share = fair_home / decisive if decisive > 0 else 0.5
 
-    market = _market_json(fixture)
+    market = _market_json(fixture, before=as_of)
     estimates = []
     for line, (over_key, under_key) in _TOTAL_MARKET_LINES.items():
         over_price, under_price = market.get(over_key), market.get(under_key)
@@ -551,6 +579,7 @@ def analyze_fixture(
                 est_h, est_a, market_source = estimate_lambdas_from_market(
                     fixture,
                     (market_reference.home, market_reference.draw, market_reference.away),
+                    as_of=as_of,
                 )
             else:
                 est_h, est_a, market_source = 1.45, 1.15, "fallback"

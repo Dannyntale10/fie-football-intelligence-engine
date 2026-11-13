@@ -226,10 +226,11 @@ def test_deliver_pending_ignores_unlisted_recipient(allowlist, db):
         return {"ok": True}
 
     try:
-        telegram.deliver_pending(db, transport=transport)
+        result = telegram.deliver_pending(db, transport=transport)
         db.refresh(row)
-        assert row.status == "sent"
-        assert calls[0]["chat_id"] == "42"
+        assert calls == []
+        assert row.status == "pending"
+        assert result["sent"] == 0
     finally:
         db.delete(row)
         db.commit()
@@ -386,4 +387,36 @@ def test_queue_message_dedupes_by_key(db):
         assert len(rows) == 1
     finally:
         db.query(Notification).filter(Notification.dedupe_key == "shortlist:t1").delete()
+        db.commit()
+
+
+def test_allowlist_reads_settings_when_env_is_empty(monkeypatch, db):
+    from app.models.predictions import SystemSetting
+
+    monkeypatch.delenv("TELEGRAM_ALLOWED_CHAT_IDS", raising=False)
+    row = SystemSetting(key="telegram_allowlist", value="7, 8")
+    db.add(row)
+    db.commit()
+    try:
+        assert telegram.allowed_chat_ids(db) == ["7", "8"]
+        assert telegram.is_authorized(7, db) is True
+        assert telegram.allowlist_source(db) == "settings"
+    finally:
+        db.delete(row)
+        db.commit()
+
+
+def test_allowlist_env_overrides_settings(monkeypatch, db):
+    from app.models.predictions import SystemSetting
+
+    row = SystemSetting(key="telegram_allowlist", value="7")
+    db.add(row)
+    db.commit()
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "42")
+    try:
+        assert telegram.allowed_chat_ids(db) == ["42"]
+        assert telegram.is_authorized(7, db) is False
+        assert telegram.allowlist_source(db) == "env"
+    finally:
+        db.delete(row)
         db.commit()

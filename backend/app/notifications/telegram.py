@@ -42,14 +42,35 @@ def _token() -> str:
     return os.getenv("TELEGRAM_BOT_TOKEN", "")
 
 
-def allowed_chat_ids() -> List[str]:
-    raw = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
-    return [part.strip() for part in raw.split(",") if part.strip()]
+def _split_ids(raw: Optional[str]) -> List[str]:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()]
 
 
-def is_authorized(chat_id: Any) -> bool:
-    allowlist = allowed_chat_ids()
+def _setting_allowlist(db: Optional[Session]) -> List[str]:
+    if db is None:
+        return []
+    from app.models.predictions import SystemSetting
+
+    row = db.scalar(select(SystemSetting).where(SystemSetting.key == "telegram_allowlist"))
+    return _split_ids(row.value if row else "")
+
+
+def allowed_chat_ids(db: Optional[Session] = None) -> List[str]:
+    env_ids = _split_ids(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", ""))
+    return env_ids or _setting_allowlist(db)
+
+
+def is_authorized(chat_id: Any, db: Optional[Session] = None) -> bool:
+    allowlist = allowed_chat_ids(db)
     return bool(allowlist) and str(chat_id) in allowlist
+
+
+def allowlist_source(db: Optional[Session] = None) -> str:
+    if _split_ids(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")):
+        return "env"
+    if _setting_allowlist(db):
+        return "settings"
+    return "empty"
 
 
 def send_message(
@@ -187,13 +208,21 @@ def format_daily_report(report: Dict[str, Any], size: Optional[int] = None) -> s
     return "\n".join(lines)[:4000]
 
 
-def _delivery_recipient(row: Any) -> Optional[str]:
-    """Only ever deliver to an explicitly allowlisted chat."""
-    allowlist = allowed_chat_ids()
-    if not allowlist:
-        return None
-    candidate = str(getattr(row, "recipient", "") or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
-    return candidate if candidate in allowlist else allowlist[0]
+def _delivery_recipient(row: Any, allowlist: List[str]) -> Optional[str]:
+    """Address an explicit recipient, otherwise the configured default chat.
+
+    A row naming a chat outside the allowlist fails closed instead of being
+    redirected to somebody else; rows with no recipient use TELEGRAM_CHAT_ID
+    when allowlisted, falling back to the first allowlisted chat (which is
+    still an authorised destination, not a redirect).
+    """
+    explicit = str(getattr(row, "recipient", "") or "").strip()
+    if explicit:
+        return explicit if explicit in allowlist else None
+    default = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+    if default and default in allowlist:
+        return default
+    return allowlist[0] if allowlist else None
 
 
 def deliver_pending(
@@ -211,7 +240,7 @@ def deliver_pending(
 
     if not _token():
         return {"status": "not_configured", "checked": 0, "sent": 0, "failed": 0, "pending": 0}
-    if not allowed_chat_ids():
+    if not allowed_chat_ids(db):
         return {"status": "no_recipient", "checked": 0, "sent": 0, "failed": 0, "pending": 0}
 
     rows = db.scalars(
@@ -221,11 +250,12 @@ def deliver_pending(
         .limit(limit)
     ).all()
 
+    allowlist = allowed_chat_ids(db)
     sent = 0
     failed = 0
     pending = 0
     for row in rows:
-        recipient = _delivery_recipient(row)
+        recipient = _delivery_recipient(row, allowlist)
         if recipient is None:
             pending += 1
             continue
@@ -625,7 +655,7 @@ def poll_once(
         text = message.get("text") or ""
         if not text:
             continue
-        if not is_authorized(chat_id):
+        if not is_authorized(chat_id, db):
             continue
         try:
             reply = handle_command(text, db)

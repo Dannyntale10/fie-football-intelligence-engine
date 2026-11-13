@@ -50,9 +50,9 @@ def _ticket_signature(ticket: Dict[str, Any]) -> str:
 def _shortlist_dedupe(report: Dict[str, Any]) -> str:
     combos = report.get("combos") or {}
     parts = [
-        _ticket_signature(tickets[0])
+        _ticket_signature(combos[key][0])
         for key in ("2_leg", "3_leg")
-        for tickets in (combos.get(key) or [])[:1]
+        if combos.get(key)
     ]
     day = report.get("target_date") or report.get("matchday_label") or "today"
     return f"shortlist:{day}:{'_'.join(parts) or 'empty'}"
@@ -174,10 +174,39 @@ def build_shortlist() -> Dict[str, Any]:
 
     try:
         from app.betting.daily_combos import build_daily_combos
+        from app.betting.settlement import record_tracked_bet
 
         db = _session()
         try:
             report = build_daily_combos(db)
+            matchday = report.get("matchday_label") or "Today"
+            day = report.get("target_date") or matchday
+            tier = float((report.get("params") or {}).get("min_leg_probability") or 0.75)
+            stake = float(os.getenv("FIE_SHORTLIST_STAKE", "10"))
+            for size_key in ("2_leg", "3_leg"):
+                tickets = (report.get("combos") or {}).get(size_key) or []
+                if not tickets:
+                    continue
+                ticket = tickets[0]
+                legs = ticket.get("legs") or []
+                combo = {
+                    **ticket,
+                    "legs_count": ticket.get("size", len(legs)),
+                    "avg_leg_probability": (
+                        sum(float(leg.get("probability") or 0) for leg in legs) / len(legs)
+                        if legs else 0.0
+                    ),
+                    "kelly_stake_amount": stake,
+                }
+                record_tracked_bet(
+                    combo,
+                    matchday,
+                    db,
+                    currency=os.getenv("FIE_CURRENCY", "UGX"),
+                    bankroll=float(os.getenv("FIE_BANKROLL", "1000")),
+                    dedupe_key=f"shortlist:{day}:{size_key}:{_ticket_signature(ticket)}",
+                    tier=tier,
+                )
         finally:
             db.close()
     except Exception as error:

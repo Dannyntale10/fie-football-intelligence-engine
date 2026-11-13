@@ -96,8 +96,14 @@ def record_tracked_bet(
     db: Session,
     currency: str = "UGX",
     bankroll: float = 1000.0,
+    dedupe_key: Optional[str] = None,
+    tier: Optional[float] = None,
 ) -> TrackedBet:
     """Save an approved high-confidence banker combo into the performance tracking ledger."""
+    if dedupe_key:
+        existing = db.scalar(select(TrackedBet).where(TrackedBet.dedupe_key == dedupe_key))
+        if existing is not None:
+            return existing
     legs_count = combo.get("legs_count", len(combo.get("legs", [])))
     slip_type = f"{legs_count}-Team Combo"
     tot_odds = combo.get("total_odds", 2.00)
@@ -140,8 +146,9 @@ def record_tracked_bet(
         profit_loss=0.0,
         profit_loss_usd=0.0,
         legs_json=json.dumps(legs_data),
-        whatsapp_alert_sent=True,
-        whatsapp_settlement_sent=False,
+        dedupe_key=dedupe_key,
+        tier=tier,
+        settlement_notified=False,
         model_version=(combo.get("provenance") or {}).get("model_version"),
         ratings_hash=(combo.get("provenance") or {}).get("ratings_hash"),
         selection_mode=(combo.get("provenance") or {}).get("selection_mode"),

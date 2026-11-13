@@ -22,7 +22,7 @@ struct LiveView: View {
                             tone: .warn
                         )
                     }
-                    if store.live.isEmpty && errorMessage == nil {
+                    if store.live.isEmpty && errorMessage == nil && store.liveUnreadable == 0 {
                         emptyState
                     }
                     ForEach(store.live) { fixture in

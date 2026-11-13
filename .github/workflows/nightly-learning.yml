@@ -66,15 +66,20 @@ jobs:
             if [ -f "$STAGE/$name" ]; then
               cp "$STAGE/$name" "data/$name"
               git add "data/$name"
+              echo "staged data/$name"
             fi
           done
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --cached --stat
             git config user.name "fie-bot"
             git config user.email "fie-bot@users.noreply.github.com"
             git commit -m "chore(learning): promote the nightly model $(date -u +%F)"
+            # A long run can outlive a commit landing on the branch; rebase
+            # before pushing rather than losing a legitimate promotion.
+            git pull --rebase --autostash
             git push
           fi
 

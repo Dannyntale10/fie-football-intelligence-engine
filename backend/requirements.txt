@@ -9,6 +9,9 @@ pydantic-settings>=2.4,<3.0
 python-multipart>=0.0.9
 pytest>=8.0,<9.0
 httpx>=0.27,<1.0
+# Parsed by tests/test_nightly_workflow.py so the nightly guard can run on a
+# runner that installs only this file plus pytest.
+pyyaml>=6.0,<7.0
 
 requests>=2.32,<3.0
 google-generativeai>=0.8

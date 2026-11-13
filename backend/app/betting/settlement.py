@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from app.models.fixture import Fixture
 from app.models.bet import TrackedBet
 from app.core.currency import convert_amount, format_stake_dual
-from app.notifications.whatsapp import send_whatsapp_message
 
 logger = logging.getLogger(__name__)
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
@@ -232,13 +231,7 @@ def sync_finished_match_scores_from_espn(db: Session) -> int:
     return updated_fixtures
 
 
-def settle_pending_bets(
-    db: Session,
-    phone: Optional[str] = None,
-    apikey: Optional[str] = None,
-    provider: str = "callmebot",
-    currency: str = "UGX",
-) -> List[TrackedBet]:
+def settle_pending_bets(db: Session) -> List[TrackedBet]:
     """Scan and settle all pending bets whose match fixtures have finished."""
     pending_bets = db.scalars(
         select(TrackedBet).where(TrackedBet.status == "PENDING")
@@ -317,15 +310,21 @@ def settle_pending_bets(
             db.commit()
             settled_slips.append(bet)
 
-        # Dispatch settlement outcome to WhatsApp
-        if bet.status in ("WON", "LOST") and not bet.whatsapp_settlement_sent:
-            if phone and apikey:
-                stats = get_performance_ledger_summary(db)
-                msg = format_settlement_whatsapp_message(bet, stats, currency=currency)
-                send_res = send_whatsapp_message(msg, phone=phone, apikey=apikey, provider=provider)
-                if send_res.get("success"):
-                    bet.whatsapp_settlement_sent = True
-                    db.commit()
+        if bet.status in ("WON", "LOST") and not bet.settlement_notified:
+            from app.notifications.telegram import queue_message
+
+            stats = get_performance_ledger_summary(db)
+            currency = (bet.stake_currency or os.getenv("FIE_CURRENCY", "UGX")).upper()
+            queue_message(
+                db,
+                f"Settlement · {bet.slip_type}",
+                format_settlement_message(bet, stats, currency=currency),
+                dedupe_key=f"settle:{bet.id}",
+                related_type="tracked_bet",
+                related_id=bet.id,
+            )
+            bet.settlement_notified = True
+            db.commit()
 
     return settled_slips
 
@@ -408,7 +407,7 @@ def get_performance_ledger_summary(db: Session) -> Dict[str, Any]:
     }
 
 
-def format_settlement_whatsapp_message(
+def format_settlement_message(
     bet: TrackedBet,
     stats: Dict[str, Any],
     currency: str = "UGX",

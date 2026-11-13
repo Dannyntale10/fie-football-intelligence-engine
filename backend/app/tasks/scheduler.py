@@ -245,6 +245,25 @@ def monitor_lineups() -> Dict[str, Any]:
         return {"status": "error", "error": str(error)}
 
 
+def settle_and_capture() -> Dict[str, Any]:
+    try:
+        from app.betting.clv import capture_closing_prices
+        from app.betting.settlement import settle_pending_bets
+
+        db = _session()
+        try:
+            captured = capture_closing_prices(db)
+            settled = settle_pending_bets(db)
+        finally:
+            db.close()
+        if settled:
+            logger.info("[Scheduler] settled %s tracked bets", len(settled))
+        return {"captured": captured, "settled": len(settled)}
+    except Exception as error:
+        logger.error("[Scheduler] settlement failed: %s", error)
+        return {"error": str(error)}
+
+
 def update_results() -> Dict[str, Any]:
     try:
         from app.betting.result_tracker import fetch_and_update_results
@@ -340,6 +359,7 @@ def start_scheduler() -> Optional[object]:
             id="notify_delivery",
         )
         scheduler.add_job(update_results, CronTrigger(hour=2, minute=30, timezone=EAT_TZ), id="results")
+        scheduler.add_job(settle_and_capture, CronTrigger(minute="*/30"), id="settlement")
         scheduler.add_job(daily_analytics, CronTrigger(hour=23, minute=0, timezone=EAT_TZ), id="analytics")
         scheduler.add_job(refit_blend, CronTrigger(day_of_week="sun", hour=23, minute=30, timezone=EAT_TZ), id="blend_refit")
         scheduler.start()

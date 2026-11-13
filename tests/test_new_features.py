@@ -261,7 +261,7 @@ def test_automated_bet_settlement_and_ledger():
         record_tracked_bet,
         settle_pending_bets,
         get_performance_ledger_summary,
-        format_settlement_whatsapp_message,
+        format_settlement_message,
     )
     import uuid
 
@@ -346,7 +346,7 @@ def test_automated_bet_settlement_and_ledger():
         db.commit()
 
         # 3. Settle pending bets
-        settled = settle_pending_bets(db, currency="UGX")
+        settled = settle_pending_bets(db)
         assert len(settled) >= 1
         found = next((b for b in settled if b.id == tracked.id), None)
         assert found is not None
@@ -359,7 +359,7 @@ def test_automated_bet_settlement_and_ledger():
         assert stats["win_rate"] > 0
 
         # 5. Check settlement WhatsApp message formatting
-        msg = format_settlement_whatsapp_message(found, stats, currency="UGX")
+        msg = format_settlement_message(found, stats, currency="UGX")
         assert "FIE SLIP SETTLEMENT RESULT" in msg
         assert "WON" in msg
         assert "Win Rate:" in msg

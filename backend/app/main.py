@@ -885,16 +885,10 @@ def get_ledger_history(
 
 
 @app.post("/ledger/settle")
-def trigger_settle_now(
-    phone: Optional[str] = Query(None),
-    apikey: Optional[str] = Query(None),
-    provider: str = Query("callmebot"),
-    currency: str = Query("UGX"),
-    db: Session = Depends(get_db),
-):
+def trigger_settle_now(db: Session = Depends(get_db)):
     """Manually trigger settlement for all finished pending bets."""
     from app.betting.settlement import settle_pending_bets, get_performance_ledger_summary
-    settled = settle_pending_bets(db, phone=phone, apikey=apikey, provider=provider, currency=currency)
+    settled = settle_pending_bets(db)
     stats = get_performance_ledger_summary(db)
     stats.pop("recent_bets", None)
     return {

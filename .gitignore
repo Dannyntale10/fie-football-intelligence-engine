@@ -67,3 +67,8 @@ data/historical_cache/
 
 # Isolated feature worktrees
 .worktrees/
+
+# Dev environments symlinked into isolated worktrees (a symlink is not a dir,
+# so the .venv/ and node_modules/ patterns above do not match it)
+/.venv
+/frontend/node_modules

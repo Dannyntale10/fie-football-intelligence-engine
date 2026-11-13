@@ -221,10 +221,10 @@ struct DailyComboReportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             tierHeader
-            if let best = report.best {
-                BestComboCard(combo: best, report: report)
-            } else {
+            if report.slips.isEmpty {
                 noSelectionCard
+            } else {
+                slipSection
             }
             ComboExplorer(report: report)
             legPool
@@ -267,6 +267,39 @@ struct DailyComboReportView: View {
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.textTertiary)
         }
+    }
+
+    @ViewBuilder
+    private var slipSection: some View {
+        let slips = report.slips
+        ForEach(slips.indices, id: \.self) { index in
+            ComboSlipCard(
+                combo: slips[index],
+                report: report,
+                label: index == 0 ? "Best slip" : "Alternative \(index)",
+                prominent: index == 0,
+                shared: sharedFixtureIds(
+                    in: slips[index],
+                    before: Array(slips.prefix(index))
+                )
+            )
+        }
+        if slips.count < 3 {
+            Text(
+                "Only \(report.scope.qualifiedLegs) legs cleared the tier, so this is the whole "
+                    + "set — another slip would need a leg below it."
+            )
+            .font(TypeScale.caption)
+            .foregroundStyle(Palette.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func sharedFixtureIds(in combo: DailyCombo, before earlier: [DailyCombo]) -> Set<Int> {
+        let used = earlier.reduce(into: Set<Int>()) { ids, slip in
+            ids.formUnion(slip.legs.map(\.fixtureId))
+        }
+        return Set(combo.legs.map(\.fixtureId).filter { used.contains($0) })
     }
 
     private var noSelectionCard: some View {
@@ -350,20 +383,23 @@ private struct RejectionRow: Identifiable {
     var id: String { label }
 }
 
-private struct BestComboCard: View {
+private struct ComboSlipCard: View {
     let combo: DailyCombo
     let report: DailyComboReport
+    let label: String
+    var prominent: Bool = false
+    var shared: Set<Int> = []
 
     var body: some View {
-        Card(glow: true) {
+        Card(glow: prominent) {
             HStack {
-                Eyebrow(text: "Best \(combo.size)-team combo")
+                Eyebrow(text: "\(label) · \(combo.size)-team combo")
                 Spacer()
                 Pill(text: "Paper only", tint: Palette.warn)
             }
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(Fmt.percent(combo.combinedProbability))
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .font(.system(size: prominent ? 42 : 30, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(Palette.textPrimary)
                     .contentTransition(.numericText())
@@ -384,7 +420,11 @@ private struct BestComboCard: View {
                 NavigationLink {
                     FixtureDetailView(fixtureId: combo.legs[index].fixtureId)
                 } label: {
-                    LegDetailRow(index: index + 1, leg: combo.legs[index])
+                    LegDetailRow(
+                        index: index + 1,
+                        leg: combo.legs[index],
+                        shared: shared.contains(combo.legs[index].fixtureId)
+                    )
                 }
                 .buttonStyle(.plain)
             }
@@ -562,6 +602,7 @@ private struct ComboExplorer: View {
 private struct LegDetailRow: View {
     let index: Int?
     let leg: DailyComboLeg
+    var shared: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -599,6 +640,9 @@ private struct LegDetailRow: View {
                 }
                 if let bookmaker = leg.bookmaker {
                     Pill(text: bookmaker, tint: Palette.textSecondary)
+                }
+                if shared {
+                    Pill(text: "used above", tint: Palette.warn)
                 }
                 Spacer(minLength: 0)
                 if let age = leg.priceAgeHours {

@@ -204,9 +204,17 @@ struct DailyComboReport: Codable {
     let legs: [DailyComboLeg]
     let combos: [String: [DailyCombo]]
     let best: DailyCombo?
+    /// Disjoint-first slips from the engine; absent on reports cached before it
+    /// shipped, so the viewer falls back to the single best combo.
+    let topCombos: [DailyCombo]?
     let staleLegs: [StaleLeg]
     let message: String
     let note: String
+
+    var slips: [DailyCombo] {
+        if let topCombos, !topCombos.isEmpty { return topCombos }
+        return best.map { [$0] } ?? []
+    }
 
     struct Params: Codable {
         let minLegProbability: Double

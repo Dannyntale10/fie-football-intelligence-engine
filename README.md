@@ -442,10 +442,10 @@ Never commit `.env`, tokens or keys. Use the host's secret manager.
 A native SwiftUI client lives in `ios/` and talks to the same FastAPI backend.
 
 - Open `ios/FIE.xcodeproj` in Xcode 15+ (iOS 17 deployment target) and run.
-- It ships five tabs: **Today** (the 2–3 team combos with the Analyse button and
-  the two-phase stored-prices → feed-refresh flow), **Fixtures** (with the
-  per-match dossier), **Performance**, **Sources** (provider readiness and feed
-  refresh) and **Settings**.
+- It ships five tabs: **Today** (up to three team-diversified combo slips with the
+  Analyse button and the two-phase stored-prices → feed-refresh flow), **Fixtures**
+  (with the per-match dossier), **Performance**, **Sources** (provider readiness and
+  feed refresh) and **Settings**.
 - On launch the app shows the FIE splash while eleven sections preload
   concurrently, then refreshes live scores every 60 seconds while it is in the
   foreground. Fixtures pins a Live now card, Today shows a compact live strip,

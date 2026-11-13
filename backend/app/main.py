@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, delete, desc
@@ -73,14 +74,20 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+# Open so the host can probe the app and a browser can reach the docs, where
+# the Authorize button supplies the key for every data call.
+_OPEN_PATHS = frozenset({"/", "/health", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"})
+
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     """Reject unauthenticated calls once FIE_API_KEY is configured.
 
-    /health stays open so the host's health check works without the secret.
+    /health stays open so the host's health check works without the secret, and
+    the docs pages stay open so the key can be entered in a browser at all.
     """
     configured = settings.fie_api_key
-    if not configured or request.method == "OPTIONS" or request.url.path == "/health":
+    if not configured or request.method == "OPTIONS" or request.url.path in _OPEN_PATHS:
         return await call_next(request)
     supplied = request.headers.get("x-api-key", "")
     if not secrets.compare_digest(supplied, configured):
@@ -95,6 +102,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _openapi_with_api_key():
+    """Declare X-API-Key so the docs' Authorize button sends the header."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title, version=app.version, description=app.description, routes=app.routes
+    )
+    scheme = {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["FieApiKey"] = scheme
+    schema["security"] = [{"FieApiKey": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_with_api_key
 
 def _resolve_csv_path(raw_path: str) -> Path:
     p = Path(raw_path)

@@ -60,3 +60,22 @@ def test_writes_are_gated_too():
     response = client.post("/combos/backtest")
 
     assert response.status_code == 401
+
+
+def test_docs_load_in_a_browser_while_data_routes_stay_gated():
+    settings.fie_api_key = KEY
+
+    assert client.get("/").status_code == 200
+    assert client.get("/docs").status_code == 200
+    assert client.get("/openapi.json").status_code == 200
+    assert client.get("/fixtures/live").status_code == 401
+
+
+def test_openapi_declares_the_header_so_authorize_works():
+    settings.fie_api_key = KEY
+
+    schema = client.get("/openapi.json").json()
+    scheme = schema["components"]["securitySchemes"]["FieApiKey"]
+
+    assert scheme == {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    assert schema["security"] == [{"FieApiKey": []}]

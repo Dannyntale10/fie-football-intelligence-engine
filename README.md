@@ -407,8 +407,10 @@ where the bot should live.
 - **Dashboard:** Vercel (root `frontend/`, set `NEXT_PUBLIC_API_BASE_URL`).
 - **API:** any Python host. Build `pip install -r requirements.txt`, start
   `uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT`, set
-  `DATABASE_URL`, `FIE_API_KEY` and `FRONTEND_ORIGINS`. Every route except
-  `/health` expects the `X-API-Key` header.
+  `DATABASE_URL`, `FIE_API_KEY` and `FRONTEND_ORIGINS`. `/health` and the docs
+  pages (`/docs`, `/redoc`, `/openapi.json`) are open; every data route expects
+  the `X-API-Key` header. Open `/docs`, click **Authorize** and paste the key to
+  call the API from a browser.
 - **Storage:** the engine uses SQLite. Mount a persistent disk and point
   `DATABASE_URL` at it (`sqlite:////var/data/fie.db`); without a disk each
   redeploy starts from an empty database. `render.yaml` already describes this

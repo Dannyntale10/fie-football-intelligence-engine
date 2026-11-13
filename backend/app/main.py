@@ -786,58 +786,6 @@ def mark_stale_fixtures(db: Session = Depends(get_db)):
     return {"message": f"Marked {count} past fixtures as 'pending_result'.", "updated_count": count}
 
 
-# ── 24/7 Sentinel & WhatsApp Alert Endpoints ─────────────────────────────────
-
-@app.get("/sentinel/status")
-def sentinel_status():
-    """Get status of the 24/7 autonomous banker sentinel daemon."""
-    from app.tasks.sentinel import get_sentinel_status
-    return get_sentinel_status()
-
-
-@app.post("/sentinel/start")
-def sentinel_start(interval_minutes: int = Query(30, ge=5, le=1440)):
-    """Start the 24/7 autonomous banker sentinel daemon."""
-    from app.tasks.sentinel import start_sentinel, get_sentinel_status
-    ok = start_sentinel(interval_minutes=interval_minutes)
-    return {"status": "started" if ok else "failed", "details": get_sentinel_status()}
-
-
-@app.post("/sentinel/stop")
-def sentinel_stop():
-    """Stop the 24/7 autonomous banker sentinel daemon."""
-    from app.tasks.sentinel import stop_sentinel, get_sentinel_status
-    stop_sentinel()
-    return {"status": "stopped", "details": get_sentinel_status()}
-
-
-@app.post("/sentinel/scan")
-def sentinel_scan_now():
-    """Trigger an immediate 24/7 autonomous scan for qualifying banker combos."""
-    from app.tasks.sentinel import run_sentinel_scan_now
-    return run_sentinel_scan_now()
-
-
-@app.post("/whatsapp/test")
-def whatsapp_test(
-    phone: str = Query(..., description="Phone with country code, e.g. +256..."),
-    apikey: str = Query(..., description="CallMeBot API key"),
-    provider: str = Query("callmebot"),
-):
-    """Send a test notification to verify user's WhatsApp alerts and persist credentials."""
-    from app.notifications.whatsapp import send_whatsapp_message
-    from app.tasks.sentinel import _sentinel_state, _save_persisted_state
-    _sentinel_state["whatsapp_phone"] = phone
-    _sentinel_state["whatsapp_apikey"] = apikey
-    _save_persisted_state()
-    return send_whatsapp_message(
-        text="🔔 *FIE Football Intelligence Engine*\nWhatsApp alerts connected successfully! 24/7 Banker Sentinel is online.",
-        phone=phone,
-        apikey=apikey,
-        provider=provider,
-    )
-
-
 @app.get("/ledger/summary")
 def get_ledger_summary(db: Session = Depends(get_db)):
     """Retrieve overall performance ledger summary (wins, losses, win rate %, PnL in UGX/USD, ROI)."""

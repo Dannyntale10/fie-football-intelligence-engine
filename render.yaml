@@ -7,9 +7,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.12
-      - key: WHATSAPP_PHONE
+      - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: WHATSAPP_APIKEY
+      - key: TELEGRAM_ALLOWED_CHAT_IDS
         sync: false
       - key: GEMINI_API_KEY
         sync: false

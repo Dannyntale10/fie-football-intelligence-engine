@@ -45,7 +45,7 @@ backend/app/
   market_engine/  catalogue → discovery → registry models → analysis → qualification → value
   models/         SQLAlchemy tables (fixtures, markets, predictions, results, audit)
   tasks/          EAT-scheduled automation (APScheduler)
-  notifications/  Telegram polling + WhatsApp alerts
+  notifications/  Telegram queue, delivery, allowlist and inbound polling
 frontend/         Next.js 14 + TypeScript + Tailwind + Recharts (9 pages)
 database/         PostgreSQL schema + migrations
 scripts/          setup, init_db, backtest, provider verification, migrations
@@ -121,7 +121,12 @@ All settings live in `.env` (copy from `.env.example`). The essentials:
 | `ODDS_API_KEY` | Optional free odds provider |
 | `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | Comma-separated allowlist; empty = bot refuses to start |
-| `WHATSAPP_*`, `TWILIO_*` | Optional alert transport |
+| `TELEGRAM_CHAT_ID` | Default destination for scheduler-queued alerts |
+
+Alerts are queued by the scheduler, delivered by the bot with retry/backoff,
+and the same account drives inbound commands through the API lifespan poller.
+The allowlist can also be stored in `SystemSetting("telegram_allowlist")`;
+the env var wins when both are set. With no allowlist the bot stays closed.
 
 The 85% floor and `auto_place_bets` are locked in the Settings page: the API
 rejects changes to them. Lowering the gate to fill a report is not supported.

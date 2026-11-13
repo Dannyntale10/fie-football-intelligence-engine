@@ -36,6 +36,7 @@ from app.models.fixture import Fixture                 # noqa: E402, F401
 from app.models.team_rating import TeamRating          # noqa: E402, F401
 from app.models.bet import TrackedBet                  # noqa: E402, F401
 from app.models.price_snapshot import PriceSnapshot    # noqa: E402, F401
+from app.models.predictions import Notification        # noqa: E402, F401
 Base.metadata.create_all(bind=engine)
 
 # ── Core service imports ──────────────────────────────────────────────────────
@@ -108,12 +109,10 @@ from app.analytics.ml_ensemble import (                     # noqa: E402
     train_ensemble,
     is_model_trained,
 )
-from app.notifications.whatsapp import send_whatsapp_message, send_combo_whatsapp_alert  # noqa: E402
 from app.betting.settlement import (                  # noqa: E402
     settle_pending_bets,
     get_performance_ledger_summary,
 )
-from app.tasks.sentinel import start_sentinel, stop_sentinel, get_sentinel_status, run_sentinel_scan_now  # noqa: E402
 from app.data_sources.betpawa_feed import (  # noqa: E402
     start_auto_ingest,
     stop_auto_ingest,
@@ -329,18 +328,6 @@ st.markdown(
 )
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Auto-Boot 24/7 Background Sentinel (30s Real-Time Bookmaker Sync)
-# ═════════════════════════════════════════════════════════════════════════════
-s_status = get_sentinel_status()
-if not s_status.get("is_running", False):
-    try:
-        start_sentinel(interval_seconds=30)
-        s_status = get_sentinel_status()
-    except Exception:
-        pass
-
-
-# ═════════════════════════════════════════════════════════════════════════════
 # Auto-Boot betPawa live-odds refresh (runs on startup, then on an interval)
 # ═════════════════════════════════════════════════════════════════════════════
 @st.cache_resource(show_spinner=False)
@@ -375,10 +362,16 @@ hero_priced = db_hero.scalar(
 ) or 0
 db_hero.close()
 
-_sentinel_chip = (
-    '<span class="fie-chip live">● Sentinel active</span>'
-    if s_status.get("is_running")
-    else '<span class="fie-chip off">● Sentinel standby</span>'
+try:
+    _db_chip = _db()
+    _pending_count = _db_chip.query(Notification).filter(Notification.status == "pending").count()
+    _failed_count = _db_chip.query(Notification).filter(Notification.status == "failed").count()
+    _db_chip.close()
+except Exception:
+    _pending_count = _failed_count = 0
+
+_alert_chip = (
+    f'<span class="fie-chip live">● Telegram · queued {_pending_count} · failed {_failed_count}</span>'
 )
 if feed_status.get("running"):
     _feed_chip = f'<span class="fie-chip live">● Odds feed · every {feed_interval}s</span>'
@@ -398,7 +391,7 @@ st.markdown(
             </div>
         </div>
         <div class="fie-chips">
-            {_sentinel_chip}
+            {_alert_chip}
             {_feed_chip}
             <span class="fie-chip">{hero_upcoming:,} upcoming fixtures</span>
             <span class="fie-chip">{hero_priced:,} with market prices</span>
@@ -412,45 +405,20 @@ st.markdown(
 # Sidebar
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.header("🟢 24/7 Banker Sentinel")
-    is_active = s_status.get("is_running", False)
-    if is_active:
-        st.success("🟢 Sentinel: **ACTIVE & AUTO-SYNCING (30s)**")
-        st.caption(f"Last scan: {s_status.get('last_scan_eat') or 'Ingesting live bookmaker feeds...'}")
-        st.caption(f"Alerts sent: {s_status.get('alerts_dispatched_count', 0)}")
-        if st.button("⏹️ Pause Sentinel", use_container_width=True, key="app_btn_stop_sentinel"):
-            stop_sentinel()
-            st.rerun()
-    else:
-        st.info("⚪ Sentinel: **STANDBY**")
-        st.caption("Autonomously monitors 35+ leagues, syncs DraftKings odds every 30s & sends WhatsApp alerts.")
-        if st.button("▶️ Start 24/7 Sentinel (30s)", type="primary", use_container_width=True, key="app_btn_start_sentinel"):
-            start_sentinel(interval_seconds=30)
-            st.rerun()
-
-    c_s1, c_s2 = st.columns(2)
-    with c_s1:
-        if st.button("⚡ Scan Now", use_container_width=True, key="app_btn_scan_sentinel"):
-            with st.spinner("Scanning 35+ leagues..."):
-                scan_out = run_sentinel_scan_now()
-                if scan_out.get("success"):
-                    st.success(f"Scan complete ({scan_out.get('fixtures_scanned')} checked)")
-                    st.rerun()
+    st.header("📨 Telegram alerts")
+    st.caption("Alerts are queued by the scheduler and delivered by the bot. Configure the token and allowlist on the server.")
+    if st.button("⚖️ Settle Bets", use_container_width=True, key="app_btn_settle_bets"):
+        with st.spinner("Settling slips..."):
+            db_set = _db()
+            try:
+                settled_res = settle_pending_bets(db_set)
+                if settled_res:
+                    st.success(f"Settled {len(settled_res)} finished slip(s)! Outcomes queued for Telegram.")
                 else:
-                    st.error(f"Error: {scan_out.get('error')}")
-    with c_s2:
-        if st.button("⚖️ Settle Bets", use_container_width=True, key="app_btn_settle_bets"):
-            with st.spinner("Settling slips..."):
-                db_set = _db()
-                try:
-                    settled_res = settle_pending_bets(db_set, phone=os.getenv("WHATSAPP_PHONE", ""), apikey=os.getenv("WHATSAPP_APIKEY", ""))
-                    if settled_res:
-                        st.success(f"Settled {len(settled_res)} finished slip(s)!")
-                    else:
-                        st.info("All matches in play or pending.")
-                    st.rerun()
-                finally:
-                    db_set.close()
+                    st.info("All matches in play or pending.")
+                st.rerun()
+            finally:
+                db_set.close()
 
     st.divider()
     st.header("🏦 betPawa Live Odds")
@@ -496,48 +464,10 @@ with st.sidebar:
                 st.rerun()
 
     st.divider()
-    st.header("📱 WhatsApp Notifications")
-    st.caption("Get automatic alerts on your phone whenever qualifying Banker Slips (Odds ≥ 2.00, Conf ≥ 85%) are found.")
-    wa_phone_val = st.text_input(
-        "WhatsApp Phone (with country code)",
-        value=os.getenv("WHATSAPP_PHONE", ""),
-        placeholder="+256701234567",
-        help="Enter your mobile number with country code (e.g. +256 for Uganda).",
-        key="app_wa_phone",
+    st.caption(
+        "Alerts are delivered through the Telegram bot. The token and chat allowlist live in the "
+        "server environment; `TELEGRAM_ALLOWED_CHAT_IDS` overrides the stored `telegram_allowlist` setting."
     )
-    if wa_phone_val:
-        os.environ["WHATSAPP_PHONE"] = wa_phone_val
-
-    wa_key_val = st.text_input(
-        "CallMeBot WhatsApp API Key",
-        value=os.getenv("WHATSAPP_APIKEY", ""),
-        type="password",
-        placeholder="e.g. 1234567",
-        help=(
-            "Free setup: open callmebot.com/blog/free-api-whatsapp-messages, message the "
-            "number shown there from this same phone, and send 'I allow callmebot to send me "
-            "messages' (or 'Recover APIKey' if you already activated). CallMeBot rotates its "
-            "number, so don't use numbers from other sites."
-        ),
-        key="app_wa_key",
-    )
-    if wa_key_val:
-        os.environ["WHATSAPP_APIKEY"] = wa_key_val
-
-    if st.button("🔔 Send Test WhatsApp Alert", use_container_width=True, key="app_wa_test_btn"):
-        if not (wa_phone_val and wa_key_val):
-            st.warning("Please provide both WhatsApp phone number and CallMeBot API key.")
-        else:
-            with st.spinner("Dispatching WhatsApp test message..."):
-                wa_res = send_whatsapp_message(
-                    text="⚽ *FIE Football Intelligence Engine*\n✅ WhatsApp connected! Your 24/7 Banker Sentinel is actively hunting odds >= 2.00 multi-bets.",
-                    phone=wa_phone_val,
-                    apikey=wa_key_val,
-                )
-                if wa_res.get("success"):
-                    st.success("✅ Test WhatsApp message delivered to your phone!")
-                else:
-                    st.error(f"Failed: {wa_res.get('error')}")
 
     st.divider()
     st.header("💱 Currency & Staking")
@@ -984,8 +914,8 @@ with tab_portfolio:
                     s_text += f"Total Odds: {combo_obj['total_odds']:.2f} | Kelly Stake: {format_stake_dual(combo_obj['kelly_stake_amount'], sel_currency)}"
                     st.text_area("📋 Copy Booking Slip Text", s_text, height=110, key=f"{prefix_key}_text")
 
-                    # Download & WhatsApp Dispatch Buttons
-                    b_pdf_col, b_txt_col, b_wa_col = st.columns(3)
+                    # Download buttons
+                    b_pdf_col, b_txt_col = st.columns(2)
                     with b_pdf_col:
                         try:
                             pdf_b = generate_combo_pdf(combo_obj, matchday_hdr, bankroll=sel_combo_bankroll, currency=sel_currency)
@@ -1010,25 +940,6 @@ with tab_portfolio:
                             use_container_width=True,
                             key=f"{prefix_key}_dl_txt"
                         )
-                    with b_wa_col:
-                        if st.button("📲 Send to WhatsApp", key=f"{prefix_key}_wa_btn", use_container_width=True):
-                            wa_ph = os.getenv("WHATSAPP_PHONE", "").strip()
-                            wa_k = os.getenv("WHATSAPP_APIKEY", "").strip()
-                            if not (wa_ph and wa_k):
-                                st.warning("Configure your WhatsApp phone & CallMeBot key in the sidebar first!")
-                            else:
-                                with st.spinner("Sending ticket to WhatsApp..."):
-                                    res_wa = send_combo_whatsapp_alert(
-                                        combo_obj,
-                                        matchday_label=matchday_hdr,
-                                        phone=wa_ph,
-                                        apikey=wa_k,
-                                        currency=sel_currency,
-                                    )
-                                    if res_wa.get("success"):
-                                        st.success(f"Ticket dispatched to WhatsApp (+{wa_ph})!")
-                                    else:
-                                        st.error(f"WhatsApp Error: {res_wa.get('error')}")
 
                 # Helper to render a compact summary row for alternative combos (like the screenshot)
                 def _render_alt_combo_summary(combo_obj: dict, option_num: int):
@@ -1153,7 +1064,7 @@ with tab_portfolio:
     # ── TRANSPARENT PERFORMANCE LEDGER & AUTOMATED BET SETTLEMENT ─────────────
     st.markdown("---")
     st.subheader("📊 Transparent Performance Ledger & Automated Bet Settlement")
-    st.caption("Every multi-bet slip sent by the 24/7 Sentinel is recorded here and automatically settled with live final scores.")
+    st.caption("Every slip queued by the daily scheduler is recorded here and settled automatically with live final scores.")
 
     db_ledger = _db()
     try:
@@ -1225,7 +1136,7 @@ with tab_portfolio:
                         score_str = f"Final: {leg_it.get('final_score')}" if leg_it.get("final_score") else "Awaiting kickoff"
                         st.caption(f"  • Leg #{idx_l}: {leg_it.get('match')} ➔ **{leg_it.get('selection')}** ({icon_l} {l_st} | {score_str})")
         else:
-            st.info("No bets recorded in ledger yet. Active Sentinel alerts will be tracked and settled here automatically.")
+            st.info("No bets recorded in ledger yet. Scheduler alerts will be tracked and settled here automatically.")
     finally:
         db_ledger.close()
 

@@ -109,7 +109,7 @@ export default function FixtureDetailPage() {
                   <tr key={row.minute_bucket} className="border-t border-edge">
                     <td className="py-2 tabular-nums">{row.minute}</td>
                     <td className="py-2 tabular-nums">
-                      {row.score.home} : {row.score.away}
+                      {row.score.home ?? "–"} : {row.score.away ?? "–"}
                     </td>
                     <td className="py-2 tabular-nums">
                       {row.probabilities

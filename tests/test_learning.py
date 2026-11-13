@@ -164,7 +164,9 @@ def test_build_report_uses_out_of_sample_predictions(db, monkeypatch):
         rng = random.Random(11)
         for i in range(400):
             p = rng.uniform(0.2, 0.8)
-            label = "home_win" if rng.random() < p else "draw"
+            # The model is over-confident: outcomes happen less often than it
+            # claims, which gives Platt scaling something real to correct.
+            label = "home_win" if rng.random() < p * 0.7 else "draw"
             yield {
                 "model": {"home_win": p, "draw": (1 - p) * 0.7, "away_win": (1 - p) * 0.3},
                 "label": label,
@@ -176,10 +178,36 @@ def test_build_report_uses_out_of_sample_predictions(db, monkeypatch):
     report = learning.build_report(db)
     assert report["version"] == learning.LEARNING_VERSION
     assert report["status"] == "fitted"
+    assert report["applied_markets"], "a calibrated market must back the fitted status"
     assert report["sources"]["walkforward_matches"] == 400
     assert report["sources"]["settled_legs"] == 0
+    assert report["sources"]["since"] is None
     assert set(report["markets"]) >= {"home_win", "draw", "away_win"}
     assert "No settled real slips yet" in " ".join(report["notes"])
+
+
+def test_replayed_history_without_any_applied_parameter_is_not_fitted(db, monkeypatch):
+    from app.analytics import calibration as calibration_mod
+
+    def thin_walkforward(_db, **_kwargs):
+        for i in range(10):
+            yield {
+                "model": {"home_win": 0.5, "draw": 0.3, "away_win": 0.2},
+                "label": "home_win",
+                "kickoff_utc": datetime.now(timezone.utc) - timedelta(days=10 - i),
+            }
+
+    monkeypatch.setattr(calibration_mod, "iter_walkforward_predictions", thin_walkforward)
+
+    report = learning.build_report(db)
+
+    # A replay that produced no applied calibration is evidence, not a result:
+    # publishing it would overwrite a working artifact with a no-op.
+    assert report["sources"]["walkforward_matches"] == 10
+    assert report["applied_markets"] == []
+    assert report["edge_premiums"] == {}
+    assert report["status"] == "insufficient_sample"
+    assert "nothing is applied" in " ".join(report["notes"])
 
 
 def test_build_report_without_evidence_is_not_fitted(db, monkeypatch):
@@ -192,8 +220,40 @@ def test_build_report_without_evidence_is_not_fitted(db, monkeypatch):
     report = learning.build_report(db)
 
     assert report["status"] == "insufficient_sample"
-    assert report["sources"] == {"walkforward_matches": 0, "settled_legs": 0}
+    assert report["sources"] == {"walkforward_matches": 0, "settled_legs": 0, "since": None}
     assert report["markets"] == {}
+
+
+def test_build_report_passes_since_to_the_replay_and_the_ledger(db, monkeypatch):
+    from app.analytics import calibration as calibration_mod
+
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    seen = {}
+
+    def fake_walkforward(_db, **kwargs):
+        seen.update(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(calibration_mod, "iter_walkforward_predictions", fake_walkforward)
+
+    report = learning.build_report(db, since=since)
+
+    assert seen["since"] == since
+    assert report["sources"]["since"] == since.isoformat()
+
+
+def test_settled_legs_respects_since(db):
+    old = _tracked_bet(db, label="Old matchday", competition="Premier League")
+    old.settled_at = datetime.now(timezone.utc) - timedelta(days=90)
+    recent = _tracked_bet(db, label="Recent matchday", competition="Premier League")
+    recent.settled_at = datetime.now(timezone.utc) - timedelta(days=3)
+    db.commit()
+
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    legs = learning.settled_legs(db, since=since)
+
+    assert len(legs) == 1
+    assert learning.settled_legs(db) and len(learning.settled_legs(db)) == 2
 
 
 def _add_finished(db, home, away, home_goals, away_goals, days_ago):

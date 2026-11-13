@@ -35,3 +35,34 @@ def _reset_rate_limiter():
     security.limiter.reset()
     yield
     security.limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_written_artifacts(tmp_path, monkeypatch):
+    """Send every combo artifact write to a temp dir.
+
+    ``POST /combos/backtest`` and ``POST /combos/backtest/sweep`` persist into
+    ``data/`` on a real machine. A test that reaches those routes with any
+    settled history would otherwise overwrite the operator's replay, learning
+    and sweep artifacts with throwaway rows. All writers resolve these path
+    helpers at call time, so patching them here also covers the API aliases.
+    """
+    from app.analytics import combo_backtest
+    from app.betting import daily_combos
+
+    artifacts = tmp_path / "artifacts"
+
+    monkeypatch.setattr(
+        combo_backtest, "backtest_path", lambda: artifacts / "combo_backtest.json"
+    )
+    monkeypatch.setattr(
+        combo_backtest, "sweep_path", lambda: artifacts / "combo_sweep.json"
+    )
+    monkeypatch.setattr(
+        combo_backtest, "combo_learning_path",
+        lambda: artifacts / "combo_learning.json",
+    )
+    monkeypatch.setattr(
+        daily_combos, "learning_path", lambda: artifacts / "combo_learning.json"
+    )
+

@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -172,7 +172,9 @@ def main() -> int:
                 blend = fit_report(db, half_life_days=half_life)
                 save_blend_report(blend, out_dir / "blending.json")
 
-                learning = build_learning_report(db)
+                learning = build_learning_report(
+                    db, since=now - timedelta(days=args.window_days)
+                )
                 if learning.get("status") == "fitted":
                     save_learning_report(learning, out_dir / "learning.json")
 

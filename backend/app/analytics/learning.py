@@ -177,14 +177,29 @@ def fit_market(pairs: List[Tuple[float, float]]) -> Dict[str, Any]:
     return result
 
 
-def settled_legs(db: Session) -> List[Dict[str, Any]]:
-    """Every settled leg from a real (non-synthetic) slip."""
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def settled_legs(
+    db: Session, since: Optional[datetime] = None
+) -> List[Dict[str, Any]]:
+    """Every settled leg from a real (non-synthetic) slip.
+
+    ``since`` keeps only slips settled on or after that instant, so a training
+    run can stay inside the same window its walk-forward replay used.
+    """
     from app.models.bet import TrackedBet
     from app.betting.settlement import _is_synthetic_bet
 
     rows: List[Dict[str, Any]] = []
     for bet in db.scalars(select(TrackedBet).where(TrackedBet.status.in_(("WON", "LOST")))).all():
         if _is_synthetic_bet(bet):
+            continue
+        settled_at = _as_utc(bet.settled_at or bet.placed_at)
+        if since is not None and settled_at is not None and settled_at < since:
             continue
         try:
             legs = json.loads(bet.legs_json or "[]")
@@ -232,25 +247,34 @@ def _edge_premiums(legs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return premiums
 
 
-def build_report(db: Session) -> Dict[str, Any]:
-    """Train every market that has enough evidence. Expensive; call explicitly."""
+def build_report(
+    db: Session, since: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """Train every market that has enough evidence. Expensive; call explicitly.
+
+    ``since`` bounds both sources to the same window: walk-forward predictions
+    for matches that kicked off on or after it, and slips settled on or after
+    it. Ratings behind each replay still use the full past, so a bounded run
+    sees exactly what the unbounded run saw, just for a shorter stretch.
+    """
     from app.analytics.calibration import iter_walkforward_predictions
 
     pairs: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
     matches = 0
-    for prediction in iter_walkforward_predictions(db):
+    for prediction in iter_walkforward_predictions(db, since=since):
         matches += 1
         for key in OUTCOMES:
             pairs[key].append(
                 (float(prediction["model"][key]), 1.0 if prediction["label"] == key else 0.0)
             )
 
-    legs = settled_legs(db)
+    legs = settled_legs(db, since=since)
     for leg in legs:
         pairs[leg["market_key"]].append((leg["probability"], 1.0 if leg["won"] else 0.0))
 
     markets = {key: fit_market(sample) for key, sample in pairs.items()}
     premiums = _edge_premiums(legs)
+    applied_markets = sorted(k for k, v in markets.items() if v.get("applied"))
 
     notes = []
     if not legs:
@@ -258,25 +282,36 @@ def build_report(db: Session) -> Dict[str, Any]:
             "No settled real slips yet: secondary-market calibration is waiting for evidence, "
             "and only the 1X2 markets have enough history."
         )
-    unmet = [k for k, v in premiums.items() if v["n"] < EDGE_MIN_SAMPLE]
-    if unmet:
+    leg_counts = defaultdict(int)
+    for leg in legs:
+        leg_counts[leg["market_key"]] += 1
+    below_minimum = [k for k, n in leg_counts.items() if n < EDGE_MIN_SAMPLE]
+    if below_minimum:
         notes.append(
-            f"{len(unmet)} market(s) had some settled legs but below the {EDGE_MIN_SAMPLE}-leg "
-            "minimum for an edge premium."
+            f"{len(below_minimum)} market(s) had some settled legs but below the "
+            f"{EDGE_MIN_SAMPLE}-leg minimum for an edge premium."
+        )
+    if (matches or legs) and not applied_markets and not premiums:
+        notes.append(
+            "History was replayed, but no calibration cleared its held-out improvement bar "
+            "and no edge premium reached its minimum sample, so nothing is applied."
         )
 
     return {
         "version": LEARNING_VERSION,
-        # The nightly trainer only publishes this artifact when it fitted
-        # something; a report built from no evidence must stay unsaved.
-        "status": "fitted" if (matches or legs) else "insufficient_sample",
+        # Only a parameter that actually changes probabilities may be called
+        # "fitted". Replaying history is evidence, not a result: if every
+        # adjustment failed its held-out bar there is nothing to publish, and
+        # the trainer must leave the previous artifact untouched.
+        "status": "fitted" if (applied_markets or premiums) else "insufficient_sample",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "sources": {
             "walkforward_matches": matches,
             "settled_legs": len(legs),
+            "since": since.isoformat() if since is not None else None,
         },
         "markets": dict(sorted(markets.items())),
-        "applied_markets": sorted(k for k, v in markets.items() if v.get("applied")),
+        "applied_markets": applied_markets,
         "edge_premiums": dict(sorted(premiums.items())),
         "notes": notes,
     }

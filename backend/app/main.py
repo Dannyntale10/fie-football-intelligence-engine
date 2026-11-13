@@ -762,6 +762,35 @@ def markets_baseline(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+@app.get("/markets/value-tips")
+def markets_value_tips(
+    days_ahead: int = Query(3, ge=1, le=14, description="Upcoming window in days"),
+    min_edge_percent: float = Query(3.0, ge=0.0, le=50.0, description="Minimum model edge over the de-vigged market, in probability points"),
+    max_edge_percent: float = Query(20.0, ge=1.0, le=50.0, description="Reject wider gaps as stale ratings rather than value"),
+    families: Optional[str] = Query(None, description="Comma-separated families; defaults to total_goals, draw_no_bet, asian_handicap"),
+    per_fixture: int = Query(2, ge=1, le=5),
+    limit: int = Query(20, ge=1, le=100),
+    fixtures: int = Query(150, ge=1, le=300, description="Maximum upcoming fixtures to scan"),
+    db: Session = Depends(get_db),
+):
+    """+EV selections on totals, draw-no-bet and Asian handicap, each attributed to a bookmaker."""
+    from app.betting.value_tips import value_tips
+
+    wanted = [family.strip() for family in families.split(",") if family.strip()] if families else None
+    try:
+        return value_tips(
+            db,
+            days_ahead=days_ahead,
+            min_edge_percent=min_edge_percent,
+            max_edge_percent=max_edge_percent,
+            families=wanted,
+            per_fixture=per_fixture,
+            limit=limit,
+            fixtures_limit=fixtures,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 @app.get("/portfolio/today")
 def get_daily_portfolio(
     days_ahead: int = Query(7, ge=1, le=30, description="Days ahead window"),

@@ -19,12 +19,13 @@ import {
   thClass,
   theadClass,
 } from "@/components/ui";
-import { ageLabel, fmtOdds, fmtPercent, titleCase } from "@/lib/format";
+import { ageLabel, eatDateTime, fmtOdds, fmtPercent, titleCase } from "@/lib/format";
 import type {
   DiscoveryResponse,
   Fixture,
   MarketAnalysisResponse,
   MarketCatalogue,
+  ValueTipsResponse,
 } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
@@ -54,6 +55,7 @@ export default function MarketsPage() {
   const analysis = useApi<MarketAnalysisResponse>(
     fixtureId ? `/markets/fixtures/${fixtureId}/analysis` : null,
   );
+  const valueTips = useApi<ValueTipsResponse>("/markets/value-tips?days_ahead=3");
 
   const families = useMemo(() => {
     const rows = catalogue.data?.families ?? [];
@@ -113,6 +115,104 @@ export default function MarketsPage() {
           <Note>{catalogue.data.note}</Note>
         </div>
       )}
+
+      <Card
+        className="mt-6"
+        title="Value tips beyond 1X2"
+        subtitle="Totals, draw-no-bet and Asian handicap, compared against the de-vigged price from the same bookmaker. A gap outside the trusted band is stale ratings, not value, so it is dropped."
+        actions={
+          valueTips.data ? (
+            <Badge tone={valueTips.data.tips.length > 0 ? "good" : "muted"}>
+              {valueTips.data.tips.length} tips · {valueTips.data.fixtures_scanned} fixtures scanned
+            </Badge>
+          ) : undefined
+        }
+      >
+        {valueTips.loading && <Loading label="Scanning priced markets" />}
+        {valueTips.error && <ErrorNote message={valueTips.error} />}
+
+        {valueTips.data && valueTips.data.tips.length === 0 && (
+          <NoQualified message={valueTips.data.message ?? "NO QUALIFIED SELECTIONS FOUND."} />
+        )}
+
+        {valueTips.data && valueTips.data.tips.length > 0 && (
+          <>
+            <div className="overflow-x-auto">
+              <table className={tableClass}>
+                <thead className={theadClass}>
+                  <tr>
+                    <th className={thClass}>Match</th>
+                    <th className={thClass}>Market</th>
+                    <th className={thClass}>Price</th>
+                    <th className={thClass}>Bookmaker</th>
+                    <th className={thClass}>Captured</th>
+                    <th className={thClass}>Market</th>
+                    <th className={thClass}>Model</th>
+                    <th className={thClass}>Edge</th>
+                    <th className={thClass}>EV</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {valueTips.data.tips.map((tip, index) => (
+                    <tr
+                      key={`${tip.fixture_id}-${tip.family}-${tip.selection}-${index}`}
+                      className={rowClass}
+                    >
+                      <td className={tdClass}>
+                        <p className="text-mist/90">{tip.match}</p>
+                        <p className="text-[11px] text-mist/40">
+                          {tip.competition} · {eatDateTime(tip.kickoff_utc)}
+                        </p>
+                      </td>
+                      <td className={tdClass}>
+                        <p className="text-mist/90">{tip.label ?? tip.family}</p>
+                        <p className="text-[11px] text-mist/40">
+                          {tip.selection}
+                          {tip.line !== null ? ` ${tip.line}` : ""} · {tip.family}
+                        </p>
+                      </td>
+                      <td className={`${tdClass} tabular-nums`}>{fmtOdds(tip.price)}</td>
+                      <td className={`${tdClass} text-mist/60`}>
+                        {tip.bookmaker ?? "unknown"}
+                      </td>
+                      <td className={`${tdClass} text-mist/45`}>{ageLabel(tip.captured_at)}</td>
+                      <td className={`${tdClass} tabular-nums text-mist/55`}>
+                        {fmtPercent(tip.market_probability)}
+                      </td>
+                      <td className={`${tdClass} tabular-nums`}>
+                        {fmtPercent(tip.probability)}
+                      </td>
+                      <td className={`${tdClass} tabular-nums text-lime`}>
+                        +{tip.edge_percent.toFixed(1)} pts
+                      </td>
+                      <td
+                        className={`${tdClass} tabular-nums ${
+                          tip.ev_percent > 0 ? "text-lime" : "text-mist/55"
+                        }`}
+                      >
+                        {tip.ev_percent > 0 ? "+" : ""}
+                        {tip.ev_percent.toFixed(1)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3">
+              <Note>
+                Edge is model probability minus de-vigged market probability, kept only inside{" "}
+                {valueTips.data.thresholds.min_edge_percent}–
+                {valueTips.data.thresholds.max_edge_percent} points, at most{" "}
+                {valueTips.data.thresholds.per_fixture} per fixture. Dropped{" "}
+                {valueTips.data.dropped.below_min_edge ?? 0} below the floor,{" "}
+                {valueTips.data.dropped.above_max_edge ?? 0} above the ceiling,{" "}
+                {valueTips.data.dropped.no_market_probability ?? 0} without a de-vig and{" "}
+                {valueTips.data.dropped.non_positive_ev ?? 0} with no positive EV.
+              </Note>
+            </div>
+          </>
+        )}
+      </Card>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-5">
         <Card

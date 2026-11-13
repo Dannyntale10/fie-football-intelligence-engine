@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     min_data_quality_score: int = 70
     # Comma-separated origins allowed to call the API from a browser.
     frontend_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # When set (FIE_API_KEY), every route except /health requires this header.
+    fie_api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

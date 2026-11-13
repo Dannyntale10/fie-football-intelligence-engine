@@ -1,12 +1,13 @@
 from __future__ import annotations
 import io
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import pandas as pd
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, delete, desc
 from app.core.config import settings
@@ -71,6 +72,21 @@ app = FastAPI(
     description="Local-first football research and prediction platform foundation.",
     lifespan=_lifespan,
 )
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Reject unauthenticated calls once FIE_API_KEY is configured.
+
+    /health stays open so the host's health check works without the secret.
+    """
+    configured = settings.fie_api_key
+    if not configured or request.method == "OPTIONS" or request.url.path == "/health":
+        return await call_next(request)
+    supplied = request.headers.get("x-api-key", "")
+    if not secrets.compare_digest(supplied, configured):
+        return JSONResponse({"detail": "Missing or invalid API key"}, status_code=401)
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,

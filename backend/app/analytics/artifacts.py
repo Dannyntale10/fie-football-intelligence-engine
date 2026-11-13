@@ -138,7 +138,15 @@ def load_ratings(
     db = session_factory()
     try:
         payload = json.loads(path.read_text())
-        version = str(payload.get("content_hash") or _artifact_hash(payload))
+        version = _artifact_hash(payload)
+        declared = payload.get("content_hash")
+        if declared and declared != version:
+            logger.warning(
+                "Artifact %s declares %s but hashes to %s",
+                path,
+                declared,
+                version,
+            )
         stored = _setting(db, RATINGS_SOURCE_KEY)
 
         if stored == LOCAL_RATINGS_SOURCE:

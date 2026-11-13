@@ -497,7 +497,9 @@ def calculate_ratings_from_fixtures(
             "avg_goals": round(total_goals / max(1, len(rows)), 2),
         })
 
-    if total_updated:
+    # A scoped refit is provisional: only a fit over the whole results table
+    # outranks the committed artifact.
+    if total_updated and competition is None:
         _mark_local_ratings(db)
     db.commit()
     db.info.pop("_rating_index", None)

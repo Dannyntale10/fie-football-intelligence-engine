@@ -1,11 +1,14 @@
 """A committed ratings artifact can seed and refresh a hosted database."""
 import json
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.analytics.artifacts import load_ratings, write_ratings
+from app.analytics.ratings import calculate_ratings_from_fixtures
 from app.database import Base
+from app.models.fixture import Fixture
 from app.models.predictions import SystemSetting
 from app.models.team_rating import TeamRating
 
@@ -75,6 +78,25 @@ def test_artifact_round_trip(tmp_path):
     assert "artifact home" in payload["competitions"]["Artifact League A"]["teams"]
     assert "thin sample" not in payload["competitions"].get("Artifact League B", {}).get("teams", {})
 
+    target = target_factory()
+    try:
+        # Provenance must exist or the loader treats unprovenanced rows as a
+        # local fit and skips; a prior version makes this a refresh.
+        target.add(SystemSetting(
+            key="ratings_artifact_version", value="sha256:prior"
+        ))
+        target.add(TeamRating(
+            team_name="stale team",
+            competition="artifact league a",
+            attack_rating=7.77,
+            defense_rating=0.50,
+            matches_played=1,
+            weighted_matches=1.0,
+        ))
+        target.commit()
+    finally:
+        target.close()
+
     assert load_ratings(path, session_factory=target_factory) == 1
 
     target = target_factory()
@@ -85,6 +107,11 @@ def test_artifact_round_trip(tmp_path):
         ).one()
         assert row.attack_rating == 1.25
         assert row.weighted_matches == 12.5
+
+        stale_count = target.query(TeamRating).filter(
+            TeamRating.team_name == "stale team"
+        ).count()
+        assert stale_count == 0, "the loader must replace, not only upsert"
 
         stored = target.scalar(
             select(SystemSetting).where(
@@ -184,3 +211,49 @@ def test_a_local_refit_outranks_the_artifact(tmp_path):
         assert row.attack_rating == 9.99
     finally:
         target.close()
+
+
+def test_only_a_full_refit_outranks_the_artifact(tmp_path):
+    factory = _private_db(tmp_path, "refit.db")
+    now = datetime.now(timezone.utc)
+    db = factory()
+    try:
+        db.add_all([
+            Fixture(
+                dedupe_key="scoped-a",
+                kickoff_utc=now - timedelta(days=10),
+                home_team="Alpha",
+                away_team="Beta",
+                competition="Scoped League",
+                country="Test",
+                source="fixture",
+                home_score=2,
+                away_score=1,
+            ),
+            Fixture(
+                dedupe_key="scoped-b",
+                kickoff_utc=now - timedelta(days=3),
+                home_team="Beta",
+                away_team="Alpha",
+                competition="Scoped League",
+                country="Test",
+                source="fixture",
+                home_score=1,
+                away_score=1,
+            ),
+        ])
+        db.commit()
+
+        calculate_ratings_from_fixtures(db, competition="Scoped League", replace=True)
+        setting = db.query(SystemSetting).filter(
+            SystemSetting.key == "ratings_artifact_version"
+        ).one_or_none()
+        assert setting is None, "a scoped refit must not pin the whole engine"
+
+        calculate_ratings_from_fixtures(db, replace=True)
+        setting = db.query(SystemSetting).filter(
+            SystemSetting.key == "ratings_artifact_version"
+        ).one()
+        assert setting.value == "local"
+    finally:
+        db.close()

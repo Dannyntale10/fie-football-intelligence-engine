@@ -16,6 +16,12 @@ struct LiveView: View {
                     if let errorMessage {
                         NoteRow(text: errorMessage, tone: .danger)
                     }
+                    if store.liveUnreadable > 0 {
+                        NoteRow(
+                            text: "\(store.liveUnreadable) in-play fixture(s) could not be read from the engine and are not shown.",
+                            tone: .warn
+                        )
+                    }
                     if store.live.isEmpty && errorMessage == nil {
                         emptyState
                     }
@@ -118,12 +124,12 @@ private struct LiveFixtureCard: View {
         }
     }
 
-    private func probability(_ label: String, _ value: Double) -> some View {
+    private func probability(_ label: String, _ value: Double?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(Palette.textTertiary)
-            Text(value, format: .percent.precision(.fractionLength(1)))
+            Text(value.map { $0.formatted(.percent.precision(.fractionLength(1))) } ?? "—")
                 .font(.footnote.monospacedDigit().weight(.semibold))
                 .foregroundStyle(Palette.textPrimary)
         }

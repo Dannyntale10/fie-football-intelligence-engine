@@ -207,9 +207,9 @@ struct FixtureDetailView: View {
             }
             if let probabilities = prediction.probabilities {
                 HStack(spacing: 16) {
-                    Text("Home \(probabilities.homeWin, format: .percent.precision(.fractionLength(1)))")
-                    Text("Draw \(probabilities.draw, format: .percent.precision(.fractionLength(1)))")
-                    Text("Away \(probabilities.awayWin, format: .percent.precision(.fractionLength(1)))")
+                    Text("Home \(percentText(probabilities.homeWin))")
+                    Text("Draw \(percentText(probabilities.draw))")
+                    Text("Away \(percentText(probabilities.awayWin))")
                 }
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(Palette.textPrimary)
@@ -247,6 +247,11 @@ struct FixtureDetailView: View {
                 }
             }
         }
+    }
+
+    /// A missing probability is reported as missing, never as 0%.
+    private func percentText(_ value: Double?) -> String {
+        value.map { $0.formatted(.percent.precision(.fractionLength(1))) } ?? "—"
     }
 
     /// A snapshot taken without a score keeps the score empty; it is never 0 : 0.

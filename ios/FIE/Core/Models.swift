@@ -51,13 +51,38 @@ struct LiveFixturesResponse: Decodable {
     let refreshed: Bool
     let warning: String?
     let fixtures: [Fixture]
+    /// Rows the decoder could not read. The board reports the count instead of
+    /// silently hiding them.
+    let unreadable: Int
+
+    private struct LossyFixture: Decodable {
+        let fixture: Fixture?
+
+        init(from decoder: Decoder) throws {
+            fixture = try? Fixture(from: decoder)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case asOf, refreshed, warning, fixtures
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        asOf = try container.decodeIfPresent(String.self, forKey: .asOf)
+        refreshed = try container.decode(Bool.self, forKey: .refreshed)
+        warning = try container.decodeIfPresent(String.self, forKey: .warning)
+        let rows = try container.decode([LossyFixture].self, forKey: .fixtures)
+        fixtures = rows.compactMap(\.fixture)
+        unreadable = rows.count - fixtures.count
+    }
 }
 
 struct LivePrediction: Decodable {
     struct Probabilities: Decodable {
-        let homeWin: Double
-        let draw: Double
-        let awayWin: Double
+        let homeWin: Double?
+        let draw: Double?
+        let awayWin: Double?
     }
 
     struct Score: Decodable {

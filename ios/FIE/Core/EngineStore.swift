@@ -47,6 +47,7 @@ final class EngineStore: ObservableObject {
     @Published private(set) var sources: SourcesResponse?
     @Published private(set) var backtest: ComboBacktestReport?
     @Published private(set) var live: [Fixture] = []
+    @Published private(set) var liveUnreadable = 0
     @Published private(set) var errors: [EngineSection: String] = [:]
     @Published private(set) var ready: Set<EngineSection> = []
     @Published private(set) var isBootstrapped = false
@@ -110,6 +111,7 @@ final class EngineStore: ObservableObject {
                 as: LiveFixturesResponse.self
             )
             live = response.fixtures
+            liveUnreadable = response.unreadable
             livePaused = false
             errors.removeValue(forKey: .live)
             lastUpdated = Date()
@@ -179,6 +181,7 @@ final class EngineStore: ObservableObject {
         sources = nil
         backtest = nil
         live = []
+        liveUnreadable = 0
         errors = [:]
         ready = []
         isBootstrapped = false
@@ -244,6 +247,7 @@ final class EngineStore: ObservableObject {
                     as: LiveFixturesResponse.self
                 )
                 live = response.fixtures
+                liveUnreadable = response.unreadable
                 livePaused = false
             }
             errors.removeValue(forKey: section)

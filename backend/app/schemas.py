@@ -25,12 +25,21 @@ class FixtureOut(BaseModel):
     home_odds: Optional[float] = None
     draw_odds: Optional[float] = None
     away_odds: Optional[float] = None
+    home_score: Optional[int] = None
+    away_score: Optional[int] = None
+    live_clock: Optional[str] = None
     status: Optional[str] = None
     data_quality_score: Optional[int] = None
     data_quality_grade: Optional[str] = None
     eligible_for_analysis: Optional[bool] = None
 
     model_config = {"from_attributes": True}
+
+class LiveFixturesOut(BaseModel):
+    as_of: datetime
+    refreshed: bool
+    warning: Optional[str] = None
+    fixtures: List[FixtureOut]
 
 class ImportSummaryOut(BaseModel):
     inserted: int

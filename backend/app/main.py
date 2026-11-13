@@ -18,6 +18,7 @@ from app.models.price_snapshot import PriceSnapshot  # noqa: F401  (registers th
 from app.schemas import (
     FixtureImportRequest,
     FixtureOut,
+    LiveFixturesOut,
     ImportSummaryOut,
     FixtureQualityRequest,
     FixtureAnalysisOut,
@@ -40,6 +41,7 @@ from app.data_sources.seeder import (
     fetch_all_major_leagues,
 )
 from app.data_sources.live_feed import fetch_live_upcoming_fixtures_espn
+from app.data_sources.inplay import refresh_live_scores
 from app.analytics.backtest import run_backtest
 from app.betting.portfolio import build_daily_portfolio
 from app.betting.combo import generate_high_confidence_combos, top_picks_for_matchday
@@ -120,6 +122,9 @@ def _build_fixture_out(f: Fixture, custom_signals: Optional[dict] = None) -> dic
         "home_odds": f.home_odds,
         "draw_odds": f.draw_odds,
         "away_odds": f.away_odds,
+        "home_score": f.home_score,
+        "away_score": f.away_score,
+        "live_clock": f.live_clock,
         "status": f.status,
         "data_quality_score": quality["score"],
         "data_quality_grade": quality["grade"],
@@ -212,6 +217,22 @@ def delete_past_fixtures(db: Session = Depends(get_db)):
     deleted = db.execute(delete(Fixture).where(Fixture.kickoff_utc <= now)).rowcount
     db.commit()
     return {"message": f"Purged {deleted} past matches. Only genuine upcoming matches remain in the database.", "deleted_count": deleted}
+
+@app.get("/fixtures/live", response_model=LiveFixturesOut)
+def live_fixtures(db: Session = Depends(get_db)):
+    """Refresh (throttled) and return stored in-play fixtures with scores and clock."""
+    refresh = refresh_live_scores(db)
+    rows = db.scalars(
+        select(Fixture)
+        .where(Fixture.status.in_(("live", "halftime")))
+        .order_by(Fixture.kickoff_utc.asc())
+    ).all()
+    return {
+        "as_of": datetime.now(timezone.utc),
+        "refreshed": bool(refresh.get("refreshed")),
+        "warning": refresh.get("warning"),
+        "fixtures": [_build_fixture_out(f) for f in rows],
+    }
 
 @app.get("/fixtures/{fixture_id}", response_model=FixtureOut)
 def get_fixture(fixture_id: int, db: Session = Depends(get_db)):

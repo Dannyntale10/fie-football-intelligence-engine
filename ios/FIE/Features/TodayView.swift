@@ -1,27 +1,23 @@
 import SwiftUI
 
 struct TodayView: View {
-    @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @EnvironmentObject private var store: EngineStore
 
-    @State private var report: DailyComboReport?
-    @State private var cachedAt: Date?
-    @State private var health: Health?
-    @State private var engineOnline: Bool?
-    @State private var loadingReport = false
+    @State private var analysing = false
     @State private var refreshingFeeds = false
-    @State private var errorMessage: String?
     @State private var refreshError: String?
     @State private var refreshNote: String?
-    @State private var hasLoaded = false
 
-    private var client: APIClient {
-        APIClient(baseURL: URL(string: serverURL) ?? APIClient.fromStoredSettings().baseURL)
-    }
+    private var report: DailyComboReport? { store.report }
+    private var cachedAt: Date? { store.cachedAt }
+    private var health: Health? { store.health }
+    private var errorMessage: String? { store.errors[.report] }
+    private var hasLoaded: Bool { store.isBootstrapped }
 
-    private var busy: Bool { loadingReport || refreshingFeeds }
+    private var busy: Bool { analysing || refreshingFeeds || store.isRefreshing }
 
     private var analyseLabel: String {
-        if loadingReport { return "Analysing stored prices…" }
+        if analysing { return "Analysing stored prices…" }
         if refreshingFeeds { return "Refreshing bookmaker feeds…" }
         return "Analyse today's slate"
     }
@@ -41,13 +37,20 @@ struct TodayView: View {
                     if let errorMessage {
                         NoteRow(text: errorMessage, tone: report == nil ? .danger : .warn)
                     }
-                    if loadingReport && report == nil {
+                    if analysing && report == nil {
                         LoadingCard(label: "Reading today's slate from stored prices…")
+                    }
+                    if !store.live.isEmpty {
+                        LiveMatchesCard(fixtures: store.live, maxRows: 3)
                     }
                     if let report {
                         DailyComboReportView(report: report, cachedAt: cachedAt)
                             .transition(.opacity)
-                    } else if !loadingReport && errorMessage == nil && hasLoaded {
+                            .animation(
+                                store.isAutoTicking ? nil : .easeOut(duration: 0.25),
+                                value: report.generatedAt
+                            )
+                    } else if !busy && errorMessage == nil && hasLoaded {
                         Card {
                             Text("No report yet.")
                                 .font(TypeScale.section)
@@ -72,17 +75,10 @@ struct TodayView: View {
                     .accessibilityLabel("Test on history")
                 }
             }
-            .task { await loadStoredReport() }
-            .refreshable { await loadStoredReport() }
-            .onChange(of: serverURL) { _, _ in
-                report = nil
-                cachedAt = nil
-                health = nil
-                engineOnline = nil
-                hasLoaded = false
-                ReportCache.clear()
-                Task { await loadStoredReport() }
+            .task {
+                if !store.isBootstrapped { await store.bootstrap() }
             }
+            .refreshable { await store.refreshAll() }
         }
     }
 
@@ -122,25 +118,20 @@ struct TodayView: View {
     }
 
     private var engineTint: Color {
-        switch engineOnline {
-        case .some(true): return Palette.accent
-        case .some(false): return Palette.danger
-        case .none: return Palette.textTertiary
-        }
+        if health != nil { return Palette.accent }
+        return store.isBootstrapped ? Palette.danger : Palette.textTertiary
     }
 
     private var engineLabel: String {
-        switch engineOnline {
-        case .some(true):
-            guard let health else { return "Engine online" }
+        if let health {
             return "Engine online · \(Fmt.count(health.totalFixtures)) fixtures stored"
-        case .some(false):
-            return report == nil
-                ? "Engine unreachable · no saved report"
-                : "Engine unreachable · showing the saved report"
-        case .none:
+        }
+        if !store.isBootstrapped {
             return "Checking the engine…"
         }
+        return report == nil
+            ? "Engine unreachable · no saved report"
+            : "Engine unreachable · showing the saved report"
     }
 
     private var actions: some View {
@@ -177,72 +168,20 @@ struct TodayView: View {
     }
 
     @MainActor
-    private func loadStoredReport() async {
-        guard !busy else { return }
-
-        // Show the last saved report instantly so a cold launch or an
-        // unreachable engine never opens on an empty screen.
-        if report == nil, let cached = ReportCache.load() {
-            report = cached.report
-            cachedAt = cached.savedAt
-        }
-
-        loadingReport = true
-        errorMessage = nil
-        defer {
-            loadingReport = false
-            hasLoaded = true
-        }
-
-        health = try? await client.get("/health", timeout: 15, as: Health.self)
-        engineOnline = health != nil
-
-        do {
-            let fresh = try await client.get("/combos/daily", as: DailyComboReport.self)
-            withAnimation(.easeOut(duration: 0.25)) { report = fresh }
-            cachedAt = nil
-            ReportCache.save(fresh)
-        } catch {
-            engineOnline = false
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
     private func analyseSlate() async {
         guard !busy else { return }
-        errorMessage = nil
         refreshError = nil
         refreshNote = nil
 
-        // Show the analysis from stored prices first: a full feed sync can hang on an
-        // unreachable bookmaker host for minutes, and the report must not wait for it.
-        loadingReport = true
-        do {
-            let fresh = try await client.get("/combos/daily", as: DailyComboReport.self)
-            withAnimation(.easeOut(duration: 0.25)) { report = fresh }
-            cachedAt = nil
-            ReportCache.save(fresh)
-            engineOnline = true
-        } catch {
-            engineOnline = false
-            errorMessage = error.localizedDescription
-        }
-        loadingReport = false
+        analysing = true
+        await store.refresh(section: .report)
+        analysing = false
 
         refreshingFeeds = true
         do {
-            let refreshed = try await client.post(
-                "/sources/refresh",
-                timeout: 900,
-                as: SourcesRefreshResult.self
-            )
-            let rebuilt = try await client.get("/combos/daily", as: DailyComboReport.self)
-            withAnimation(.easeOut(duration: 0.35)) { report = rebuilt }
-            cachedAt = nil
-            ReportCache.save(rebuilt)
+            let refreshed = try await store.refreshFeeds()
             applyRefreshSummary(refreshed)
-            if refreshError == nil {
+            if store.errors[.report] == nil {
                 Haptics.success()
             } else {
                 Haptics.warning()
@@ -252,7 +191,6 @@ struct TodayView: View {
             Haptics.warning()
         }
         refreshingFeeds = false
-        hasLoaded = true
     }
 
     @MainActor

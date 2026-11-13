@@ -6,31 +6,36 @@ struct FixturesView: View {
         case gate = "85% gate"
     }
 
-    @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @EnvironmentObject private var store: EngineStore
     @AppStorage("fie.fixturesMode") private var storedMode = Mode.upcoming.rawValue
 
     @State private var mode: Mode = .upcoming
-    @State private var fixtures: [Fixture] = []
-    @State private var gate: GateReport?
-    @State private var loading = false
-    @State private var loadingGate = false
-    @State private var errorMessage: String?
-    @State private var gateError: String?
     @State private var searchText = ""
 
-    private var client: APIClient {
-        APIClient(baseURL: URL(string: serverURL) ?? APIClient.fromStoredSettings().baseURL)
-    }
+    private var fixtures: [Fixture] { store.fixtures }
+    private var gate: GateReport? { store.gate }
+    private var loading: Bool { !store.isBootstrapped && store.fixtures.isEmpty }
+    private var loadingGate: Bool { !store.isBootstrapped && store.gate == nil }
+    private var errorMessage: String? { store.errors[.fixtures] }
+    private var gateError: String? { store.errors[.gate] }
 
     private var filtered: [Fixture] {
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return fixtures }
-        return fixtures.filter { fixture in
-            fixture.homeTeam.lowercased().contains(needle)
-                || fixture.awayTeam.lowercased().contains(needle)
-                || fixture.competition.lowercased().contains(needle)
-                || fixture.country.lowercased().contains(needle)
-        }
+        return fixtures.filter { matches($0, needle: needle) }
+    }
+
+    private var filteredLive: [Fixture] {
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return store.live }
+        return store.live.filter { matches($0, needle: needle) }
+    }
+
+    private func matches(_ fixture: Fixture, needle: String) -> Bool {
+        fixture.homeTeam.lowercased().contains(needle)
+            || fixture.awayTeam.lowercased().contains(needle)
+            || fixture.competition.lowercased().contains(needle)
+            || fixture.country.lowercased().contains(needle)
     }
 
     var body: some View {
@@ -47,6 +52,15 @@ struct FixturesView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 10) {
+                        if store.livePaused {
+                            NoteRow(
+                                text: "Live scores paused; showing the last stored score.",
+                                tone: .warn
+                            )
+                        }
+                        if mode == .upcoming && !filteredLive.isEmpty {
+                            LiveMatchesCard(fixtures: filteredLive, glow: true)
+                        }
                         switch mode {
                         case .upcoming:
                             upcomingContent
@@ -62,13 +76,17 @@ struct FixturesView: View {
             .navigationTitle("Fixtures")
             .searchable(text: $searchText, prompt: "Team or competition")
             .task(id: mode) {
-                await loadCurrent()
                 storedMode = mode.rawValue
+                if !store.isBootstrapped {
+                    await store.bootstrap()
+                } else {
+                    await store.refresh(section: mode == .upcoming ? .fixtures : .gate)
+                }
             }
             .onAppear {
                 mode = Mode(rawValue: storedMode) ?? .upcoming
             }
-            .refreshable { await loadCurrent() }
+            .refreshable { await store.refreshAll() }
         }
     }
 
@@ -144,53 +162,6 @@ struct FixturesView: View {
                 }
                 .buttonStyle(.plain)
             }
-        }
-    }
-
-    @MainActor
-    private func loadCurrent() async {
-        switch mode {
-        case .upcoming:
-            await load()
-        case .gate:
-            await loadGate()
-        }
-    }
-
-    @MainActor
-    private func loadGate() async {
-        guard !loadingGate else { return }
-        loadingGate = true
-        gateError = nil
-        defer { loadingGate = false }
-        do {
-            gate = try await client.get(
-                "/markets/qualifying",
-                timeout: 120,
-                as: GateReport.self
-            )
-        } catch {
-            gateError = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        guard !loading else { return }
-        loading = true
-        errorMessage = nil
-        defer { loading = false }
-        do {
-            fixtures = try await client.get(
-                "/fixtures",
-                query: [
-                    URLQueryItem(name: "upcoming_only", value: "true"),
-                    URLQueryItem(name: "limit", value: "120"),
-                ],
-                as: [Fixture].self
-            )
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 }

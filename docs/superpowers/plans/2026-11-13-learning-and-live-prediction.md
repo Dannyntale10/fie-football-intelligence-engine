@@ -1801,6 +1801,10 @@ def test_verdict_thresholds():
 @pytest.fixture
 def seeded():
     db = SessionLocal()
+    baseline = calibration_report(db, days=90, now=NOW)
+    assert baseline["sample"]["snapshots"] == 0, (
+        "another test leaked settled live_predictions rows into the shared database"
+    )
     fixture = Fixture(
         dedupe_key=f"{PREFIX}{datetime.now(timezone.utc).timestamp()}",
         kickoff_utc=NOW - timedelta(hours=2),
@@ -1869,9 +1873,11 @@ def test_report_shape_and_buckets(seeded):
     assert report["sample"]["matches"] == 1
     assert report["verdict"] == "insufficient_sample"
     assert report["overall"]["n"] == 12
-    assert {row["bucket"] for row in report["buckets"]} == {
-        "0-14", "15-29", "30-44", "45-59"
-    }
+    assert [row["bucket"] for row in report["buckets"]] == [
+        "0-14", "15-29", "30-44", "45-59", "60-74", "75-90"
+    ]
+    assert all(row["n"] == 0 for row in report["buckets"][4:])
+    assert report["buckets"][0]["n"] == 3
     assert report["intensity"]["source"] in {"default", "fitted"}
 
 

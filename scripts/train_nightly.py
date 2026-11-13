@@ -17,6 +17,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "backend") not in sys.path:
     sys.path.insert(0, str(ROOT / "backend"))
@@ -34,6 +36,7 @@ from app.analytics.model_gate import (
     save_champion,
 )
 from app.analytics.ratings import calculate_ratings_from_fixtures
+from app.data_sources.fixtures import clean_competition_name
 from app.data_sources.seeder import history_season_codes
 from app.database import SessionLocal
 from app.live.fit import fetch_export_rows, fit_intensity
@@ -48,7 +51,7 @@ def _league_averages(db) -> dict:
         Fixture.home_score.isnot(None), Fixture.away_score.isnot(None)
     ).all()
     for competition, home_score, away_score in rows:
-        bucket = averages[competition]
+        bucket = averages[clean_competition_name(competition)]
         bucket[0] += 1
         bucket[1] += home_score
         bucket[2] += away_score
@@ -99,14 +102,18 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    now = datetime.now(timezone.utc)
+    started_at = datetime.now(timezone.utc)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    seasons = history_season_codes(now.year - args.seasons + 1, now.year)
+    seasons = history_season_codes(
+        started_at.year - args.seasons + 1, started_at.year
+    )
     if not args.skip_ingest:
         _ingest(seasons, args.refresh_seasons)
+
+    now = datetime.now(timezone.utc)
 
     db = SessionLocal()
     try:
@@ -126,6 +133,7 @@ def main() -> int:
             "generated_at": now.isoformat(),
             "training_seasons": len(seasons),
             "window_days": args.window_days,
+            "dry_run": args.dry_run,
             "results": results,
             "decision": {
                 "promote": decision["promote"],
@@ -136,63 +144,77 @@ def main() -> int:
         if decision["promote"]:
             winning = decision["challenger"]
             half_life = float(winning["half_life_days"])
-            calculate_ratings_from_fixtures(db, replace=True, half_life_days=half_life)
+            if args.dry_run:
+                report["promoted"] = {"half_life_days": half_life}
+            else:
+                calculate_ratings_from_fixtures(db, replace=True, half_life_days=half_life)
 
-            rating_meta = write_ratings(
-                out_dir / "ratings.json",
-                db,
-                half_life_days=half_life,
-                trained_through=now.isoformat(),
-                league_averages=_league_averages(db),
-            )
-
-            blend = fit_report(db, half_life_days=half_life)
-            save_blend_report(blend, out_dir / "blending.json")
-
-            learning = build_learning_report(db)
-            if learning.get("status") == "fitted":
-                save_learning_report(learning, out_dir / "learning.json")
-
-            if not args.dry_run:
-                save_champion(
-                    {
-                        "artifact_version": 1,
-                        "config": {"half_life_days": half_life},
-                        "promoted_at": now.isoformat(),
-                        "trained_through": now.isoformat(),
-                        "training_seasons": len(seasons),
-                        "gate": {
-                            "champion_brier": decision["champion"]["brier"],
-                            "challenger_brier": winning["brier"],
-                            "holdout_matches": winning["n_matches"],
-                            "window": f"{args.window_days}d",
-                            "per_competition": winning["per_competition"],
-                            "reason": decision["reason"],
-                        },
-                        "artifacts": {
-                            "ratings.json": rating_meta["content_hash"],
-                        },
-                        "git_sha": _git_sha(),
-                    },
-                    out_dir / "model_champion.json",
+                rating_meta = write_ratings(
+                    out_dir / "ratings.json",
+                    db,
+                    half_life_days=half_life,
+                    trained_through=now.isoformat(),
+                    league_averages=_league_averages(db),
                 )
 
-            report["promoted"] = {
-                "half_life_days": half_life,
-                "ratings": rating_meta,
-                "blend_verdict": blend.get("verdict"),
-            }
+                blend = fit_report(db, half_life_days=half_life)
+                save_blend_report(blend, out_dir / "blending.json")
+
+                learning = build_learning_report(db)
+                if learning.get("status") == "fitted":
+                    save_learning_report(learning, out_dir / "learning.json")
+
+                if not args.dry_run:
+                    save_champion(
+                        {
+                            "artifact_version": 1,
+                            "config": {"half_life_days": half_life},
+                            "promoted_at": now.isoformat(),
+                            "trained_through": now.isoformat(),
+                            "training_seasons": len(seasons),
+                            "gate": {
+                                "champion_brier": decision["champion"]["brier"],
+                                "challenger_brier": winning["brier"],
+                                "holdout_matches": winning["n_matches"],
+                                "window": f"{args.window_days}d",
+                                "per_competition": winning["per_competition"],
+                                "reason": decision["reason"],
+                            },
+                            "artifacts": {
+                                "ratings.json": rating_meta["content_hash"],
+                            },
+                            "git_sha": _git_sha(),
+                        },
+                        out_dir / "model_champion.json",
+                    )
+
+                report["promoted"] = {
+                    "half_life_days": half_life,
+                    "ratings": rating_meta,
+                    "blend_verdict": blend.get("verdict"),
+                }
 
         engine_rows = []
         url = os.getenv("FIE_ENGINE_URL", "").strip()
         if url:
-            engine_rows = fetch_export_rows(url, os.getenv("FIE_API_KEY", ""), days=90)
-        live_fit = fit_intensity(engine_rows)
-        report["live_intensity"] = live_fit
-        if live_fit["status"] == "fitted" and not args.dry_run:
-            (out_dir / "live_calibration.json").write_text(
-                json.dumps(live_fit, indent=2, sort_keys=True)
-            )
+            try:
+                engine_rows = fetch_export_rows(url, os.getenv("FIE_API_KEY", ""), days=90)
+            except (requests.RequestException, ValueError) as exc:
+                report["live_intensity"] = {
+                    "status": "export_unavailable",
+                    "k": 1.0,
+                    "sample": 0,
+                    "validation": None,
+                    "generated_at": None,
+                    "error": type(exc).__name__,
+                }
+        if "live_intensity" not in report:
+            live_fit = fit_intensity(engine_rows)
+            report["live_intensity"] = live_fit
+            if live_fit["status"] == "fitted" and not args.dry_run:
+                (out_dir / "live_calibration.json").write_text(
+                    json.dumps(live_fit, indent=2, sort_keys=True)
+                )
 
         (out_dir / "nightly_report.json").write_text(json.dumps(report, indent=2))
         print(json.dumps(report["decision"]))

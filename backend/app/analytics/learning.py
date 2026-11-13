@@ -283,8 +283,9 @@ def save_report(report: Dict[str, Any], path: Optional[Path] = None) -> None:
     target = Path(path) if path is not None else LEARNING_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(report, indent=2, sort_keys=True))
-    _CACHE["mtime"] = target.stat().st_mtime
-    _CACHE["report"] = report
+    if path is None:
+        _CACHE["mtime"] = LEARNING_PATH.stat().st_mtime
+        _CACHE["report"] = report
 
 
 def load_report() -> Optional[Dict[str, Any]]:

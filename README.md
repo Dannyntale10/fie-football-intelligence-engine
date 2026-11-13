@@ -54,6 +54,10 @@ scripts/          setup, init_db, backtest, provider verification, migrations
 The API is mounted without a prefix; interactive docs are at `/docs`.
 CORS accepts the origins listed in `FRONTEND_ORIGINS`.
 
+Live scores: `GET /fixtures/live` refreshes and returns today's in-play fixtures
+with stored scores and clock. The endpoint is throttled to one upstream ESPN
+refresh per 60 seconds and never creates a fixture.
+
 ## Requirements
 
 - macOS (Linux works too)
@@ -419,6 +423,11 @@ A native SwiftUI client lives in `ios/` and talks to the same FastAPI backend.
   the two-phase stored-prices → feed-refresh flow), **Fixtures** (with the
   per-match dossier), **Performance**, **Sources** (provider readiness and feed
   refresh) and **Settings**.
+- On launch the app shows the FIE splash while eleven sections preload
+  concurrently, then refreshes live scores every 60 seconds while it is in the
+  foreground. Fixtures pins a Live now card, Today shows a compact live strip,
+  and the match detail header shows the score and clock only when the engine
+  has them.
 - The server address is editable in Settings. The default
   `http://localhost:8001` works in the Simulator; a physical iPhone needs the
   Mac's LAN address and the backend bound to `0.0.0.0`:

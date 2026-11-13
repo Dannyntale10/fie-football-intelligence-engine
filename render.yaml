@@ -2,14 +2,29 @@ services:
   - type: web
     name: fie-football-intelligence-engine
     env: python
+    plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run streamlit_app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
+    startCommand: uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10.12
+        value: 3.11.9
+      # The SQLite file lives on the mounted disk, so a redeploy does not wipe
+      # the fixtures, ratings and settled slips. Without the disk below this
+      # path does not exist and the service fails to start.
+      - key: DATABASE_URL
+        value: sqlite:////var/data/fie.db
+      - key: FIE_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_ALLOWED_CHAT_IDS
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+    disk:
+      name: fie-data
+      mountPath: /var/data
+      sizeGB: 1

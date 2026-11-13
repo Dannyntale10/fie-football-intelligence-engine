@@ -406,11 +406,21 @@ where the bot should live.
 
 - **Dashboard:** Vercel (root `frontend/`, set `NEXT_PUBLIC_API_BASE_URL`).
 - **API:** any Python host. Build `pip install -r requirements.txt`, start
-  `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, set `DATABASE_URL` and
-  `FRONTEND_ORIGINS`.
-- **Legacy Streamlit UI:** `streamlit_app.py` remains deployable
-  (`streamlit run streamlit_app.py`) and is still referenced by `render.yaml`.
-  The Next.js dashboard is the primary interface.
+  `uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT`, set
+  `DATABASE_URL`, `FIE_API_KEY` and `FRONTEND_ORIGINS`. Every route except
+  `/health` expects the `X-API-Key` header.
+- **Storage:** the engine uses SQLite. Mount a persistent disk and point
+  `DATABASE_URL` at it (`sqlite:////var/data/fie.db`); without a disk each
+  redeploy starts from an empty database. `render.yaml` already describes this
+  service, the disk and the environment variables.
+- **Historical corpus:** the 26-season training set (see `scripts/ingest_history.py`)
+  stays in the local database. The trained artifacts it produces —
+  `data/calibration.json`, `data/blending.json`, `data/combo_learning.json` —
+  are committed, so a fresh host serves the same calibrated model without
+  re-importing anything.
+- **Legacy Streamlit UI:** `streamlit_app.py` still runs
+  (`streamlit run streamlit_app.py`) for local inspection. It is not the
+  production service; the Next.js dashboard and the iOS app are.
 
 Never commit `.env`, tokens or keys. Use the host's secret manager.
 

@@ -8,7 +8,7 @@ Features:
   3. Evaluates every individual leg's market condition (1X2, DC, DNB, Goals, Asian Handicap).
   4. Automatically grades overall accumulator slips (WON / LOST / VOID).
   5. Calculates transparent PnL & ROI (dual UGX / USD currency).
-  6. Dispatches celebratory or transparent outcome notifications to WhatsApp!
+  6. Queues one Telegram settlement message per slip, retried by the delivery loop.
 """
 import os
 import json

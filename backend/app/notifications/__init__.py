@@ -1,1 +1,1 @@
-"""Outbound notifications (Telegram, WhatsApp)."""
+"""Telegram notification queue, delivery and inbound polling."""

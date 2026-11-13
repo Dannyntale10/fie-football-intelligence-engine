@@ -109,6 +109,12 @@ def test_notifications_queue():
     assert sent.json()["status"] == "sent"
 
 
+def test_notifications_reject_retired_channels():
+    blocked = client.post("/notifications", json={"channel": "whatsapp", "body": "Old transport"})
+    assert blocked.status_code == 400
+    assert "Telegram" in blocked.json()["detail"]
+
+
 def test_tier_sweep_endpoint_validates_and_saves(monkeypatch):
     from app.api import combos as combos_api
 

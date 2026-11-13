@@ -228,9 +228,11 @@ export default function SettingsPage() {
                       className="mt-1 w-full"
                     >
                       <option value="telegram">Telegram</option>
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="email">Email</option>
                     </select>
+                    <span className="mt-1 block text-[11px] text-mist/50">
+                      Telegram is the only delivery channel. The recipient must be on the
+                      server-side allowlist.
+                    </span>
                   </label>
                   <label className="block text-xs text-mist/60">
                     Recipient (optional)
@@ -238,7 +240,7 @@ export default function SettingsPage() {
                       value={recipient}
                       onChange={(event) => setRecipient(event.target.value)}
                       className="mt-1 w-full"
-                      placeholder="Chat ID or number"
+                      placeholder="Chat ID"
                     />
                   </label>
                   <label className="block text-xs text-mist/60">

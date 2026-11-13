@@ -97,6 +97,8 @@ def list_notifications(
 
 @router.post("/notifications")
 def create_notification(payload: NotificationIn, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    if payload.channel != "telegram":
+        raise HTTPException(status_code=400, detail="Telegram is the only notification channel")
     row = Notification(
         channel=payload.channel,
         recipient=payload.recipient,

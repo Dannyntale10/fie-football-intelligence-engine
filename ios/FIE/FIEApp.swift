@@ -52,6 +52,10 @@ struct RootView: View {
                 SettingsView()
                     .tag(4)
                     .tabItem { Label("Settings", systemImage: "gearshape") }
+
+                LiveView()
+                    .tag(5)
+                    .tabItem { Label("Live", systemImage: "dot.radiowaves.left.and.right") }
             }
 
             if showSplash {

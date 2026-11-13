@@ -41,6 +41,7 @@ struct Fixture: Decodable, Identifiable {
     let dataQualityScore: Double?
     let dataQualityGrade: String?
     let eligibleForAnalysis: Bool?
+    let livePrediction: LivePrediction?
 
     var matchLabel: String { "\(homeTeam) vs \(awayTeam)" }
 }
@@ -50,6 +51,61 @@ struct LiveFixturesResponse: Decodable {
     let refreshed: Bool
     let warning: String?
     let fixtures: [Fixture]
+}
+
+struct LivePrediction: Decodable {
+    struct Probabilities: Decodable {
+        let homeWin: Double
+        let draw: Double
+        let awayWin: Double
+    }
+
+    struct Score: Decodable {
+        let home: Int?
+        let away: Int?
+    }
+
+    struct LambdaPair: Decodable {
+        let home: Double?
+        let away: Double?
+    }
+
+    let status: String
+    let observedAt: String?
+    let minute: Int
+    let freshness: String
+    let score: Score
+    let remainingMinutes: Int
+    let probabilities: Probabilities?
+    let prematchProbabilities: Probabilities?
+    let lambda: LambdaPair
+    let remainingLambda: LambdaPair
+    let intensity: Double?
+    let intensitySource: String?
+    let lambdaSource: String?
+    let modelVersion: String
+}
+
+struct LiveHistoryResponse: Decodable {
+    struct Snapshot: Decodable, Identifiable {
+        let minute: Int
+        let minuteBucket: Int
+        let observedAt: String?
+        let score: LivePrediction.Score
+        let probabilities: LivePrediction.Probabilities?
+        let result: String?
+        let extraHomeGoals: Int?
+        let extraAwayGoals: Int?
+        let brier: Double?
+        let logLoss: Double?
+        let topPickCorrect: Bool?
+
+        var id: Int { minuteBucket }
+    }
+
+    let fixtureId: Int
+    let latest: LivePrediction?
+    let history: [Snapshot]
 }
 
 struct PredictionList: Decodable {

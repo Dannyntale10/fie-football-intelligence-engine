@@ -28,6 +28,7 @@ enum EngineSection: String, CaseIterable, Identifiable {
         case 1: return .fixtures
         case 2: return .summary
         case 3: return .sources
+        case 5: return .live
         default: return .health
         }
     }

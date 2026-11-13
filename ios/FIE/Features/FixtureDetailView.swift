@@ -18,6 +18,7 @@ struct FixtureDetailView: View {
     @EnvironmentObject private var store: EngineStore
     @State private var dossier: Dossier?
     @State private var discovery: Discovery?
+    @State private var liveHistory: LiveHistoryResponse?
     @State private var loading = false
     @State private var errorMessage: String?
 
@@ -33,6 +34,12 @@ struct FixtureDetailView: View {
                 }
                 if let fixture {
                     prices(fixture)
+                }
+                if let latest = liveHistory?.latest {
+                    liveCard(latest)
+                }
+                if let history = liveHistory, !history.history.isEmpty {
+                    liveHistoryCard(history)
                 }
                 if loading {
                     LoadingCard(label: "Building the match dossier…")
@@ -63,7 +70,8 @@ struct FixtureDetailView: View {
         .task {
             async let dossierLoad: Void = loadDossier()
             async let discoveryLoad: Void = loadDiscovery()
-            _ = await (dossierLoad, discoveryLoad)
+            async let liveLoad: Void = loadLiveHistory()
+            _ = await (dossierLoad, discoveryLoad, liveLoad)
         }
     }
 
@@ -185,6 +193,65 @@ struct FixtureDetailView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.white.opacity(0.05))
         )
+    }
+
+    @ViewBuilder
+    private func liveCard(_ prediction: LivePrediction) -> some View {
+        Card {
+            HStack {
+                Eyebrow(text: "Live forecast")
+                Spacer()
+                Text(prediction.freshness.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(prediction.freshness == "fresh" ? Palette.accent : Palette.textSecondary)
+            }
+            if let probabilities = prediction.probabilities {
+                HStack(spacing: 16) {
+                    Text("Home \(probabilities.homeWin, format: .percent.precision(.fractionLength(1)))")
+                    Text("Draw \(probabilities.draw, format: .percent.precision(.fractionLength(1)))")
+                    Text("Away \(probabilities.awayWin, format: .percent.precision(.fractionLength(1)))")
+                }
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(Palette.textPrimary)
+            } else {
+                Text("No forecast: \(prediction.status.replacingOccurrences(of: "_", with: " "))")
+                    .font(.footnote)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Model estimate, not a price. Informational only.")
+                .font(.caption2)
+                .foregroundStyle(Palette.textTertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func liveHistoryCard(_ history: LiveHistoryResponse) -> some View {
+        Card {
+            Eyebrow(text: "Settled snapshots")
+            ForEach(history.history) { row in
+                HStack {
+                    Text("\(row.minute)'")
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 44, alignment: .leading)
+                    Text(snapshotScore(row))
+                        .font(.caption.monospacedDigit())
+                    Spacer()
+                    Text(row.result?.replacingOccurrences(of: "_", with: " ") ?? "open")
+                        .font(.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                    if let brier = row.brier {
+                        Text(brier, format: .number.precision(.fractionLength(3)))
+                            .font(.caption.monospacedDigit())
+                    }
+                }
+            }
+        }
+    }
+
+    /// A snapshot taken without a score keeps the score empty; it is never 0 : 0.
+    private func snapshotScore(_ row: LiveHistoryResponse.Snapshot) -> String {
+        "\(row.score.home.map(String.init) ?? "–") : \(row.score.away.map(String.init) ?? "–")"
     }
 
     private func verdict(_ dossier: Dossier) -> some View {
@@ -421,6 +488,20 @@ struct FixtureDetailView: View {
         guard let date = Fmt.date(iso) else { return "" }
         let hours = Date().timeIntervalSince(date) / 3600
         return " · \(Fmt.age(hours: hours)) old"
+    }
+
+    @MainActor
+    private func loadLiveHistory() async {
+        do {
+            liveHistory = try await client.get(
+                "/fixtures/\(fixtureId)/live",
+                timeout: 20,
+                as: LiveHistoryResponse.self
+            )
+        } catch {
+            // No live row for this fixture is a normal answer, not an error to shout about.
+            liveHistory = nil
+        }
     }
 
     @MainActor

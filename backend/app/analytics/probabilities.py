@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 try:
     from scipy.stats import poisson
@@ -510,7 +511,8 @@ def analyze_fixture(
     rho: float = -0.10,
     db: Optional[Any] = None,
     bankroll: float = 1000.0,
-    kelly_fraction: float = 0.25
+    kelly_fraction: float = 0.25,
+    as_of: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Perform comprehensive market probability, bookmaker margin, and +EV value analysis for a fixture."""
     ratings_found = False
@@ -521,7 +523,7 @@ def analyze_fixture(
     # phantom margin into phantom value on every downstream market.
     try:
         from app.analytics.market_reference import resolve as resolve_market_reference
-        market_reference = resolve_market_reference(db, fixture)
+        market_reference = resolve_market_reference(db, fixture, before=as_of)
     except Exception:
         market_reference = None
 

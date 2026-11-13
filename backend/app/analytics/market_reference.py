@@ -87,13 +87,21 @@ def _from_prices(
     )
 
 
-def resolve(db: Any, fixture: Any) -> Optional[MarketReference]:
+def resolve(
+    db: Any,
+    fixture: Any,
+    before: Optional[datetime] = None,
+) -> Optional[MarketReference]:
     """Best coherent 1X2 reference for a fixture, or ``None``.
 
     Prefers a complete per-bookmaker quote (freshest, then sharpest). Falls
     back to the fixture's own three prices only when they form a market that
     still carries a margin, so a mixed best-price set is refused rather than
     normalised into a fake probability.
+
+    ``before`` freezes the reference at a cutoff: only a quote provably
+    captured strictly earlier is eligible. Passing ``None`` keeps the
+    historical behaviour of using every stored price.
     """
     fixture_id = getattr(fixture, "id", None)
     if db is not None and fixture_id is not None:
@@ -105,8 +113,14 @@ def resolve(db: Any, fixture: Any) -> Optional[MarketReference]:
                 MarketQuote.market_key.in_(QUOTE_KEYS),
             )
         ).all()
+        cutoff = _aware(before) if before is not None else None
         books: Dict[str, Dict[str, Any]] = {}
         for row in rows:
+            # An unknown capture time cannot be proven pre-kickoff, so a live
+            # prior refuses it instead of assuming the best.
+            if cutoff is not None:
+                if row.captured_at is None or _aware(row.captured_at) >= cutoff:
+                    continue
             if row.price is None or row.price <= 1.0:
                 continue
             key = (row.bookmaker or "").strip().upper()
@@ -153,10 +167,15 @@ def resolve(db: Any, fixture: Any) -> Optional[MarketReference]:
     }
     if any(price is None or float(price) <= 1.0 for price in prices.values()):
         return None
+    captured_at = getattr(fixture, "odds_updated_at", None)
+    if before is not None and (
+        captured_at is None or _aware(captured_at) >= _aware(before)
+    ):
+        return None
     return _from_prices(
         {key: float(value) for key, value in prices.items()},
         bookmaker=None,
         source=getattr(fixture, "source", None),
-        captured_at=getattr(fixture, "odds_updated_at", None),
+        captured_at=captured_at,
         origin="fixture",
     )

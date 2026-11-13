@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { LiveCalibrationPanel } from "@/components/LiveCalibrationPanel";
 import {
   Badge,
   Card,
@@ -558,6 +559,10 @@ export default function PerformancePage() {
             </>
           )}
         </Card>
+      </div>
+
+      <div className="mt-6">
+        <LiveCalibrationPanel />
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   { href: "/", label: "Overview", short: "OV" },
+  { href: "/live", label: "Live", short: "LV" },
   { href: "/top-picks", label: "Top 5 Matches", short: "T5" },
   { href: "/high-odds", label: "High Odds 6.0", short: "H6" },
   { href: "/fixtures", label: "Global Fixtures", short: "GF" },

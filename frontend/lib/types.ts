@@ -11,10 +11,14 @@ export type Fixture = {
   home_odds: number | null;
   draw_odds: number | null;
   away_odds: number | null;
+  home_score: number | null;
+  away_score: number | null;
+  live_clock: string | null;
   status: string | null;
   data_quality_score: number | null;
   data_quality_grade: string | null;
   eligible_for_analysis: boolean | null;
+  live_prediction?: LivePrediction | null;
 };
 
 export type Health = {
@@ -983,4 +987,77 @@ export type ComboTierSweep = {
     guidance?: string;
   } | null;
   notes?: string[];
+};
+
+export type LiveProbabilities = {
+  home_win: number;
+  draw: number;
+  away_win: number;
+};
+
+export type LivePrediction = {
+  status: string;
+  observed_at: string | null;
+  minute: number;
+  freshness: "fresh" | "stale" | "expired";
+  score: { home: number | null; away: number | null };
+  remaining_minutes: number;
+  probabilities: LiveProbabilities | null;
+  prematch_probabilities: LiveProbabilities | null;
+  lambda: { home: number | null; away: number | null };
+  remaining_lambda: { home: number | null; away: number | null };
+  intensity: number | null;
+  intensity_source: string | null;
+  lambda_source: string | null;
+  model_version: string;
+};
+
+export type LiveFixture = Fixture & {
+  live_prediction: LivePrediction | null;
+};
+
+export type LiveFixturesResponse = {
+  as_of: string;
+  refreshed: boolean;
+  warning: string | null;
+  fixtures: LiveFixture[];
+};
+
+export type LiveHistoryResponse = {
+  fixture_id: number;
+  latest: LivePrediction | null;
+  history: Array<{
+    minute: number;
+    minute_bucket: number;
+    observed_at: string | null;
+    score: { home: number | null; away: number | null };
+    probabilities: LiveProbabilities | null;
+    result: string | null;
+    extra_home_goals: number | null;
+    extra_away_goals: number | null;
+    brier: number | null;
+    log_loss: number | null;
+    top_pick_correct: boolean | null;
+  }>;
+};
+
+export type LiveCalibrationReport = {
+  generated_at: string;
+  sample: { snapshots: number; matches: number };
+  verdict: string;
+  overall: {
+    n: number;
+    brier_live: number | null;
+    brier_prematch: number | null;
+    log_loss_live: number | null;
+    log_loss_prematch: number | null;
+    top_pick_accuracy: number | null;
+  };
+  buckets: Array<{
+    bucket: string;
+    n: number;
+    brier_live: number | null;
+    brier_prematch: number | null;
+  }>;
+  intensity: { k: number; source: string };
 };

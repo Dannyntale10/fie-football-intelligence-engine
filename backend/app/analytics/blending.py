@@ -424,9 +424,10 @@ def fit_report(
     return build_report(predictions, train_fraction=train_fraction)
 
 
-def save_report(report: Dict[str, Any]) -> None:
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(report, indent=2))
+def save_report(report: Dict[str, Any], path: Optional[Path] = None) -> None:
+    target = Path(path) if path is not None else REPORT_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(report, indent=2))
     _REPORT_CACHE["mtime"] = None
     _REPORT_CACHE["report"] = None
 

@@ -160,6 +160,7 @@ def load_champion() -> Optional[Dict[str, Any]]:
     return payload if isinstance(payload, dict) else None
 
 
-def save_champion(payload: Dict[str, Any]) -> None:
-    CHAMPION_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CHAMPION_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
+def save_champion(payload: Dict[str, Any], path: Optional[Path] = None) -> None:
+    target = Path(path) if path is not None else CHAMPION_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, indent=2, sort_keys=True))

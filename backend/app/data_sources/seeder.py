@@ -401,6 +401,13 @@ def history_season_codes(first_year: int = 2000, last_year: int = 2026) -> List[
     ]
 
 
+def seasons_to_refresh(seasons: List[str], count: int) -> set:
+    """The newest ``count`` season codes, which are always re-downloaded."""
+    if count <= 0:
+        return set()
+    return set(seasons[-count:])
+
+
 def fetch_all_major_leagues(db: Session, season: str = "2324") -> Dict[str, Any]:
     """Automatically ingest complete season results & odds for all 5 major European leagues and calibrate team ratings."""
     total_inserted = 0

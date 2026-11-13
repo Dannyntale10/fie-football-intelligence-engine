@@ -55,6 +55,12 @@ def main() -> int:
         help="Comma-separated season codes (0001,2324,...) to retry instead of a year range.",
     )
     parser.add_argument("--delay", type=float, default=0.15, help="Seconds between downloads.")
+    parser.add_argument(
+        "--refresh-seasons",
+        type=int,
+        default=0,
+        help="Force re-download the newest N seasons (current plus N-1).",
+    )
     parser.add_argument("--force", action="store_true", help="Re-download cached files.")
     parser.add_argument("--no-ratings", action="store_true", help="Skip the final ratings rebuild.")
     parser.add_argument("--quiet", action="store_true", help="Only print the summary.")
@@ -66,6 +72,7 @@ def main() -> int:
         history_season_codes,
         import_football_data_dataframe,
         read_football_data_csv,
+        seasons_to_refresh,
     )
     from app.database import SessionLocal
 
@@ -84,6 +91,7 @@ def main() -> int:
         if args.seasons
         else history_season_codes(args.first_year, args.last_year)
     )
+    refresh = seasons_to_refresh(seasons, args.refresh_seasons)
     cache_dir = (ROOT / args.cache_dir) if not Path(args.cache_dir).is_absolute() else Path(args.cache_dir)
 
     db = SessionLocal()
@@ -104,7 +112,11 @@ def main() -> int:
             for code, name in divisions:
                 cached = cache_dir / season / f"{code}.csv"
                 try:
-                    fetched = _download(BASE_URL.format(season=season, division=code), cached, args.force)
+                    fetched = _download(
+                        BASE_URL.format(season=season, division=code),
+                        cached,
+                        args.force or season in refresh,
+                    )
                     if fetched:
                         totals["new_files"] += 1
                         time.sleep(args.delay)

@@ -1,5 +1,7 @@
 """The gate compares configurations on the same windows, never a stale number."""
-from app.analytics.model_gate import gate_decision
+import json
+
+from app.analytics.model_gate import gate_decision, save_champion
 
 
 def _result(half_life, brier, log_loss=0.70, comps=None):
@@ -68,3 +70,11 @@ def test_the_champion_config_alone_is_not_a_challenger():
 
     assert decision["promote"] is False
     assert decision["reason"] == "config_unchanged"
+
+
+def test_a_champion_can_be_staged_to_an_explicit_path(tmp_path):
+    target = tmp_path / "champion.json"
+
+    save_champion({"config": {"half_life_days": 150.0}}, target)
+
+    assert json.loads(target.read_text()) == {"config": {"half_life_days": 150.0}}

@@ -374,3 +374,16 @@ def test_poll_once_refuses_strangers_and_answers_allowed(allowlist):
     assert next_offset == 12
     assert [reply["chat_id"] for reply in replies] == ["42"]
     assert "Not authorized" not in replies[0]["text"]
+
+
+def test_queue_message_dedupes_by_key(db):
+    first = telegram.queue_message(db, "Daily shortlist", "Leg one", dedupe_key="shortlist:t1")
+    second = telegram.queue_message(db, "Daily shortlist", "Leg one", dedupe_key="shortlist:t1")
+    try:
+        assert first is not None
+        assert second is None
+        rows = db.query(Notification).filter(Notification.dedupe_key == "shortlist:t1").all()
+        assert len(rows) == 1
+    finally:
+        db.query(Notification).filter(Notification.dedupe_key == "shortlist:t1").delete()
+        db.commit()

@@ -74,6 +74,44 @@ def send_message(
         return {"status": "failed", "detail": str(error)}
 
 
+def queue_message(
+    db: Session,
+    subject: str,
+    body: str,
+    *,
+    dedupe_key: str,
+    related_type: Optional[str] = None,
+    related_id: Optional[int] = None,
+    channel: str = "telegram",
+) -> Optional[int]:
+    """Insert a pending row unless one with the same dedupe key already exists."""
+    from app.models.predictions import Notification
+    from sqlalchemy.exc import IntegrityError
+
+    existing = db.scalar(
+        select(Notification).where(Notification.dedupe_key == dedupe_key)
+    )
+    if existing is not None:
+        return None
+    row = Notification(
+        channel=channel,
+        subject=subject,
+        body=body,
+        status="pending",
+        related_type=related_type,
+        related_id=related_id,
+        dedupe_key=dedupe_key,
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return None
+    db.refresh(row)
+    return row.id
+
+
 def _post(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     response = requests.post(url, json=payload, timeout=20)
     return response.json()

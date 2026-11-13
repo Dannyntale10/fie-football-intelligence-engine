@@ -5,9 +5,10 @@ logs a skip instead of inventing work. The 85% gate is never bypassed here.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -34,23 +35,51 @@ def _session():
     return next(get_db())
 
 
-def _notify(subject: str, body: str, related_type: Optional[str] = None, related_id: Optional[int] = None) -> None:
+def _ticket_signature(ticket: Dict[str, Any]) -> str:
+    import hashlib
+
+    legs = [
+        (leg.get("fixture_id"), leg.get("market_key"), leg.get("odds"))
+        for leg in ticket.get("legs", [])
+    ]
+    raw = json.dumps([ticket.get("size"), legs], default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _shortlist_dedupe(report: Dict[str, Any]) -> str:
+    combos = report.get("combos") or {}
+    parts = [
+        _ticket_signature(tickets[0])
+        for key in ("2_leg", "3_leg")
+        for tickets in (combos.get(key) or [])[:1]
+    ]
+    day = report.get("target_date") or report.get("matchday_label") or "today"
+    return f"shortlist:{day}:{'_'.join(parts) or 'empty'}"
+
+
+def _notify(
+    subject: str,
+    body: str,
+    *,
+    dedupe_key: str,
+    related_type: Optional[str] = None,
+    related_id: Optional[int] = None,
+) -> None:
     try:
-        from app.models.predictions import Notification
+        from app.notifications.telegram import queue_message
 
         db = _session()
-        db.add(
-            Notification(
-                channel="telegram",
-                subject=subject,
-                body=body,
+        try:
+            queue_message(
+                db,
+                subject,
+                body,
+                dedupe_key=dedupe_key,
                 related_type=related_type,
                 related_id=related_id,
-                status="pending",
             )
-        )
-        db.commit()
-        db.close()
+        finally:
+            db.close()
     except Exception as error:  # pragma: no cover - notification is best effort
         logger.warning("[Scheduler] notification not queued: %s", error)
 
@@ -156,11 +185,12 @@ def build_shortlist() -> Dict[str, Any]:
 
     subject = f"Daily shortlist · {report.get('matchday_label') or ''}".strip()
     text = format_daily_report(report)
+    dedupe = _shortlist_dedupe(report)
     if not report.get("best"):
-        _notify(subject, text)
+        _notify(subject, text, dedupe_key=dedupe)
         return {"status": "empty", "message": NO_QUALIFIED, "delivery": deliver_notifications()}
 
-    _notify(subject, text, related_type="combos")
+    _notify(subject, text, dedupe_key=dedupe, related_type="combos")
     return {
         "status": "ok",
         "tickets": sum(len(rows) for rows in (report.get("combos") or {}).values()),
@@ -210,7 +240,11 @@ def daily_analytics() -> Dict[str, Any]:
             "settled_legs": (report.get("sources") or {}).get("settled_legs"),
             "applied_markets": report.get("applied_markets"),
         }
-        _notify("Daily analytics", str(summary)[:900])
+        _notify(
+            "Daily analytics",
+            str(summary)[:900],
+            dedupe_key=f"analytics:{datetime.now(EAT_TZ).strftime('%Y-%m-%d')}",
+        )
         return {"status": "ok", "summary": summary}
     except Exception as error:
         logger.error("[Scheduler] analytics failed: %s", error)
@@ -240,6 +274,7 @@ def refit_blend() -> Dict[str, Any]:
         f"Weight {report['weights']['default']:.3f} · holdout Brier "
         f"{holdout.get('blend', {}).get('brier')} vs market "
         f"{holdout.get('market', {}).get('brier')} · {report.get('verdict')}",
+        dedupe_key=f"blend:{datetime.now(EAT_TZ).strftime('%Y-%m-%d')}:{report['weights']['default']:.3f}",
         related_type="blend",
     )
     return {

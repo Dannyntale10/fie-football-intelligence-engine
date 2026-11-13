@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session
 EAT_TZ = timezone(timedelta(hours=3), name="EAT")
 API_BASE = "https://api.telegram.org"
 NO_QUALIFIED = "NO QUALIFIED SELECTIONS FOUND."
+MAX_DELIVERY_ATTEMPTS = 5
+BACKOFF_MINUTES = (1, 2, 4, 8, 16)
+MAX_CHUNK = 3500
 HELP_TEXT = (
     "FIE commands:\n"
     "/today - today's fixtures (EAT)\n"
@@ -88,11 +91,19 @@ def send_message(
     try:
         response = transport(
             f"{API_BASE}/bot{token}/sendMessage",
-            {"chat_id": recipient, "text": text[:4000], "disable_web_page_preview": True},
+            {"chat_id": recipient, "text": text, "disable_web_page_preview": True},
         )
-        return {"status": "sent" if response.get("ok") else "failed", "response": response}
     except Exception as error:
-        return {"status": "failed", "detail": str(error)}
+        return {"status": "failed", "error": str(error)}
+    if response.get("ok"):
+        return {"status": "sent", "response": response}
+    parameters = response.get("parameters") or {}
+    return {
+        "status": "failed",
+        "error": response.get("description") or "Telegram rejected the message",
+        "retry_after": parameters.get("retry_after"),
+        "response": response,
+    }
 
 
 def queue_message(
@@ -205,7 +216,39 @@ def format_daily_report(report: Dict[str, Any], size: Optional[int] = None) -> s
             "Paper analysis only; no bets are placed. Prices are real bookmaker "
             "prices at capture time; the combined probability assumes the legs are independent."
         )
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)
+
+
+def _chunk_text(text: str, limit: int = MAX_CHUNK) -> List[str]:
+    """Split on line boundaries; hard-split a single oversized line."""
+    chunks: List[str] = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(current) + len(line) > limit:
+            chunks.append(current)
+            current = ""
+        current += line
+    if current:
+        chunks.append(current)
+    return chunks or [""]
+
+
+def _record_failure(row: Any, message: Optional[str], now: datetime) -> None:
+    row.attempts = int(row.attempts or 0) + 1
+    row.last_error = (message or "delivery failed")[:400]
+    if row.attempts >= MAX_DELIVERY_ATTEMPTS:
+        row.status = "failed"
+        row.next_attempt_at = None
+        return
+    row.status = "pending"
+    minutes = BACKOFF_MINUTES[min(row.attempts - 1, len(BACKOFF_MINUTES) - 1)]
+    row.next_attempt_at = now + timedelta(minutes=minutes)
 
 
 def _delivery_recipient(row: Any, allowlist: List[str]) -> Optional[str]:
@@ -230,50 +273,77 @@ def deliver_pending(
     transport: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
     limit: int = 20,
 ) -> Dict[str, Any]:
-    """Drain queued Telegram notifications and record each outcome.
-
-    Rows stay ``pending`` when no token or allowlist is configured, so nothing
-    is silently dropped. Delivery failures are marked ``failed`` rather than
-    retried forever; the notification list exposes both states.
-    """
+    """Drain due Telegram rows with bounded retries and content dedupe."""
     from app.models.predictions import Notification
 
     if not _token():
-        return {"status": "not_configured", "checked": 0, "sent": 0, "failed": 0, "pending": 0}
-    if not allowed_chat_ids(db):
-        return {"status": "no_recipient", "checked": 0, "sent": 0, "failed": 0, "pending": 0}
+        return {"status": "not_configured", "checked": 0, "sent": 0, "failed": 0, "pending": 0, "retried": 0}
 
+    allowlist = allowed_chat_ids(db)
+    if not allowlist:
+        return {"status": "no_recipient", "checked": 0, "sent": 0, "failed": 0, "pending": 0, "retried": 0}
+
+    now = datetime.now(timezone.utc)
     rows = db.scalars(
         select(Notification)
         .where(Notification.channel == "telegram", Notification.status == "pending")
+        .where(
+            (Notification.next_attempt_at.is_(None))
+            | (Notification.next_attempt_at <= now)
+        )
         .order_by(Notification.created_at)
         .limit(limit)
     ).all()
 
-    allowlist = allowed_chat_ids(db)
-    sent = 0
-    failed = 0
-    pending = 0
+    sent = failed = pending = retried = 0
     for row in rows:
         recipient = _delivery_recipient(row, allowlist)
         if recipient is None:
-            pending += 1
+            _record_failure(row, "recipient not allowlisted", now)
+            if row.status == "failed":
+                failed += 1
+            else:
+                pending += 1
             continue
+
         body = f"{row.subject}\n\n{row.body}" if row.subject else row.body
-        result = send_message(body, chat_id=recipient, transport=transport)
-        status = result.get("status")
-        if status == "sent":
+        error: Optional[str] = None
+        retry_after: Optional[int] = None
+        delivered = True
+        for chunk in _chunk_text(body):
+            result = send_message(chunk, chat_id=recipient, transport=transport)
+            if result.get("status") != "sent":
+                delivered = False
+                error = result.get("error") or result.get("detail")
+                retry_after = result.get("retry_after")
+                break
+        if delivered:
             row.status = "sent"
-            row.sent_at = datetime.now(timezone.utc)
+            row.sent_at = now
+            row.last_error = None
+            row.next_attempt_at = None
             sent += 1
-        elif status == "failed":
-            row.status = "failed"
-            failed += 1
+        elif retry_after:
+            row.last_error = (error or "rate limited")[:400]
+            row.next_attempt_at = now + timedelta(seconds=min(int(retry_after), 3600))
+            retried += 1
         else:
-            pending += 1
-    if sent or failed:
+            _record_failure(row, error, now)
+            if row.status == "failed":
+                failed += 1
+            else:
+                pending += 1
+
+    if rows:
         db.commit()
-    return {"status": "ok", "checked": len(rows), "sent": sent, "failed": failed, "pending": pending}
+    return {
+        "status": "ok",
+        "checked": len(rows),
+        "sent": sent,
+        "failed": failed,
+        "pending": pending,
+        "retried": retried,
+    }
 
 
 def _eat(value: Optional[datetime]) -> str:
@@ -458,7 +528,7 @@ def _dossier_text(db: Session, fixture_id: int) -> str:
     for risk in (dossier.get("risks") or [])[:3]:
         lines.append(f"Risk ({risk.get('severity')}): {risk.get('detail')}")
     lines.append("Advisory research only; no bets are placed.")
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)
 
 
 def _value_text(db: Session, fixture_id: int) -> str:
@@ -553,7 +623,7 @@ def _backtest_text() -> str:
         if recommendation.get("guidance"):
             lines.append(str(recommendation["guidance"]))
     lines.append("Replay prices are historical and conservative; negative ROI at book prices is expected.")
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)
 
 
 def _learning_text() -> str:
@@ -585,7 +655,7 @@ def _learning_text() -> str:
         )
     for note in (report.get("notes") or [])[:2]:
         lines.append(f"Note: {note}")
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)
 
 
 def handle_command(text: str, db: Session) -> str:

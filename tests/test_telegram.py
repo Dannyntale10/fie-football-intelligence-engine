@@ -191,12 +191,11 @@ def test_deliver_pending_marks_sent(allowlist, db):
 
 def test_deliver_pending_marks_failed(allowlist, db):
     row = _pending(db, body="Leg one")
-
     try:
         result = telegram.deliver_pending(db, transport=lambda url, payload: {"ok": False})
         db.refresh(row)
-        assert result["failed"] == 1
-        assert row.status == "failed"
+        assert result["pending"] == 1
+        assert row.status == "pending"
     finally:
         db.delete(row)
         db.commit()
@@ -417,6 +416,85 @@ def test_allowlist_env_overrides_settings(monkeypatch, db):
         assert telegram.allowed_chat_ids(db) == ["42"]
         assert telegram.is_authorized(7, db) is False
         assert telegram.allowlist_source(db) == "env"
+    finally:
+        db.delete(row)
+        db.commit()
+
+
+def test_unlisted_recipient_fails_closed_without_redirect(allowlist, db):
+    row = _pending(db, recipient="666", body="Leg one")
+    calls = []
+
+    def transport(url, payload):
+        calls.append(payload)
+        return {"ok": True}
+
+    try:
+        result = telegram.deliver_pending(db, transport=transport)
+        db.refresh(row)
+        assert calls == []
+        assert row.status == "pending"
+        assert row.attempts == 1
+        assert "not allowlisted" in (row.last_error or "")
+        assert result["sent"] == 0
+    finally:
+        db.delete(row)
+        db.commit()
+
+
+def test_failed_delivery_backs_off_then_caps(allowlist, db):
+    row = _pending(db, body="Leg one")
+    try:
+        for expected_attempt in range(1, 6):
+            telegram.deliver_pending(db, transport=lambda url, payload: {"ok": False, "description": "boom"})
+            db.refresh(row)
+            assert row.attempts == expected_attempt
+            if expected_attempt < 5:
+                assert row.status == "pending"
+                assert row.next_attempt_at is not None
+                row.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+                db.commit()
+        assert row.status == "failed"
+        assert row.last_error == "boom"
+    finally:
+        db.delete(row)
+        db.commit()
+
+
+def test_retry_after_429_keeps_row_pending(allowlist, db):
+    row = _pending(db, body="Leg one")
+    try:
+        telegram.deliver_pending(
+            db,
+            transport=lambda url, payload: {
+                "ok": False,
+                "description": "Too Many Requests",
+                "parameters": {"retry_after": 30},
+            },
+        )
+        db.refresh(row)
+        assert row.status == "pending"
+        assert row.attempts == 0
+        assert row.next_attempt_at is not None
+    finally:
+        db.delete(row)
+        db.commit()
+
+
+def test_long_message_is_chunked(allowlist, db):
+    row = _pending(db, body=("x" * 2000 + "\n") * 3)
+    calls = []
+
+    def transport(url, payload):
+        calls.append(payload["text"])
+        return {"ok": True}
+
+    try:
+        result = telegram.deliver_pending(db, transport=transport)
+        db.refresh(row)
+        assert result["sent"] == 1
+        assert len(calls) > 1
+        assert all(len(chunk) <= telegram.MAX_CHUNK for chunk in calls)
     finally:
         db.delete(row)
         db.commit()

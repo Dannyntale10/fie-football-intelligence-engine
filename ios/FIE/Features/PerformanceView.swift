@@ -1,19 +1,15 @@
 import SwiftUI
 
 struct PerformanceView: View {
-    @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @EnvironmentObject private var store: EngineStore
 
-    @State private var health: Health?
-    @State private var summary: PerformanceSummary?
-    @State private var clv: ClvSummary?
-    @State private var learning: LearningSummary?
-    @State private var sweep: ComboSweep?
-    @State private var loading = false
-    @State private var errorMessage: String?
-
-    private var client: APIClient {
-        APIClient(baseURL: URL(string: serverURL) ?? APIClient.fromStoredSettings().baseURL)
-    }
+    private var health: Health? { store.health }
+    private var summary: PerformanceSummary? { store.summary }
+    private var clv: ClvSummary? { store.clv }
+    private var learning: LearningSummary? { store.learning }
+    private var sweep: ComboSweep? { store.sweep }
+    private var loading: Bool { !store.isBootstrapped }
+    private var errorMessage: String? { store.errors[.summary] ?? store.errors[.health] }
 
     var body: some View {
         NavigationStack {
@@ -52,8 +48,10 @@ struct PerformanceView: View {
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Performance")
-            .task { await load() }
-            .refreshable { await load() }
+            .task {
+                if !store.isBootstrapped { await store.bootstrap() }
+            }
+            .refreshable { await store.refreshAll() }
         }
     }
 
@@ -331,34 +329,6 @@ struct PerformanceView: View {
         }
     }
 
-    @MainActor
-    private func load() async {
-        guard !loading else { return }
-        loading = true
-        errorMessage = nil
-        defer { loading = false }
-        do {
-            async let healthTask: Health = client.get("/health", as: Health.self)
-            async let summaryTask: PerformanceSummary = client.get("/performance/summary", as: PerformanceSummary.self)
-            async let clvTask = try? client.get(
-                "/evaluation/clv",
-                query: [URLQueryItem(name: "days", value: "90")],
-                as: ClvSummary.self
-            )
-            async let learningTask = try? client.get("/learning/summary", as: LearningSummary.self)
-            async let sweepTask = try? client.get("/combos/backtest/sweep", as: ComboSweep.self)
-            let (loadedHealth, loadedSummary, loadedClv, loadedLearning, loadedSweep) = try await (
-                healthTask, summaryTask, clvTask, learningTask, sweepTask
-            )
-            health = loadedHealth
-            summary = loadedSummary
-            clv = loadedClv
-            learning = loadedLearning
-            sweep = loadedSweep
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
 }
 
 private struct SlipTypeRow: Identifiable {

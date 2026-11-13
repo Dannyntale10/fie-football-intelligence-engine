@@ -1,20 +1,16 @@
 import SwiftUI
 
 struct HistoryView: View {
-    @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @EnvironmentObject private var store: EngineStore
 
-    @State private var report: ComboBacktestReport?
-    @State private var loading = false
     @State private var running = false
     @State private var errorMessage: String?
     @State private var statusMessage: String?
-    @State private var hasLoaded = false
 
-    private var client: APIClient {
-        APIClient(baseURL: URL(string: serverURL) ?? APIClient.fromStoredSettings().baseURL)
-    }
-
-    private var busy: Bool { loading || running }
+    private var report: ComboBacktestReport? { store.backtest }
+    private var loading: Bool { !store.isBootstrapped && store.backtest == nil }
+    private var busy: Bool { running || store.isRefreshing }
+    private var hasLoaded: Bool { store.isBootstrapped }
 
     var body: some View {
         ScrollView {
@@ -65,7 +61,9 @@ struct HistoryView: View {
         .background(Palette.background.ignoresSafeArea())
         .navigationTitle("Historical test")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadSaved() }
+        .task {
+            if !store.isBootstrapped { await store.bootstrap() }
+        }
     }
 
     private var intro: some View {
@@ -212,36 +210,13 @@ struct HistoryView: View {
     }
 
     @MainActor
-    private func loadSaved() async {
-        guard !busy else { return }
-        loading = true
-        errorMessage = nil
-        defer {
-            loading = false
-            hasLoaded = true
-        }
-        do {
-            report = try await client.get("/combos/backtest", as: ComboBacktestReport.self)
-        } catch let error as APIError where error.message.contains("No combo backtest yet") {
-            statusMessage = "No replay saved yet. Run the replay to build it."
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
     private func runReplay() async {
-        guard !busy else { return }
+        guard !running else { return }
         running = true
         errorMessage = nil
         statusMessage = nil
-        defer {
-            running = false
-            hasLoaded = true
-        }
         do {
-            let result = try await client.post("/combos/backtest", timeout: 900, as: ComboBacktestReport.self)
-            report = result
+            let result = try await store.runBacktest()
             if result.status == "ok" {
                 if result.learning?.applied == true {
                     statusMessage = "Replay finished. The calibration cleared its held-out bar and is now stored for live use."
@@ -254,6 +229,7 @@ struct HistoryView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+        running = false
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
+    @EnvironmentObject private var store: EngineStore
 
     @State private var testing = false
     @State private var testNote: String?
@@ -47,6 +48,13 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .task { await loadDelivery() }
             .refreshable { await loadDelivery() }
+            .onChange(of: serverURL) { _, _ in
+                store.reset()
+                Task {
+                    await store.bootstrap()
+                    store.startAutoRefresh(section: .health)
+                }
+            }
         }
     }
 

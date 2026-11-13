@@ -1,21 +1,23 @@
 import SwiftUI
 
 struct SourcesView: View {
+    @EnvironmentObject private var store: EngineStore
     @AppStorage(AppSettings.serverURLKey) private var serverURL = AppSettings.defaultServerURL
 
-    @State private var sources: SourcesResponse?
     @State private var logs: [SyncLog] = []
-    @State private var loading = false
+    @State private var loadingLogs = false
     @State private var refreshing = false
-    @State private var errorMessage: String?
     @State private var refreshError: String?
     @State private var refreshNote: String?
+
+    private var sources: SourcesResponse? { store.sources }
+    private var loading: Bool { !store.isBootstrapped && store.sources == nil }
+    private var errorMessage: String? { store.errors[.sources] }
+    private var busy: Bool { loadingLogs || refreshing || store.isRefreshing }
 
     private var client: APIClient {
         APIClient(baseURL: URL(string: serverURL) ?? APIClient.fromStoredSettings().baseURL)
     }
-
-    private var busy: Bool { loading || refreshing }
 
     var body: some View {
         NavigationStack {
@@ -63,8 +65,14 @@ struct SourcesView: View {
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Sources")
-            .task { await load() }
-            .refreshable { await load() }
+            .task {
+                if !store.isBootstrapped { await store.bootstrap() }
+                await loadLogs()
+            }
+            .refreshable {
+                await store.refreshAll()
+                await loadLogs()
+            }
         }
     }
 
@@ -158,49 +166,37 @@ struct SourcesView: View {
     }
 
     @MainActor
-    private func load() async {
-        guard !busy else { return }
-        loading = true
-        errorMessage = nil
-        defer { loading = false }
+    private func loadLogs() async {
+        guard !loadingLogs else { return }
+        loadingLogs = true
+        defer { loadingLogs = false }
         do {
-            async let sourcesTask: SourcesResponse = client.get("/sources", as: SourcesResponse.self)
-            async let logsTask: [SyncLog] = client.get(
+            logs = try await client.get(
                 "/sources/sync-logs",
                 query: [URLQueryItem(name: "limit", value: "12")],
                 as: [SyncLog].self
             )
-            let (loadedSources, loadedLogs) = try await (sourcesTask, logsTask)
-            sources = loadedSources
-            logs = loadedLogs
         } catch {
-            errorMessage = error.localizedDescription
+            logs = []
         }
     }
 
     @MainActor
     private func refreshFeeds() async {
-        guard !busy else { return }
+        guard !refreshing else { return }
         refreshing = true
-        errorMessage = nil
         refreshError = nil
         refreshNote = nil
         do {
-            let result = try await client.post(
-                "/sources/refresh",
-                timeout: 900,
-                as: SourcesRefreshResult.self
-            )
+            let result = try await store.refreshFeeds()
             applyRefreshSummary(result)
-            refreshing = false
-            await load()
+            await loadLogs()
         } catch {
             refreshError = error.localizedDescription
         }
         refreshing = false
     }
 
-    @MainActor
     private func applyRefreshSummary(_ refreshed: SourcesRefreshResult) {
         let feeds = Array(refreshed.feeds.values)
         let failed = feeds.filter(\.isFailed).count

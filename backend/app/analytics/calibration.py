@@ -113,6 +113,7 @@ def _walkforward_for_competition(
     refit_days: int,
     min_weighted_matches: float,
     rho: float,
+    half_life_days: float = RATING_HALF_LIFE_DAYS,
 ):
     """Yield out-of-sample predictions for one competition, in kickoff order.
 
@@ -160,7 +161,7 @@ def _walkforward_for_competition(
 
         age_days = np.maximum(0.0, (window_end - kick_ns) / _NANOS_PER_DAY)
         weights = np.maximum(
-            MIN_MATCH_WEIGHT, 0.5 ** (age_days / RATING_HALF_LIFE_DAYS)
+            MIN_MATCH_WEIGHT, 0.5 ** (age_days / half_life_days)
         )
         past_weights = weights[past]
         total_weight = float(past_weights.sum()) or 1.0
@@ -235,6 +236,7 @@ def iter_walkforward_predictions(
     refit_days: int = 14,
     min_weighted_matches: float = 3.0,
     rho: float = -0.10,
+    half_life_days: float = RATING_HALF_LIFE_DAYS,
 ):
     """Yield out-of-sample predictions with ratings that only know the past.
 
@@ -270,6 +272,7 @@ def iter_walkforward_predictions(
             refit_days=refit_days,
             min_weighted_matches=min_weighted_matches,
             rho=rho,
+            half_life_days=half_life_days,
         )
 
 
@@ -279,6 +282,7 @@ def run_walk_forward(
     refit_days: int = 14,
     min_weighted_matches: float = 3.0,
     rho: float = -0.10,
+    half_life_days: float = RATING_HALF_LIFE_DAYS,
 ) -> Dict[str, Any]:
     """Replay history with ratings that only ever see the past.
 
@@ -300,6 +304,7 @@ def run_walk_forward(
         refit_days=refit_days,
         min_weighted_matches=min_weighted_matches,
         rho=rho,
+        half_life_days=half_life_days,
     ):
         model_probs.append(prediction["model"])
         market_probs.append(prediction["market"])

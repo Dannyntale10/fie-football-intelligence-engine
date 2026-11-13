@@ -27,6 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.analytics.calibration import brier_score, iter_walkforward_predictions, log_loss
+from app.analytics.ratings import RATING_HALF_LIFE_DAYS
 
 REPORT_PATH = Path(__file__).resolve().parents[3] / "data" / "blending.json"
 
@@ -411,10 +412,14 @@ def fit_report(
     competition: Optional[str] = None,
     refit_days: int = 14,
     train_fraction: float = TRAIN_FRACTION,
+    half_life_days: float = RATING_HALF_LIFE_DAYS,
 ) -> Dict[str, Any]:
     """Run the leak-free walk-forward and fit the blend on the result."""
     predictions = iter_walkforward_predictions(
-        db, competition=competition, refit_days=refit_days
+        db,
+        competition=competition,
+        refit_days=refit_days,
+        half_life_days=half_life_days,
     )
     return build_report(predictions, train_fraction=train_fraction)
 

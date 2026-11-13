@@ -1,0 +1,98 @@
+name: Nightly learning
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-learning
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONPATH: backend
+      DATABASE_URL: sqlite:///${{ github.workspace }}/fie.db
+      FIE_ENGINE_URL: ${{ secrets.FIE_ENGINE_URL }}
+      FIE_API_KEY: ${{ secrets.FIE_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # First run downloads ten seasons; later runs restore this archive and
+      # refresh only the newest two, so the trainer always sees real history.
+      - name: Restore the training database
+        uses: actions/cache@v4
+        with:
+          path: |
+            fie.db
+            fie.db-wal
+            fie.db-shm
+            data/historical_cache
+          key: fie-db-${{ github.run_id }}
+          restore-keys: |
+            fie-db-
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt pytest
+
+      - name: Create the schema
+        run: python scripts/init_db.py
+
+      - name: Train into staging
+        run: python scripts/train_nightly.py --out-dir "$RUNNER_TEMP/learning-out"
+
+      - name: Verify the repository
+        run: pytest tests/ -q
+
+      - name: Commit promoted artifacts
+        id: commit
+        env:
+          STAGE: ${{ runner.temp }}/learning-out
+        run: |
+          for name in ratings.json blending.json learning.json live_calibration.json model_champion.json; do
+            if [ -f "$STAGE/$name" ]; then
+              cp "$STAGE/$name" "data/$name"
+              git add "data/$name"
+            fi
+          done
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git config user.name "fie-bot"
+            git config user.email "fie-bot@users.noreply.github.com"
+            git commit -m "chore(learning): promote the nightly model $(date -u +%F)"
+            git push
+          fi
+
+      - name: Deploy the engine
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            curl -fsS --retry 3 --max-time 30 -X POST "$RENDER_DEPLOY_HOOK"
+          else
+            echo "RENDER_DEPLOY_HOOK is not configured; skipping deploy."
+          fi
+
+      - name: Upload the nightly report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-report
+          path: ${{ runner.temp }}/learning-out/nightly_report.json
+          if-no-files-found: ignore

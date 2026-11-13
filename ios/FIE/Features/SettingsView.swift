@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var testing = false
     @State private var testNote: String?
     @State private var testError: String?
+    @State private var apiKey = ""
+    @State private var keyNote: String?
     @State private var notifications: [DeliveryNotification] = []
     @State private var deliveryError: String?
 
@@ -46,7 +48,10 @@ struct SettingsView: View {
             }
             .background(Palette.background.ignoresSafeArea())
             .navigationTitle("Settings")
-            .task { await loadDelivery() }
+            .task {
+                apiKey = AppSettings.apiKey
+                await loadDelivery()
+            }
             .refreshable { await loadDelivery() }
             .onChange(of: serverURL) { _, _ in
                 store.reset()
@@ -180,7 +185,39 @@ struct SettingsView: View {
                 .buttonStyle(SecondaryButtonStyle())
             }
 
-            Text("The default is this Mac's LAN address, so the iPhone reaches the engine over Wi-Fi. Both devices must be on the same network, the backend must be bound to 0.0.0.0, and Local Network access must be allowed. If the Mac's IP changes, update it here.")
+            Text("The default is the hosted engine, which works on any network. To use the backend on your Mac instead, enter its LAN address here — both devices must be on the same Wi-Fi.")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            Eyebrow(text: "Engine key")
+            SecureField("Paste the API key", text: $apiKey)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(size: 15, weight: .medium, design: .monospaced))
+                .foregroundStyle(Palette.textPrimary)
+                .tint(Palette.accent)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+
+            HStack(spacing: 10) {
+                Button("Save key") { saveKey() }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if let keyNote {
+                    Text(keyNote)
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            }
+
+            Text("The hosted engine rejects requests without this key. It is stored in the iOS Keychain and never leaves the device.")
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -235,6 +272,19 @@ struct SettingsView: View {
     }
 
     @MainActor
+    private func saveKey() {
+        AppSettings.saveAPIKey(apiKey)
+        apiKey = AppSettings.apiKey
+        keyNote = apiKey.isEmpty ? "Key cleared." : "Key saved."
+        testNote = nil
+        testError = nil
+        store.reset()
+        Task {
+            await store.bootstrap()
+            store.startAutoRefresh(section: .health)
+        }
+    }
+
     private func testConnection() async {
         testNote = nil
         testError = nil

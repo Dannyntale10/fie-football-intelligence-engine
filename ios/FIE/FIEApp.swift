@@ -4,6 +4,16 @@ import SwiftUI
 struct FIEApp: App {
     @StateObject private var store = EngineStore()
 
+    init() {
+        #if DEBUG
+        // Lets a simulator or device QA run seed the key without typing it;
+        // Release builds never read this.
+        if let seed = ProcessInfo.processInfo.environment["FIE_API_KEY_SEED"], !seed.isEmpty {
+            AppSettings.saveAPIKey(seed)
+        }
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

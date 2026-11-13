@@ -56,6 +56,10 @@ struct APIClient {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let apiKey = AppSettings.apiKey
+        if !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
 
         let data: Data
         let response: URLResponse
@@ -69,6 +73,11 @@ struct APIClient {
             throw APIError(message: "The engine returned an unexpected response.")
         }
         guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 401 {
+                throw APIError(
+                    message: "The engine rejected this request. Add the engine key in Settings."
+                )
+            }
             throw APIError(
                 message: Self.detail(from: data) ?? "The engine returned HTTP \(http.statusCode)."
             )

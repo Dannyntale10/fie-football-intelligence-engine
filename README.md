@@ -92,12 +92,15 @@ Start the dashboard in a second terminal:
 ```bash
 cd frontend
 npm install
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
+npm run dev
 # http://localhost:3000
 ```
 
-The dashboard is client-rendered: the API must be running before pages load
-data. If it is not, each page shows a connection error instead of fake data.
+The dashboard proxies through `/api/proxy` to `FIE_ENGINE_URL` (default
+`http://localhost:8001`) and adds `FIE_API_KEY` when it is set, so export both
+when the engine is elsewhere or gated. The dashboard is client-rendered: the
+API must be running before pages load data. If it is not, each page shows a
+connection error instead of fake data.
 
 ### Optional historical seed
 
@@ -404,7 +407,15 @@ where the bot should live.
 
 ## Cloud deployment
 
-- **Dashboard:** Vercel (root `frontend/`, set `NEXT_PUBLIC_API_BASE_URL`).
+- **Dashboard:** Vercel (root `frontend/`). Set `FIE_ENGINE_URL` to the engine's
+  public URL and `FIE_API_KEY` to the same key the engine uses. Both are
+  server-only. The browser calls `/api/proxy/...` on the dashboard's own origin
+  and a route handler attaches `X-API-Key`, so the key never ships in the JS
+  bundle. The proxy forwards reads broadly and writes only for the calls the
+  pages make (`/sources/refresh`, `/combos/backtest[/sweep]`, `/notifications`,
+  `PUT /settings/{key}`), so it is not a general door into the engine. Because
+  the hop is server-to-server, `FRONTEND_ORIGINS` does not need the Vercel
+  domain.
 - **API:** any Python host. Build `pip install -r requirements.txt`, start
   `uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT`, set
   `DATABASE_URL`, `FIE_API_KEY` and `FRONTEND_ORIGINS`. `/health` and the docs
@@ -459,9 +470,10 @@ only interface you use.
 
 | Symptom | Fix |
 | --- | --- |
-| `address already in use` on 8000 | Stop the old process or run `--port 8001` and point `NEXT_PUBLIC_API_BASE_URL` at it |
-| Dashboard shows "Cannot reach the API" | Start the backend and confirm `/health` in a browser |
-| CORS error in the browser console | Add the dashboard origin to `FRONTEND_ORIGINS` and restart the API |
+| `address already in use` on 8000 | Stop the old process or run `--port 8001` and point `FIE_ENGINE_URL` at it |
+| Dashboard shows "Cannot reach the dashboard proxy" | Start the engine and check `FIE_ENGINE_URL` on the dashboard host |
+| Proxy returns 404 for a route the UI needs | Add it to `frontend/lib/proxyAllowlist.ts` and its test |
+| CORS error in the browser console | Only the iOS app talks to the engine directly; add its origin to `FRONTEND_ORIGINS` |
 | `No module named app` | Run uvicorn with `--app-dir backend`, or set `PYTHONPATH=backend` |
 | Empty pages | Expected with an empty database: import fixtures or configure a provider |
 | Telegram bot exits immediately | `TELEGRAM_BOT_TOKEN` missing or `TELEGRAM_ALLOWED_CHAT_IDS` empty |

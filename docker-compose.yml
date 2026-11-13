@@ -38,8 +38,10 @@ services:
   frontend:
     build:
       context: ./frontend
-      args:
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    environment:
+      # Server-to-server hop; the browser only talks to this container.
+      FIE_ENGINE_URL: http://backend:8000
+      FIE_API_KEY: ${FIE_API_KEY:-}
     ports:
       - "3000:3000"
     depends_on:

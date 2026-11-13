@@ -1,5 +1,6 @@
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+// Same-origin: app/api/proxy adds the X-API-Key server-side, so the key never
+// reaches the browser bundle.
+export const API_BASE = "/api/proxy";
 
 export class ApiError extends Error {
   status: number;
@@ -25,7 +26,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     });
   } catch (error) {
     throw new ApiError(
-      `Cannot reach the API at ${API_BASE}. Is the backend running?`,
+      "Cannot reach the dashboard proxy. Is the site running?",
       0,
     );
   }

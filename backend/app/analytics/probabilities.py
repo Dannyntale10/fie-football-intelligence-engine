@@ -441,19 +441,26 @@ def _market_json(fixture: Any) -> Dict[str, float]:
     return prices
 
 
-def estimate_lambdas_from_market(fixture: Any) -> tuple[float, float, str]:
+def estimate_lambdas_from_market(
+    fixture: Any,
+    prices: Optional[tuple[float, float, float]] = None,
+) -> tuple[float, float, str]:
     """Infer expected goals from the bookmaker's own prices.
 
     Total goals are solved from the over/under lines when the feed provides
     them, otherwise from the draw price. Fixing the total at a constant (the
     old behaviour) made every secondary market a function of a guess, which
     showed up as phantom edges on totals, BTTS and handicaps.
+    ``prices`` lets the caller pass one bookmaker's complete 1X2 trio instead
+    of the best-price-per-outcome columns.
     """
-    fair = _devig_1x2(
-        getattr(fixture, "home_odds", None),
-        getattr(fixture, "draw_odds", None),
-        getattr(fixture, "away_odds", None),
-    )
+    if prices is None:
+        prices = (
+            getattr(fixture, "home_odds", None),
+            getattr(fixture, "draw_odds", None),
+            getattr(fixture, "away_odds", None),
+        )
+    fair = _devig_1x2(*prices)
     if fair is None:
         return 1.45, 1.15, "fallback"
 
@@ -509,6 +516,15 @@ def analyze_fixture(
     ratings_found = False
     lambda_source = "manual" if (home_lambda is not None and away_lambda is not None) else None
 
+    # One coherent bookmaker 1X2, or nothing. De-vigging the best price per
+    # outcome mixes books and can imply a book below 100%, which turns a
+    # phantom margin into phantom value on every downstream market.
+    try:
+        from app.analytics.market_reference import resolve as resolve_market_reference
+        market_reference = resolve_market_reference(db, fixture)
+    except Exception:
+        market_reference = None
+
     # Determine lambdas: prefer team ratings if available and lambdas not manually passed
     if home_lambda is None or away_lambda is None:
         if db is not None:
@@ -529,7 +545,13 @@ def analyze_fixture(
                 pass
 
         if not ratings_found:
-            est_h, est_a, market_source = estimate_lambdas_from_market(fixture)
+            if market_reference is not None:
+                est_h, est_a, market_source = estimate_lambdas_from_market(
+                    fixture,
+                    (market_reference.home, market_reference.draw, market_reference.away),
+                )
+            else:
+                est_h, est_a, market_source = 1.45, 1.15, "fallback"
             final_h = home_lambda if home_lambda is not None else est_h
             final_a = away_lambda if away_lambda is not None else est_a
             lambda_source = market_source if (home_lambda is None and away_lambda is None) else "mixed"
@@ -549,10 +571,6 @@ def analyze_fixture(
     margin_info = None
     value_bets: List[Dict[str, Any]] = []
 
-    h_odds = getattr(fixture, "home_odds", None)
-    d_odds = getattr(fixture, "draw_odds", None)
-    a_odds = getattr(fixture, "away_odds", None)
-
     from app.analytics.blending import OUTCOMES as BLEND_OUTCOMES
     from app.analytics.blending import blend_1x2, blend_status
 
@@ -570,7 +588,19 @@ def analyze_fixture(
         "note": blend_note,
     }
 
-    if h_odds and d_odds and a_odds and h_odds > 1.0 and d_odds > 1.0 and a_odds > 1.0:
+    has_1x2 = all(
+        getattr(fixture, attr, None) and getattr(fixture, attr) > 1.0
+        for attr in ("home_odds", "draw_odds", "away_odds")
+    )
+    if market_reference is None:
+        if has_1x2:
+            blend_info["reason"] = "no_coherent_market"
+    else:
+        h_odds, d_odds, a_odds = (
+            market_reference.home,
+            market_reference.draw,
+            market_reference.away,
+        )
         margin_info = calculate_bookmaker_margin(h_odds, d_odds, a_odds)
 
         status = blend_status(getattr(fixture, "competition", None))
@@ -671,6 +701,7 @@ def analyze_fixture(
         "rating_meta": rating_meta,
         "dixon_coles_rho": rho,
         "qualification_threshold": qualification_threshold,
+        "market_reference": market_reference.as_dict() if market_reference else None,
         "bookmaker_margin": margin_info,
         "value_bets": value_bets,
         "probability_blend": blend_info,

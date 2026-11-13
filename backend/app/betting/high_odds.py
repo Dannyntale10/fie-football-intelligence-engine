@@ -73,13 +73,6 @@ def _confidence(
     )
 
 
-def _market_overround(fixture: Fixture) -> Optional[float]:
-    prices = [fixture.home_odds, fixture.draw_odds, fixture.away_odds]
-    if any(price is None or price <= 1.0 for price in prices):
-        return None
-    return sum(1.0 / float(price) for price in prices)
-
-
 def _leg_row(
     fixture: Fixture,
     key: str,
@@ -174,17 +167,20 @@ def build_high_odds(
         if not all(key in attribution for key in MARKET_KEYS):
             rejected["missing_1x2"] += 1
             continue
-        overround = _market_overround(fixture)
-        if overround is None:
-            rejected["missing_1x2"] += 1
-            continue
-        if overround <= MIN_MARKET_OVERROUND:
-            rejected["inconsistent_market_prices"] += 1
-            continue
         try:
             analysis = analyse(fixture, db=db)
         except Exception:
             rejected["analysis_failed"] += 1
+            continue
+
+        reference = analysis.get("market_reference") or {}
+        overround = reference.get("overround")
+        if not overround:
+            rejected["inconsistent_market_prices"] += 1
+            continue
+        overround = float(overround)
+        if overround <= MIN_MARKET_OVERROUND:
+            rejected["inconsistent_market_prices"] += 1
             continue
 
         blend = analysis.get("probability_blend") or {}

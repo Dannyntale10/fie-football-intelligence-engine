@@ -66,8 +66,17 @@ def _add(db, home, away, kickoff, *, attributed=True, odds=None):
     return fixture
 
 
-def _analysis(home_probability=0.60, blend=True):
+def _analysis(home_probability=0.60, blend=True, reference_overround=1.0438):
     return {
+        "market_reference": (
+            {
+                "origin": "bookmaker",
+                "bookmaker": "BetPawa",
+                "overround": reference_overround,
+            }
+            if reference_overround is not None
+            else None
+        ),
         "all_markets": {
             "home_win": home_probability,
             "draw": 0.22,
@@ -172,7 +181,11 @@ def test_prices_stitched_across_bookmakers_are_not_treated_as_a_market(db):
         )
 
     report = ho.build_high_odds(
-        db, now=NOW, analyse=lambda fixture, db=None: _analysis(home_probability=0.75)
+        db,
+        now=NOW,
+        analyse=lambda fixture, db=None: _analysis(
+            home_probability=0.75, reference_overround=None
+        ),
     )
 
     assert report["slips"] == []

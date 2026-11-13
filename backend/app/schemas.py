@@ -70,6 +70,7 @@ class FixtureAnalysisOut(BaseModel):
     lambda_source: Optional[str] = None
     dixon_coles_rho: Optional[float] = None
     qualification_threshold: float
+    market_reference: Optional[Dict[str, Any]] = None
     bookmaker_margin: Optional[Dict[str, Any]] = None
     value_bets: List[ValueBetOut] = []
     qualifying_markets: List[Dict[str, Any]] = []

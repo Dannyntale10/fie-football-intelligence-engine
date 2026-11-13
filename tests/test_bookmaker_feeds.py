@@ -245,6 +245,33 @@ def test_merge_keeps_best_price_and_winning_bookmaker():
     assert payload["home_win"]["source_url"] == "https://www.betpawa.ug/"
 
 
+def test_merge_follows_a_books_own_lower_requote():
+    first = datetime(2026, 11, 13, 3, 0, tzinfo=timezone.utc)
+    later = datetime(2026, 11, 13, 10, 0, tzinfo=timezone.utc)
+    payload, _ = merge_market_prices(
+        None,
+        {"home_win": 2.75},
+        bookmaker="Betika",
+        source="BETIKA",
+        source_url="https://www.betika.com/en-ug/",
+        captured_at=first,
+    )
+    payload, changed = merge_market_prices(
+        payload,
+        {"home_win": 1.70},
+        bookmaker="Betika",
+        source="BETIKA",
+        source_url="https://www.betika.com/en-ug/",
+        captured_at=later,
+    )
+
+    # The old 2.75 is no longer on offer; holding on to it would manufacture
+    # value on every later comparison against the current fair price.
+    assert changed is True
+    assert payload["home_win"]["price"] == 1.70
+    assert payload["home_win"]["captured_at"] == later.isoformat()
+
+
 def test_merge_replaces_legacy_flat_price_with_attributed_one():
     captured = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
     legacy = {"home_win": 2.50, "over_2_5": 2.00}

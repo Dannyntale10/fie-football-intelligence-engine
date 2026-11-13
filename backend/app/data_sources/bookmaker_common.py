@@ -186,7 +186,7 @@ def merge_market_prices(
     source_url: str,
     captured_at: datetime,
 ) -> tuple[Dict[str, Any], bool]:
-    """Keep the best price per market and record where that price came from."""
+    """Keep the best current price per market and record where it came from."""
     payload = _parse_payload(raw)
     changed = False
     stamp = (captured_at or datetime.now(timezone.utc)).isoformat()
@@ -196,9 +196,22 @@ def merge_market_prices(
             continue
         current_entry = payload.get(key)
         current = entry_price(current_entry)
+        same_book = (
+            isinstance(current_entry, dict)
+            and current_entry.get("bookmaker") == bookmaker
+            and current_entry.get("source") == source
+        )
         # A legacy flat number has no verified bookmaker, so it cannot defend
-        # its price: the next observed, attributed price replaces it.
-        if isinstance(current_entry, dict) and current is not None and current >= price - 1e-9:
+        # its price: the next observed, attributed price replaces it. A book
+        # that re-quotes owns its new number even when it is worse, because the
+        # old one is no longer on offer; keeping it lets every later comparison
+        # chase a line that has already moved.
+        if (
+            isinstance(current_entry, dict)
+            and current is not None
+            and not same_book
+            and current >= price - 1e-9
+        ):
             continue
         payload[str(key)] = {
             "price": round(price, 4),
@@ -209,6 +222,59 @@ def merge_market_prices(
         }
         changed = True
     return payload, changed
+
+
+QUOTE_KEYS = ("home_win", "draw", "away_win")
+
+
+def record_market_quotes(db: Session, fixture: Fixture, event: "BookmakerEvent") -> None:
+    """Keep this bookmaker's own 1X2 trio, separate from the best-price merge.
+
+    ``merge_market_prices`` keeps only the best price per outcome, so the three
+    stored prices can come from three different books. The quote rows preserve
+    one book's complete set, which is what a de-vig needs to be meaningful.
+    """
+    from app.models.market_quote import MarketQuote
+
+    # Sessions run with autoflush off, so a quote added for an earlier event in
+    # this batch would be invisible to the lookup below and get added twice.
+    db.flush()
+
+    prices = {
+        key: decimal(event.market_odds.get(key))
+        for key in QUOTE_KEYS
+    }
+    if any(price is None for price in prices.values()):
+        return
+
+    existing = {
+        quote.market_key: quote
+        for quote in db.scalars(
+            select(MarketQuote).where(
+                MarketQuote.fixture_id == fixture.id,
+                MarketQuote.bookmaker == event.bookmaker,
+            )
+        ).all()
+    }
+    for key, price in prices.items():
+        quote = existing.get(key)
+        if quote is None:
+            db.add(
+                MarketQuote(
+                    fixture_id=fixture.id,
+                    bookmaker=event.bookmaker,
+                    market_key=key,
+                    price=round(float(price), 4),
+                    source=event.source,
+                    source_url=event.source_url,
+                    captured_at=event.captured_at,
+                )
+            )
+            continue
+        quote.price = round(float(price), 4)
+        quote.source = event.source
+        quote.source_url = event.source_url
+        quote.captured_at = event.captured_at
 
 
 def _apply_merged_fields(fixture: Fixture, payload: Dict[str, Any]) -> bool:
@@ -296,6 +362,7 @@ def apply_bookmaker_events(
                 match.market_odds_json = json.dumps(payload, sort_keys=True)
                 stats["odds_updated"] += 1
             _apply_merged_fields(match, payload)
+            record_market_quotes(db, match, event)
             # Freshness reflects when the feed was last read, not when a price
             # last improved; a verified refresh is still fresh data.
             match.odds_updated_at = event.captured_at
@@ -342,6 +409,8 @@ def apply_bookmaker_events(
             status="scheduled",
         )
         db.add(fixture)
+        db.flush()
+        record_market_quotes(db, fixture, event)
         inserted_keys.add(dedupe_key)
         stats["inserted_new"] += 1
         stats["inserted_competitions"][competition] = (

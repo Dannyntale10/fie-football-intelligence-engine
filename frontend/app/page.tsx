@@ -116,11 +116,32 @@ const rejectionLabels: Record<string, string> = {
   duplicate_match: "duplicate match rows",
 };
 
-function ComboTicket({ combo }: { combo: DailyCombo }) {
+function ticketSlips(report: DailyComboReport): DailyCombo[] {
+  if (report.top_combos?.length) return report.top_combos;
+  return report.best ? [report.best] : [];
+}
+
+function sharedTeamIds(combo: DailyCombo, previous: DailyCombo[]): Set<number> {
+  const used = new Set(previous.flatMap((row) => row.legs.map((leg) => leg.fixture_id)));
+  return new Set(combo.legs.filter((leg) => used.has(leg.fixture_id)).map((leg) => leg.fixture_id));
+}
+
+function ComboTicket({
+  combo,
+  label,
+  shared,
+}: {
+  combo: DailyCombo;
+  label?: string;
+  shared?: Set<number>;
+}) {
   return (
     <div className="rounded-xl border border-lime/30 bg-lime/5 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-mist">{combo.size}-team combo</p>
+        <p className="text-sm font-semibold text-mist">
+          {label && <span className="mr-1 font-normal text-mist/50">{label} ·</span>}
+          {combo.size}-team combo
+        </p>
         <div className="flex items-center gap-2">
           <Badge tone="good">{fmtPercent(combo.combined_probability)} win probability</Badge>
           <Badge tone="default">{fmtOdds(combo.total_odds)} total odds</Badge>
@@ -130,7 +151,12 @@ function ComboTicket({ combo }: { combo: DailyCombo }) {
         {combo.legs.map((leg) => (
           <li key={leg.fixture_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
             <div className="min-w-0">
-              <p className="text-sm text-mist">{leg.match}</p>
+              <p className="text-sm text-mist">
+                {leg.match}
+                {shared?.has(leg.fixture_id) && (
+                  <span className="ml-2 text-[11px] text-mist/40">also on an earlier slip</span>
+                )}
+              </p>
               <p className="text-[11px] text-mist/45">
                 {leg.selection} · {leg.kickoff_eat} · {leg.competition}
               </p>
@@ -195,6 +221,7 @@ export default function OverviewPage() {
 
   const qualified = predictions.data?.predictions ?? [];
   const gate = policy.data?.minimum_probability ?? 0.85;
+  const comboSlips = comboReport ? ticketSlips(comboReport) : [];
 
   async function analyseSlate() {
     setComboLoading(true);
@@ -412,8 +439,30 @@ export default function OverviewPage() {
               </span>
             </div>
 
-            {comboReport.best ? (
-              <ComboTicket combo={comboReport.best} />
+            {comboSlips.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-[11px] uppercase tracking-wider text-mist/45">
+                  {comboSlips.length} slip{comboSlips.length === 1 ? "" : "s"} · separate teams
+                  where the pool allows
+                </p>
+                {comboSlips.map((combo, index) => (
+                  <ComboTicket
+                    key={combo.legs
+                      .map((leg) => leg.fixture_id)
+                      .sort()
+                      .join("-")}
+                    combo={combo}
+                    label={index === 0 ? "Best slip" : `Alternative ${index}`}
+                    shared={sharedTeamIds(combo, comboSlips.slice(0, index))}
+                  />
+                ))}
+                {comboSlips.length < 3 && (
+                  <p className="text-[11px] text-mist/45">
+                    Only {comboReport.scope.qualified_legs} legs cleared the tier, so this is the
+                    whole set — another slip would need a leg below it.
+                  </p>
+                )}
+              </div>
             ) : (
               <Empty>
                 <p className="text-sm font-semibold text-mist/80">{comboReport.message}</p>

@@ -666,6 +666,7 @@ export type DailyComboReport = {
   legs: DailyComboLeg[];
   combos: Record<string, DailyCombo[]>;
   best: DailyCombo | null;
+  top_combos: DailyCombo[];
   stale_legs: Array<{ match: string; price_age_hours: number }>;
   message: string;
   note: string;

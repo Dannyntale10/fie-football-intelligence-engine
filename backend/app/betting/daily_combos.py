@@ -37,6 +37,9 @@ DEFAULT_TIER = 0.75
 COMBO_SIZES = (2, 3)
 MAX_CANDIDATE_LEGS = 15
 MAX_COMBOS_PER_SIZE = 3
+TOP_COMBOS = 3
+# A team at the published gate is strong enough to carry more than one slip.
+REPEATABLE_LEG_PROBABILITY = QUALIFICATION_THRESHOLD
 
 
 def learning_path():
@@ -195,6 +198,61 @@ def _combo(legs: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def select_best_combos(
+    combos: Dict[str, List[Dict[str, Any]]],
+    limit: int = TOP_COMBOS,
+) -> List[Dict[str, Any]]:
+    """Best ``limit`` slips, preferring ones that share no team.
+
+    A weaker but disjoint slip beats a stronger near-duplicate. Once every
+    disjoint option is used a team may repeat, but only the pool's strongest
+    pick (or one already at the published gate) — a genuine standout, never a
+    middling team recycled just to reach a count.
+    """
+    pool: List[Dict[str, Any]] = []
+    for rows in combos.values():
+        pool.extend(rows)
+    pool.sort(
+        key=lambda row: (row["combined_probability"], row["total_odds"]), reverse=True
+    )
+    strongest = max(
+        (leg["probability"] for row in pool for leg in row["legs"]),
+        default=0.0,
+    )
+    # On a strong slate the gate itself marks the repeatable picks; on a weak
+    # one only the standout is repeatable, so a count is never padded.
+    repeatable = min(REPEATABLE_LEG_PROBABILITY, strongest)
+
+    chosen: List[Dict[str, Any]] = []
+    taken: set = set()
+    used: set = set()
+
+    def signature(row: Dict[str, Any]) -> Tuple[str, ...]:
+        return tuple(sorted(leg["fixture_id"] for leg in row["legs"]))
+
+    for row in pool:
+        ids = {leg["fixture_id"] for leg in row["legs"]}
+        if signature(row) in taken or ids & used:
+            continue
+        chosen.append(row)
+        taken.add(signature(row))
+        used |= ids
+        if len(chosen) >= limit:
+            return chosen
+
+    for row in pool:
+        if len(chosen) >= limit:
+            break
+        if signature(row) in taken:
+            continue
+        shared = [leg for leg in row["legs"] if leg["fixture_id"] in used]
+        if any(leg["probability"] >= repeatable for leg in shared):
+            chosen.append(row)
+            taken.add(signature(row))
+            used |= {leg["fixture_id"] for leg in row["legs"]}
+    return chosen
+
+
 def build_daily_combos(
     db: Session,
     target_date: Optional[str] = None,
@@ -299,6 +357,7 @@ def build_daily_combos(
     legs = candidates
 
     combos: Dict[str, List[Dict[str, Any]]] = {}
+    every_combo: Dict[str, List[Dict[str, Any]]] = {}
     for size in COMBO_SIZES:
         found: List[Dict[str, Any]] = []
         for group in itertools.combinations(candidates, size):
@@ -306,6 +365,7 @@ def build_daily_combos(
                 continue
             found.append(_combo(list(group)))
         found.sort(key=lambda row: (row["combined_probability"], row["total_odds"]), reverse=True)
+        every_combo[f"{size}_leg"] = found
         combos[f"{size}_leg"] = found[:limit_per_size]
 
     best = None
@@ -369,6 +429,7 @@ def build_daily_combos(
         "legs": legs,
         "combos": combos,
         "best": best,
+        "top_combos": select_best_combos(every_combo),
         "stale_legs": [
             {"match": leg["match"], "price_age_hours": leg["price_age_hours"]}
             for leg in stale_warnings

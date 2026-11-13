@@ -324,3 +324,84 @@ def test_tier_sweep_reports_missing_history(db):
     assert report["status"] == "no_history"
     assert report["recommendation"] is None
     assert report["rows"] == []
+
+
+def _pool_leg(fixture_id: str, probability: float, odds: float = 1.2):
+    return {
+        "fixture_id": fixture_id,
+        "match": f"Team {fixture_id} vs Rival {fixture_id}",
+        "probability": probability,
+        "odds": odds,
+        "bookmaker": "BetPawa",
+    }
+
+
+def _pool(*combos):
+    grouped: dict = {}
+    for combo in combos:
+        legs = [_pool_leg(fixture_id, probability) for fixture_id, probability in combo]
+        grouped.setdefault(f"{len(legs)}_leg", []).append(dc._combo(legs))
+    return grouped
+
+
+def test_top_combos_spread_teams_across_slips():
+    combos = _pool(
+        (("a", 0.90), ("b", 0.88)),
+        (("a", 0.90), ("c", 0.80)),
+        (("b", 0.88), ("c", 0.80)),
+        (("c", 0.80), ("d", 0.78)),
+    )
+
+    picked = dc.select_best_combos(combos)
+
+    assert len(picked) == 3
+    assert {leg["fixture_id"] for leg in picked[0]["legs"]} == {"a", "b"}
+    # The runner-up is disjoint from the first slip even though it is weaker.
+    assert {leg["fixture_id"] for leg in picked[1]["legs"]} == {"c", "d"}
+    # Only then may the 90% team repeat.
+    assert {leg["fixture_id"] for leg in picked[2]["legs"]} == {"a", "c"}
+
+
+def test_top_combos_repeat_only_the_strongest_team():
+    combos = _pool(
+        (("a", 0.80), ("b", 0.79)),
+        (("a", 0.80), ("c", 0.78)),
+        (("a", 0.80), ("d", 0.77)),
+        (("c", 0.78), ("d", 0.77)),
+    )
+
+    picked = dc.select_best_combos(combos)
+
+    assert len(picked) == 3
+    assert {leg["fixture_id"] for leg in picked[0]["legs"]} == {"a", "b"}
+    assert {leg["fixture_id"] for leg in picked[1]["legs"]} == {"c", "d"}
+    # None of these legs clears the published gate, so only the pool's
+    # strongest pick ('a' at 80%) is allowed to carry a third slip.
+    third = {leg["fixture_id"] for leg in picked[2]["legs"]}
+    assert "a" in third
+    assert third != {"a", "b"}
+
+
+def test_top_combos_are_empty_when_nothing_qualified():
+    assert dc.select_best_combos({"2_leg": [], "3_leg": []}) == []
+
+
+def test_daily_report_carries_the_top_three_slips(db):
+    kickoff = NOW + timedelta(hours=11)
+    for home, away, odds in [
+        ("Arsenal", "Chelsea", {"home_win": 1.20, "draw": 6.0, "away_win": 12.0}),
+        ("Liverpool", "Everton", {"home_win": 1.22, "draw": 6.5, "away_win": 15.0}),
+        ("Celtic", "Rangers", {"home_win": 1.21, "draw": 6.2, "away_win": 13.0}),
+        ("Ajax", "PSV", {"home_win": 1.23, "draw": 6.4, "away_win": 14.0}),
+    ]:
+        _add(db, home, away, kickoff, odds)
+
+    report = dc.build_daily_combos(db, min_leg_probability=0.75, now=NOW)
+
+    assert len(report["top_combos"]) == 3
+    assert report["top_combos"][0] == report["best"]
+    teams = [
+        {leg["fixture_id"] for leg in combo["legs"]} for combo in report["top_combos"]
+    ]
+    assert teams[0].isdisjoint(teams[1])
+

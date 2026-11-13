@@ -399,6 +399,7 @@ def calculate_ratings_from_fixtures(
     db: Session,
     competition: Optional[str] = None,
     replace: bool = True,
+    half_life_days: float = RATING_HALF_LIFE_DAYS,
 ) -> Dict[str, Any]:
     """Rebuild team ratings from finished matches, with decay and shrinkage."""
     query = select(Fixture).where(
@@ -439,7 +440,7 @@ def calculate_ratings_from_fixtures(
                 "away": rating_key(f.away_team),
                 "home_goals": int(f.home_score),
                 "away_goals": int(f.away_score),
-                "weight": decay_weight(kickoff, reference),
+                "weight": decay_weight(kickoff, reference, half_life_days=half_life_days),
                 "kickoff": kickoff,
             })
 

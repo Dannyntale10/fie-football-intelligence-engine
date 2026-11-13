@@ -57,6 +57,13 @@ logger = logging.getLogger(__name__)
 Base.metadata.create_all(bind=engine)
 
 try:
+    from app.analytics.artifacts import load_ratings
+
+    load_ratings()
+except Exception:
+    pass
+
+try:
     from app.tasks.scheduler import start_scheduler
     start_scheduler()
 except Exception:

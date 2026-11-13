@@ -16,6 +16,7 @@ from app.models.data import (
     TeamForm,
 )
 from app.models.fixture import Fixture
+from app.models.live import LivePrediction
 from app.models.market_quote import MarketQuote
 from app.models.predictions import (
     Combination,
@@ -44,6 +45,7 @@ __all__ = [
     "Injury",
     "League",
     "Lineup",
+    "LivePrediction",
     "MarketCatalogue",
     "MarketQuote",
     "MatchResult",

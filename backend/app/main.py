@@ -286,7 +286,8 @@ def _live_prediction_payload(
 
     return {
         "status": status,
-        "observed_at": row.observed_at,
+        # SQLite hands back naive datetimes; emit UTC so every client can parse it.
+        "observed_at": _as_utc(row.observed_at) if row.observed_at is not None else None,
         "minute": row.minute,
         "freshness": freshness,
         "score": {"home": row.home_score, "away": row.away_score},
@@ -321,7 +322,7 @@ def _live_history_row(row: LivePrediction) -> dict:
     return {
         "minute": row.minute,
         "minute_bucket": row.minute_bucket,
-        "observed_at": row.observed_at,
+        "observed_at": _as_utc(row.observed_at) if row.observed_at is not None else None,
         "score": {"home": row.home_score, "away": row.away_score},
         "status": row.status,
         "probabilities": probabilities,

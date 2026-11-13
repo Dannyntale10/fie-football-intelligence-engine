@@ -131,6 +131,15 @@ def test_live_endpoint_includes_the_prediction_block(monkeypatch):
     assert set(block["probabilities"]) == {"home_win", "draw", "away_win"}
     assert abs(sum(block["probabilities"].values()) - 1.0) < 1e-3
     assert block["model_version"] == "live-dc-1"
+    assert _utc_offset(block["observed_at"]) == timedelta(0)
+
+
+def _utc_offset(value):
+    """A timestamp without an offset is local time to every client."""
+    assert value, "observed_at must be present"
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None, f"{value} has no timezone"
+    return parsed.utcoffset()
 
 
 def test_fixture_live_history_is_404_for_unknown_fixture():
@@ -221,6 +230,10 @@ def test_fixture_live_history_includes_every_snapshot_in_the_window():
     # The suppressed row stays honest: no fabricated three-null probability dict.
     assert history[2]["status"] == "no_lambda"
     assert history[2]["probabilities"] is None
+    # SQLite returns naive datetimes; every client must still see UTC.
+    for row in history:
+        assert _utc_offset(row["observed_at"]) == timedelta(0)
+    assert _utc_offset(response.json()["latest"]["observed_at"]) == timedelta(0)
 
 
 def test_fixture_live_history_is_empty_without_snapshots():

@@ -28,6 +28,7 @@ def ensure_schema_compatibility(eng):
                     ("odds_updated_at", "TIMESTAMP"),
                     ("market_odds_json", "TEXT"),
                     ("live_clock", "VARCHAR(20)"),
+                    ("live_observed_at", "TIMESTAMP"),
                     ("espn_league_code", "VARCHAR(30)"),
                 ]
                 for col, col_type in new_cols:

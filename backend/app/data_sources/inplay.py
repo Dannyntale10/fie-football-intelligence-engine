@@ -128,6 +128,12 @@ def _apply(fixture: Fixture, event: dict) -> bool:
             fixture.away_score = away_score
             changed = True
 
+    # Hearing from the feed is itself an observation. A half-time match whose
+    # clock is frozen at "HT" is still fresh, so this cannot be inferred from
+    # the clock or the score.
+    fixture.live_observed_at = datetime.now(timezone.utc)
+    changed = True
+
     return changed
 
 

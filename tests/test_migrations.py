@@ -37,3 +37,21 @@ def test_legacy_tables_gain_columns_and_backfill(tmp_path):
     assert "ux_notifications_dedupe_key" in indexes
     assert "ux_tracked_bets_dedupe_key" in bet_indexes
     assert settled == 1
+
+
+def test_legacy_fixtures_gain_live_observed_at(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-fixtures.db'}", future=True)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE fixtures (id INTEGER PRIMARY KEY, dedupe_key VARCHAR(300), "
+            "kickoff_utc TIMESTAMP, home_team VARCHAR(160), away_team VARCHAR(160), "
+            "competition VARCHAR(160), country VARCHAR(100), source VARCHAR(80), "
+            "status VARCHAR(40), created_at TIMESTAMP)"
+        ))
+
+    ensure_schema_compatibility(engine)
+
+    with engine.connect() as conn:
+        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(fixtures)"))}
+
+    assert "live_observed_at" in columns

@@ -45,6 +45,8 @@ class Fixture(Base):
     away_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Live state written by the ESPN score poller; never inferred from odds.
     live_clock: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # When the feed last matched this fixture, even if the score did not move.
+    live_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     espn_league_code: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="scheduled", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

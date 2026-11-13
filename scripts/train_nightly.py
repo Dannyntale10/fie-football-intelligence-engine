@@ -91,6 +91,18 @@ def _ingest(seasons: list, refresh: int) -> None:
     )
 
 
+def _export_unavailable(exc: Exception) -> dict:
+    """A bad export must be recorded, never fatal, and never echo its payload."""
+    return {
+        "status": "export_unavailable",
+        "k": 1.0,
+        "sample": 0,
+        "validation": None,
+        "generated_at": None,
+        "error": type(exc).__name__,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default=str(ROOT / "data"))
@@ -199,17 +211,19 @@ def main() -> int:
         if url:
             try:
                 engine_rows = fetch_export_rows(url, os.getenv("FIE_API_KEY", ""), days=90)
-            except (requests.RequestException, ValueError) as exc:
-                report["live_intensity"] = {
-                    "status": "export_unavailable",
-                    "k": 1.0,
-                    "sample": 0,
-                    "validation": None,
-                    "generated_at": None,
-                    "error": type(exc).__name__,
-                }
+            except (
+                requests.RequestException,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+            ) as exc:
+                report["live_intensity"] = _export_unavailable(exc)
         if "live_intensity" not in report:
-            live_fit = fit_intensity(engine_rows)
+            try:
+                live_fit = fit_intensity(engine_rows)
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                live_fit = _export_unavailable(exc)
             report["live_intensity"] = live_fit
             if live_fit["status"] == "fitted" and not args.dry_run:
                 (out_dir / "live_calibration.json").write_text(

@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -90,12 +90,16 @@ def write_ratings(
     }
 
 
-def load_ratings(path: Path = RATINGS_PATH) -> int:
+def load_ratings(
+    path: Path = RATINGS_PATH,
+    *,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> int:
     """Seed an empty rating table from the committed artifact."""
     if not path.exists():
         return 0
 
-    db = SessionLocal()
+    db = session_factory()
     try:
         existing = db.scalar(select(func.count(TeamRating.id))) or 0
         if existing:

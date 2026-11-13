@@ -1,25 +1,27 @@
 """A committed ratings artifact can seed an empty hosted database."""
 import json
 
-from app.analytics.artifacts import RATINGS_PATH, load_ratings, write_ratings
-from app.database import SessionLocal
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.analytics.artifacts import load_ratings, write_ratings
+from app.database import Base
 from app.models.team_rating import TeamRating
 
 
-def _cleanup(db):
-    # ``upsert_team_rating`` normalises competition names, so the loaded rows
-    # are lower-case even though the artifact keeps the training spelling.
-    db.query(TeamRating).filter(
-        TeamRating.competition.ilike("Artifact League%")
-    ).delete(synchronize_session=False)
-    db.commit()
-
-
-def test_artifact_round_trip(tmp_path, monkeypatch):
+def test_artifact_round_trip(tmp_path):
     path = tmp_path / "ratings.json"
-    db = SessionLocal()
+
+    # Both halves of the round trip use private databases. The suite shares a
+    # single throwaway SQLite file, so exporting the artifact from the shared
+    # session would also carry other modules' ratings and the loader count
+    # would depend on which tests happened to run first.
+    source_engine = create_engine(f"sqlite:///{tmp_path / 'source.db'}")
+    Base.metadata.create_all(source_engine)
+    source_factory = sessionmaker(bind=source_engine)
+
+    db = source_factory()
     try:
-        _cleanup(db)
         db.add(TeamRating(
             team_name="artifact home",
             competition="Artifact League A",
@@ -55,19 +57,23 @@ def test_artifact_round_trip(tmp_path, monkeypatch):
         assert "artifact home" in payload["competitions"]["Artifact League A"]["teams"]
         assert "thin sample" not in payload["competitions"].get("Artifact League B", {}).get("teams", {})
 
-        _cleanup(db)
-        baseline = db.query(TeamRating).count()
-        assert baseline == 0, (
-            "another test leaked TeamRating rows into the shared database"
-        )
-        loaded = load_ratings(path)
-        assert loaded >= 1
-        row = db.query(TeamRating).filter(
-            TeamRating.competition == "artifact league a",
-            TeamRating.team_name == "artifact home",
-        ).one()
-        assert row.attack_rating == 1.25
-        assert row.weighted_matches == 12.5
+        # The loader only seeds an empty table. Point it at its own empty
+        # database rather than depending on the shared test database, where
+        # other modules legitimately hold ratings.
+        engine = create_engine(f"sqlite:///{tmp_path / 'artifact.db'}")
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(bind=engine)
+        assert load_ratings(path, session_factory=factory) == 1
+
+        seeded = factory()
+        try:
+            row = seeded.query(TeamRating).filter(
+                TeamRating.competition == "artifact league a",
+                TeamRating.team_name == "artifact home",
+            ).one()
+            assert row.attack_rating == 1.25
+            assert row.weighted_matches == 12.5
+        finally:
+            seeded.close()
     finally:
-        _cleanup(db)
         db.close()

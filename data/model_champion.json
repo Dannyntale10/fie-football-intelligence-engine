@@ -1,0 +1,112 @@
+{
+  "artifact_version": 1,
+  "artifacts": {
+    "ratings.json": "sha256:8ecef031b87d1f0b0feb3dac01e37f1f8416a2bf2f9d2d4637d0b489b110f580"
+  },
+  "config": {
+    "half_life_days": 150.0
+  },
+  "gate": {
+    "challenger_brier": 0.614711,
+    "champion_brier": 0.614711,
+    "holdout_matches": 12760,
+    "per_competition": {
+      "2 bundesliga": {
+        "brier": 0.637019,
+        "log_loss": 1.056792,
+        "n": 596
+      },
+      "belgian pro league": {
+        "brier": 0.61607,
+        "log_loss": 1.026324,
+        "n": 595
+      },
+      "bundesliga": {
+        "brier": 0.594611,
+        "log_loss": 0.99913,
+        "n": 593
+      },
+      "championship": {
+        "brier": 0.639348,
+        "log_loss": 1.058946,
+        "n": 1084
+      },
+      "eredivisie": {
+        "brier": 0.605003,
+        "log_loss": 1.008998,
+        "n": 606
+      },
+      "la liga": {
+        "brier": 0.585228,
+        "log_loss": 0.984172,
+        "n": 737
+      },
+      "league one": {
+        "brier": 0.632992,
+        "log_loss": 1.051617,
+        "n": 1072
+      },
+      "league two": {
+        "brier": 0.644706,
+        "log_loss": 1.066352,
+        "n": 1073
+      },
+      "ligue 1": {
+        "brier": 0.589418,
+        "log_loss": 0.988249,
+        "n": 595
+      },
+      "ligue 2": {
+        "brier": 0.638909,
+        "log_loss": 1.060102,
+        "n": 581
+      },
+      "premier league": {
+        "brier": 0.618463,
+        "log_loss": 1.02947,
+        "n": 735
+      },
+      "primeira liga": {
+        "brier": 0.57612,
+        "log_loss": 0.969317,
+        "n": 604
+      },
+      "scottish premiership": {
+        "brier": 0.593614,
+        "log_loss": 0.997969,
+        "n": 455
+      },
+      "segunda division": {
+        "brier": 0.624304,
+        "log_loss": 1.037649,
+        "n": 893
+      },
+      "serie a": {
+        "brier": 0.590752,
+        "log_loss": 0.990522,
+        "n": 741
+      },
+      "serie b": {
+        "brier": 0.637982,
+        "log_loss": 1.057291,
+        "n": 725
+      },
+      "super league greece": {
+        "brier": 0.586679,
+        "log_loss": 0.985089,
+        "n": 451
+      },
+      "super lig": {
+        "brier": 0.587529,
+        "log_loss": 0.987142,
+        "n": 624
+      }
+    },
+    "reason": "bootstrap",
+    "window": "730d"
+  },
+  "git_sha": "513b79494685ef3f47877d5618d2ff3c532b0a07",
+  "promoted_at": "2026-11-14T07:13:01.753419+00:00",
+  "trained_through": "2026-11-14T07:13:01.753419+00:00",
+  "training_seasons": 10
+}
